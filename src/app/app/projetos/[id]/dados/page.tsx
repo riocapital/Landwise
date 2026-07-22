@@ -10,8 +10,62 @@ import {
   type Tipologia,
   type LinhaVendas,
 } from "@/lib/calc/viabilidade";
+import { calcResumoPrograma, calcGcaProgramado, calcEficiencia, calcDivergenciaAbp, type Typology } from "@/lib/calc/areas";
+import {
+  listarTipologiasProjeto,
+  criarTipologia,
+  atualizarTipologia,
+  apagarTipologia,
+  guardarPrecoSugerido,
+} from "@/lib/supabase/project-typologies";
+import type { SugestaoPreco, SujeitoComparacao } from "@/lib/calc/comparaveis";
 
 const STEPS = ["Identificação", "Programa e vendas", "Custos e financiamento", "Calendário", "Revisão"];
+
+// --- Fase 2: localização e áreas estruturadas (colunas novas em `projects`) ---
+type IdentificacaoEstruturada = {
+  codigoPostal: string;
+  rua: string;
+  localidade: string;
+  freguesia: string;
+  concelho: string;
+  distrito: string;
+  latitude: number | null;
+  longitude: number | null;
+  localizacaoOrigem: "manual" | "codigo_postal" | "geocodificacao";
+  abcAcimaSolo: number | null;
+  abcAbaixoSolo: number | null;
+  areaDependenteEstimada: number | null;
+  abpEstimada: number | null;
+  temGaragem: boolean;
+  temElevador: boolean;
+  temJardimExterior: boolean;
+  necessitaDemolicao: boolean;
+  imovelOcupado: boolean;
+  temLicenciamentoAprovado: boolean;
+};
+
+const IDENTIFICACAO_VAZIA: IdentificacaoEstruturada = {
+  codigoPostal: "",
+  rua: "",
+  localidade: "",
+  freguesia: "",
+  concelho: "",
+  distrito: "",
+  latitude: null,
+  longitude: null,
+  localizacaoOrigem: "manual",
+  abcAcimaSolo: null,
+  abcAbaixoSolo: null,
+  areaDependenteEstimada: null,
+  abpEstimada: null,
+  temGaragem: false,
+  temElevador: false,
+  temJardimExterior: false,
+  necessitaDemolicao: false,
+  imovelOcupado: false,
+  temLicenciamentoAprovado: false,
+};
 
 export default function WizardPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -27,6 +81,17 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [calculando, setCalculando] = useState(false);
 
+  // Fase 2: localização/áreas estruturadas + tipologias no motor novo (areas.ts)
+  const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
+  const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
+  const [aLoadearCp, setALoadearCp] = useState(false);
+  const [opcoesCp, setOpcoesCp] = useState<
+    { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[]
+  >([]);
+  const [sugestoes, setSugestoes] = useState<
+    Record<string, { loading: boolean; resultado?: SugestaoPreco; erro?: boolean }>
+  >({});
+
   const carregar = useCallback(async () => {
     const { data } = await supabase.from("projects").select("*").eq("id", id).single();
     if (data) {
@@ -35,7 +100,30 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       if (data.inputs && Object.keys(data.inputs).length > 0) {
         setInputs({ ...DEFAULT_INPUTS, ...data.inputs });
       }
+      setIdentificacao({
+        codigoPostal: data.codigo_postal ?? "",
+        rua: data.rua ?? "",
+        localidade: data.localidade ?? "",
+        freguesia: data.freguesia ?? "",
+        concelho: data.concelho ?? "",
+        distrito: data.distrito ?? "",
+        latitude: data.latitude ?? null,
+        longitude: data.longitude ?? null,
+        localizacaoOrigem: data.localizacao_origem ?? "manual",
+        abcAcimaSolo: data.abc_acima_solo ?? null,
+        abcAbaixoSolo: data.abc_abaixo_solo ?? null,
+        areaDependenteEstimada: data.area_dependente_estimada ?? null,
+        abpEstimada: data.abp_estimada ?? null,
+        temGaragem: data.tem_garagem ?? false,
+        temElevador: data.tem_elevador ?? false,
+        temJardimExterior: data.tem_jardim_exterior ?? false,
+        necessitaDemolicao: data.necessita_demolicao ?? false,
+        imovelOcupado: data.imovel_ocupado ?? false,
+        temLicenciamentoAprovado: data.tem_licenciamento_aprovado ?? false,
+      });
     }
+    const tipologias = await listarTipologiasProjeto(supabase, id);
+    setTipologiasNovas(tipologias);
     setLoading(false);
   }, [id, supabase]);
 
@@ -49,14 +137,52 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const guardar = useCallback(
     async (silencioso = false) => {
       if (!silencioso) setSaving(true);
+      // Localização derivada, para não quebrar ecrãs que ainda leem o texto
+      // livre antigo (dashboard, pré-análise) enquanto a fonte da verdade
+      // passa a ser os campos estruturados.
+      const localizacaoDerivada =
+        identificacao.freguesia || identificacao.concelho
+          ? [identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ")
+          : inputs.localizacao;
+
       await supabase
         .from("projects")
-        .update({ nome, tipo_projeto: tipoProjeto, localizacao: inputs.localizacao, inputs })
+        .update({
+          nome,
+          tipo_projeto: tipoProjeto,
+          localizacao: localizacaoDerivada,
+          inputs: { ...inputs, localizacao: localizacaoDerivada },
+          codigo_postal: identificacao.codigoPostal || null,
+          rua: identificacao.rua || null,
+          localidade: identificacao.localidade || null,
+          freguesia: identificacao.freguesia || null,
+          concelho: identificacao.concelho || null,
+          distrito: identificacao.distrito || null,
+          latitude: identificacao.latitude,
+          longitude: identificacao.longitude,
+          localizacao_origem: identificacao.localizacaoOrigem,
+          area_lote: inputs.areaLote,
+          abc_acima_solo: identificacao.abcAcimaSolo,
+          abc_abaixo_solo: identificacao.abcAbaixoSolo,
+          area_dependente_estimada: identificacao.areaDependenteEstimada,
+          abp_estimada: identificacao.abpEstimada,
+          tem_garagem: identificacao.temGaragem,
+          tem_elevador: identificacao.temElevador,
+          tem_jardim_exterior: identificacao.temJardimExterior,
+          necessita_demolicao: identificacao.necessitaDemolicao,
+          imovel_ocupado: identificacao.imovelOcupado,
+          tem_licenciamento_aprovado: identificacao.temLicenciamentoAprovado,
+        })
         .eq("id", id);
+
+      // Tipologias do motor novo: cada uma já tem id real na BD (criada ao
+      // clicar "+ Adicionar"), por isso aqui é sempre update, nunca insert.
+      await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
+
       setSavedAt(new Date());
       if (!silencioso) setSaving(false);
     },
-    [id, nome, tipoProjeto, inputs, supabase]
+    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, supabase]
   );
 
   // Autosave: 1.5s depois da última alteração
@@ -65,7 +191,105 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     const t = setTimeout(() => guardar(true), 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nome, tipoProjeto, inputs, loading]);
+  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, loading]);
+
+  function updateIdentificacao<K extends keyof IdentificacaoEstruturada>(key: K, value: IdentificacaoEstruturada[K]) {
+    setIdentificacao((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function handleCodigoPostalBlur() {
+    const cp = identificacao.codigoPostal.trim();
+    if (!/^\d{4}-\d{3}$/.test(cp)) return;
+    setALoadearCp(true);
+    setOpcoesCp([]);
+    try {
+      const resp = await fetch(`/api/localizacao/codigo-postal?cp=${encodeURIComponent(cp)}`);
+      const data = await resp.json();
+      if (data.encontrado && data.opcoes?.length > 0) {
+        if (data.opcoes.length === 1) {
+          aplicarOpcaoCp(data.opcoes[0]);
+        } else {
+          setOpcoesCp(data.opcoes);
+        }
+      }
+      // Se não encontrar, não bloqueia nada — os campos continuam livres para preenchimento manual.
+    } finally {
+      setALoadearCp(false);
+    }
+  }
+
+  function aplicarOpcaoCp(opcao: {
+    rua: string | null;
+    localidade: string | null;
+    freguesia: string | null;
+    concelho: string | null;
+    distrito: string | null;
+    latitude: number | null;
+    longitude: number | null;
+  }) {
+    setIdentificacao((prev) => ({
+      ...prev,
+      rua: opcao.rua ?? prev.rua,
+      localidade: opcao.localidade ?? prev.localidade,
+      freguesia: opcao.freguesia ?? prev.freguesia,
+      concelho: opcao.concelho ?? prev.concelho,
+      distrito: opcao.distrito ?? prev.distrito,
+      latitude: opcao.latitude ?? prev.latitude,
+      longitude: opcao.longitude ?? prev.longitude,
+      localizacaoOrigem: "codigo_postal",
+    }));
+    setOpcoesCp([]);
+  }
+
+  async function adicionarTipologiaNova() {
+    const nova = await criarTipologia(supabase, id, tipologiasNovas.length);
+    if (nova) setTipologiasNovas((prev) => [...prev, nova]);
+  }
+
+  function atualizarTipologiaNovaLocal(tipId: string, patch: Partial<Typology>) {
+    setTipologiasNovas((prev) => prev.map((t) => (t.id === tipId ? { ...t, ...patch } : t)));
+  }
+
+  async function removerTipologiaNova(tipId: string) {
+    await apagarTipologia(supabase, tipId);
+    setTipologiasNovas((prev) => prev.filter((t) => t.id !== tipId));
+  }
+
+  async function pedirSugestaoLandwise(tip: Typology) {
+    setSugestoes((prev) => ({ ...prev, [tip.id]: { loading: true } }));
+    try {
+      const sujeito: SujeitoComparacao = {
+        zone: null,
+        parish: identificacao.freguesia || null,
+        municipality: identificacao.concelho || null,
+        propertyType: "Apartamento",
+        typology: tip.nome,
+        condition: null,
+        isNewConstruction: null,
+        areaReferencia: tip.abpUnidade,
+      };
+      const resp = await fetch("/api/comparaveis/sugestao", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(sujeito),
+      });
+      const resultado = await resp.json();
+      if (resp.ok) {
+        setSugestoes((prev) => ({ ...prev, [tip.id]: { loading: false, resultado } }));
+        if (resultado.precoSugeridoM2) {
+          await guardarPrecoSugerido(supabase, tip.id, resultado.precoSugeridoM2);
+        }
+      } else {
+        setSugestoes((prev) => ({ ...prev, [tip.id]: { loading: false, erro: true } }));
+      }
+    } catch {
+      setSugestoes((prev) => ({ ...prev, [tip.id]: { loading: false, erro: true } }));
+    }
+  }
+
+  function aplicarSugestao(tipId: string, precoM2: number) {
+    atualizarTipologiaNovaLocal(tipId, { precoBaseM2: precoM2 });
+  }
 
   async function avancar() {
     await guardar();
@@ -134,9 +358,29 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           setTipoProjeto={setTipoProjeto}
           inputs={inputs}
           updateInput={updateInput}
+          identificacao={identificacao}
+          updateIdentificacao={updateIdentificacao}
+          aLoadearCp={aLoadearCp}
+          opcoesCp={opcoesCp}
+          onCodigoPostalBlur={handleCodigoPostalBlur}
+          onEscolherOpcaoCp={aplicarOpcaoCp}
+          tipologiasNovas={tipologiasNovas}
         />
       )}
-      {step === 1 && <StepPrograma inputs={inputs} updateInput={updateInput} />}
+      {step === 1 && (
+        <StepPrograma
+          inputs={inputs}
+          updateInput={updateInput}
+          tipologiasNovas={tipologiasNovas}
+          identificacao={identificacao}
+          onAdicionarTipologiaNova={adicionarTipologiaNova}
+          onAtualizarTipologiaNova={atualizarTipologiaNovaLocal}
+          onRemoverTipologiaNova={removerTipologiaNova}
+          sugestoes={sugestoes}
+          onPedirSugestao={pedirSugestaoLandwise}
+          onAplicarSugestao={aplicarSugestao}
+        />
+      )}
       {step === 2 && <StepCustosFinanciamento inputs={inputs} updateInput={updateInput} />}
       {step === 3 && <StepCalendario inputs={inputs} updateInput={updateInput} />}
       {step === 4 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
@@ -168,6 +412,13 @@ function StepIdentificacao({
   setTipoProjeto,
   inputs,
   updateInput,
+  identificacao,
+  updateIdentificacao,
+  aLoadearCp,
+  opcoesCp,
+  onCodigoPostalBlur,
+  onEscolherOpcaoCp,
+  tipologiasNovas,
 }: {
   nome: string;
   setNome: (v: string) => void;
@@ -175,45 +426,213 @@ function StepIdentificacao({
   setTipoProjeto: (v: string) => void;
   inputs: ProjectInputs;
   updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
+  identificacao: IdentificacaoEstruturada;
+  updateIdentificacao: <K extends keyof IdentificacaoEstruturada>(k: K, v: IdentificacaoEstruturada[K]) => void;
+  aLoadearCp: boolean;
+  opcoesCp: { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[];
+  onCodigoPostalBlur: () => void;
+  onEscolherOpcaoCp: (opcao: { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }) => void;
+  tipologiasNovas: Typology[];
 }) {
+  const gcaProgramado = calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas);
+  const abpProgramada = tipologiasNovas.reduce((s, t) => s + t.quantidade * t.abpUnidade, 0);
+  const eficiencia = calcEficiencia(abpProgramada, gcaProgramado);
+  const divergencia =
+    identificacao.abpEstimada && tipologiasNovas.length > 0
+      ? calcDivergenciaAbp(identificacao.abpEstimada, tipologiasNovas)
+      : null;
+
   return (
-    <Card title="Identificação do ativo">
-      <Row>
-        <Field label="Tipo de projeto">
-          <select className="input-dark" value={tipoProjeto} onChange={(e) => setTipoProjeto(e.target.value)}>
-            <option>Terreno para construir</option>
-            <option>Prédio aprovado</option>
-            <option>Apartamento para remodelar</option>
-          </select>
-        </Field>
-        <Field label="Localização">
-          <input
-            className="input-dark"
-            value={inputs.localizacao}
-            onChange={(e) => updateInput("localizacao", e.target.value)}
-            placeholder="Ex.: Benfica, Lisboa"
+    <>
+      <Card title="Identificação do ativo">
+        <Row>
+          <Field label="Tipo de projeto">
+            <select className="input-dark" value={tipoProjeto} onChange={(e) => setTipoProjeto(e.target.value)}>
+              <option>Terreno para construir</option>
+              <option>Prédio para reabilitação</option>
+              <option>Prédio aprovado</option>
+              <option>Apartamento para remodelar</option>
+            </select>
+          </Field>
+          <Field label="Área do lote (m²)">
+            <input
+              type="number"
+              className="input-dark"
+              value={inputs.areaLote ?? ""}
+              onChange={(e) => updateInput("areaLote", e.target.value ? Number(e.target.value) : null)}
+            />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Custo de aquisição do terreno (€)">
+            <input
+              type="number"
+              className="input-dark"
+              value={inputs.custoTerreno || ""}
+              onChange={(e) => updateInput("custoTerreno", Number(e.target.value) || 0)}
+            />
+          </Field>
+        </Row>
+      </Card>
+
+      <Card
+        title="Localização"
+        subtitle="Introduza o código postal — a rua, freguesia, concelho e distrito são sugeridos automaticamente, mas continuam editáveis."
+      >
+        <Row>
+          <Field label="Código postal">
+            <input
+              className="input-dark"
+              placeholder="0000-000"
+              value={identificacao.codigoPostal}
+              onChange={(e) => updateIdentificacao("codigoPostal", e.target.value)}
+              onBlur={onCodigoPostalBlur}
+            />
+          </Field>
+          <Field label="Rua">
+            <input className="input-dark" value={identificacao.rua} onChange={(e) => updateIdentificacao("rua", e.target.value)} />
+          </Field>
+        </Row>
+        {aLoadearCp && <p className="text-xs text-[#8FA6AF] mb-3">A procurar o código postal…</p>}
+        {opcoesCp.length > 1 && (
+          <div className="mb-4">
+            <p className="text-xs text-[#59636A] mb-2">Este código postal tem várias moradas — escolha uma:</p>
+            {opcoesCp.map((o, i) => (
+              <button
+                key={i}
+                onClick={() => onEscolherOpcaoCp(o)}
+                className="block w-full text-left text-sm px-3 py-2 rounded-lg border border-[#E3DACB] hover:border-[#B96343] mb-1.5"
+              >
+                {o.rua || "Rua não identificada"} — {o.freguesia}, {o.concelho}
+              </button>
+            ))}
+          </div>
+        )}
+        <Row>
+          <Field label="Freguesia">
+            <input
+              className="input-dark"
+              value={identificacao.freguesia}
+              onChange={(e) => updateIdentificacao("freguesia", e.target.value)}
+            />
+          </Field>
+          <Field label="Concelho">
+            <input
+              className="input-dark"
+              value={identificacao.concelho}
+              onChange={(e) => updateIdentificacao("concelho", e.target.value)}
+            />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Distrito">
+            <input
+              className="input-dark"
+              value={identificacao.distrito}
+              onChange={(e) => updateIdentificacao("distrito", e.target.value)}
+            />
+          </Field>
+          <Field label="Localidade">
+            <input
+              className="input-dark"
+              value={identificacao.localidade}
+              onChange={(e) => updateIdentificacao("localidade", e.target.value)}
+            />
+          </Field>
+        </Row>
+      </Card>
+
+      <Card
+        title="Áreas do projeto"
+        subtitle="GCA e eficiência são calculados automaticamente a partir destes valores e do programa de tipologias."
+      >
+        <Row>
+          <Field label="ABC acima do solo (m²)">
+            <input
+              type="number"
+              className="input-dark"
+              value={identificacao.abcAcimaSolo ?? ""}
+              onChange={(e) => updateIdentificacao("abcAcimaSolo", e.target.value ? Number(e.target.value) : null)}
+            />
+          </Field>
+          <Field label="ABC abaixo do solo (m²)">
+            <input
+              type="number"
+              className="input-dark"
+              value={identificacao.abcAbaixoSolo ?? ""}
+              onChange={(e) => updateIdentificacao("abcAbaixoSolo", e.target.value ? Number(e.target.value) : null)}
+            />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Área dependente estimada (m²)">
+            <input
+              type="number"
+              className="input-dark"
+              value={identificacao.areaDependenteEstimada ?? ""}
+              onChange={(e) => updateIdentificacao("areaDependenteEstimada", e.target.value ? Number(e.target.value) : null)}
+            />
+          </Field>
+          <Field label="ABP estimada (m²)">
+            <input
+              type="number"
+              className="input-dark"
+              value={identificacao.abpEstimada ?? ""}
+              onChange={(e) => updateIdentificacao("abpEstimada", e.target.value ? Number(e.target.value) : null)}
+            />
+          </Field>
+        </Row>
+        <div className="flex gap-6 mt-2 text-sm">
+          <div>
+            <span className="text-xs text-[#59636A] block">GCA programado</span>
+            <span className="font-semibold text-[#142B3A]">{gcaProgramado ? `${Math.round(gcaProgramado)} m²` : "—"}</span>
+          </div>
+          <div>
+            <span className="text-xs text-[#59636A] block">Eficiência</span>
+            <span className="font-semibold text-[#142B3A]">{eficiencia !== null ? `${Math.round(eficiencia * 100)}%` : "—"}</span>
+          </div>
+        </div>
+        {divergencia && Math.abs(divergencia.diferencaAbsoluta) > 1 && (
+          <p className="text-xs text-[#B96343] mt-3">
+            Existe uma diferença entre a ABP estimada e a ABP calculada pelo programa ({Math.round(divergencia.abpCalculada)} m²,{" "}
+            {divergencia.diferencaPercentual !== null ? `${Math.round(divergencia.diferencaPercentual * 100)}%` : ""} de diferença).
+            Ajuste a ABP estimada ou reveja as tipologias na etapa seguinte.
+          </p>
+        )}
+      </Card>
+
+      <Card title="Características">
+        <div className="grid grid-cols-2 gap-x-4">
+          <CheckboxIdent label="Possui garagem" checked={identificacao.temGaragem} onChange={(v) => updateIdentificacao("temGaragem", v)} />
+          <CheckboxIdent label="Possui elevador" checked={identificacao.temElevador} onChange={(v) => updateIdentificacao("temElevador", v)} />
+          <CheckboxIdent
+            label="Possui jardim ou áreas exteriores"
+            checked={identificacao.temJardimExterior}
+            onChange={(v) => updateIdentificacao("temJardimExterior", v)}
           />
-        </Field>
-      </Row>
-      <Row>
-        <Field label="Área do lote (m²)">
-          <input
-            type="number"
-            className="input-dark"
-            value={inputs.areaLote ?? ""}
-            onChange={(e) => updateInput("areaLote", e.target.value ? Number(e.target.value) : null)}
+          <CheckboxIdent
+            label="Necessita demolição"
+            checked={identificacao.necessitaDemolicao}
+            onChange={(v) => updateIdentificacao("necessitaDemolicao", v)}
           />
-        </Field>
-        <Field label="Custo de aquisição do terreno (€)">
-          <input
-            type="number"
-            className="input-dark"
-            value={inputs.custoTerreno || ""}
-            onChange={(e) => updateInput("custoTerreno", Number(e.target.value) || 0)}
+          <CheckboxIdent label="Imóvel ocupado" checked={identificacao.imovelOcupado} onChange={(v) => updateIdentificacao("imovelOcupado", v)} />
+          <CheckboxIdent
+            label="Possui licenciamento aprovado"
+            checked={identificacao.temLicenciamentoAprovado}
+            onChange={(v) => updateIdentificacao("temLicenciamentoAprovado", v)}
           />
-        </Field>
-      </Row>
-    </Card>
+        </div>
+      </Card>
+    </>
+  );
+}
+
+function CheckboxIdent({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-[#142B3A] mb-3 cursor-pointer">
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
+      {label}
+    </label>
   );
 }
 
@@ -223,10 +642,28 @@ function StepIdentificacao({
 function StepPrograma({
   inputs,
   updateInput,
+  tipologiasNovas,
+  identificacao,
+  onAdicionarTipologiaNova,
+  onAtualizarTipologiaNova,
+  onRemoverTipologiaNova,
+  sugestoes,
+  onPedirSugestao,
+  onAplicarSugestao,
 }: {
   inputs: ProjectInputs;
   updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
+  tipologiasNovas: Typology[];
+  identificacao: IdentificacaoEstruturada;
+  onAdicionarTipologiaNova: () => void;
+  onAtualizarTipologiaNova: (id: string, patch: Partial<Typology>) => void;
+  onRemoverTipologiaNova: (id: string) => void;
+  sugestoes: Record<string, { loading: boolean; resultado?: SugestaoPreco; erro?: boolean }>;
+  onPedirSugestao: (t: Typology) => void;
+  onAplicarSugestao: (id: string, precoM2: number) => void;
 }) {
+  const resumo = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
+  const semLocalizacao = !identificacao.freguesia && !identificacao.concelho;
   function updateTipologia(i: number, patch: Partial<Tipologia>) {
     const novas = [...inputs.tipologias];
     novas[i] = { ...novas[i], ...patch };
@@ -395,6 +832,153 @@ function StepPrograma({
           + Adicionar grupo de unidades
         </button>
         <p className="text-xs text-[#59636A] mt-4">Total de unidades: {totalUnidades}</p>
+      </Card>
+
+      <Card
+        title="Tipologias — motor novo (Fase 2)"
+        subtitle="Áreas dependentes e área vendável equivalente calculadas por src/lib/calc/areas.ts. Ainda não alimenta o resultado financeiro abaixo — só o motor antigo (tipologias/mapa de vendas acima) faz isso, por agora."
+      >
+        {semLocalizacao && (
+          <p className="text-xs text-[#B96343] mb-3">
+            Preencha a freguesia/concelho na Identificação para poder pedir a Sugestão Landwise por comparáveis.
+          </p>
+        )}
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-xs text-[#59636A] uppercase text-left">
+              <th className="pb-2">Tipologia</th>
+              <th className="pb-2">Qtd</th>
+              <th className="pb-2">ABP (m²)</th>
+              <th className="pb-2">Varanda m² / %</th>
+              <th className="pb-2">Terraço m² / %</th>
+              <th className="pb-2">Preço base (€/m²)</th>
+              <th className="pb-2">Área vendável</th>
+              <th className="pb-2">Receita</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {tipologiasNovas.map((t) => {
+              const sugestao = sugestoes[t.id];
+              return (
+                <tr key={t.id} className="align-top">
+                  <td className="pr-2 py-1">
+                    <input
+                      className="input-dark"
+                      value={t.nome}
+                      onChange={(e) => onAtualizarTipologiaNova(t.id, { nome: e.target.value })}
+                    />
+                  </td>
+                  <td className="pr-2 py-1">
+                    <input
+                      type="number"
+                      className="input-dark"
+                      value={t.quantidade}
+                      onChange={(e) => onAtualizarTipologiaNova(t.id, { quantidade: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td className="pr-2 py-1">
+                    <input
+                      type="number"
+                      className="input-dark"
+                      value={t.abpUnidade}
+                      onChange={(e) => onAtualizarTipologiaNova(t.id, { abpUnidade: Number(e.target.value) })}
+                    />
+                  </td>
+                  <td className="pr-2 py-1 flex gap-1">
+                    <input
+                      type="number"
+                      className="input-dark w-20"
+                      value={t.varandaM2}
+                      onChange={(e) => onAtualizarTipologiaNova(t.id, { varandaM2: Number(e.target.value) })}
+                    />
+                    <PercentInput
+                      value={t.varandaPctValorizacao}
+                      onChange={(v) => onAtualizarTipologiaNova(t.id, { varandaPctValorizacao: v })}
+                    />
+                  </td>
+                  <td className="pr-2 py-1 flex gap-1">
+                    <input
+                      type="number"
+                      className="input-dark w-20"
+                      value={t.terracoM2}
+                      onChange={(e) => onAtualizarTipologiaNova(t.id, { terracoM2: Number(e.target.value) })}
+                    />
+                    <PercentInput
+                      value={t.terracoPctValorizacao}
+                      onChange={(v) => onAtualizarTipologiaNova(t.id, { terracoPctValorizacao: v })}
+                    />
+                  </td>
+                  <td className="pr-2 py-1">
+                    <input
+                      type="number"
+                      className="input-dark"
+                      value={t.precoBaseM2}
+                      onChange={(e) => onAtualizarTipologiaNova(t.id, { precoBaseM2: Number(e.target.value) })}
+                    />
+                    <button
+                      onClick={() => onPedirSugestao(t)}
+                      disabled={semLocalizacao || sugestao?.loading}
+                      className="text-xs text-[#B96343] font-semibold mt-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {sugestao?.loading ? "A calcular…" : "★ Pedir Sugestão Landwise"}
+                    </button>
+                    {sugestao?.erro && <p className="text-xs text-[#A13D2E] mt-1">Não foi possível calcular a sugestão.</p>}
+                    {sugestao?.resultado && (
+                      <div className="text-xs text-[#59636A] mt-1">
+                        {sugestao.resultado.nivelConfianca === "Amostra insuficiente" || !sugestao.resultado.precoSugeridoM2 ? (
+                          <span>Amostra insuficiente de comparáveis nesta zona.</span>
+                        ) : (
+                          <>
+                            <p>
+                              ★ €{sugestao.resultado.precoSugeridoM2.toLocaleString("pt-PT")}/m² — {sugestao.resultado.numeroComparaveis}{" "}
+                              comparáveis, confiança {sugestao.resultado.nivelConfianca.toLowerCase()}
+                            </p>
+                            <button
+                              onClick={() => onAplicarSugestao(t.id, sugestao.resultado!.precoSugeridoM2!)}
+                              className="text-[#142B3A] font-semibold underline"
+                            >
+                              Aplicar sugestão
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                  <td className="pr-2 py-1 text-[#59636A]">{Math.round(t.abpUnidade + t.varandaM2 * t.varandaPctValorizacao + t.terracoM2 * t.terracoPctValorizacao)} m²</td>
+                  <td className="pr-2 py-1 text-[#59636A]">
+                    €{Math.round((t.abpUnidade + t.varandaM2 * t.varandaPctValorizacao + t.terracoM2 * t.terracoPctValorizacao) * t.precoBaseM2 * t.quantidade).toLocaleString("pt-PT")}
+                  </td>
+                  <td>
+                    <button onClick={() => onRemoverTipologiaNova(t.id)} className="text-[#A13D2E] text-xs">
+                      Remover
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <button onClick={onAdicionarTipologiaNova} className="text-[#B96343] text-sm font-semibold mt-3">
+          + Adicionar tipologia
+        </button>
+
+        {tipologiasNovas.length > 0 && (
+          <div className="grid grid-cols-3 gap-4 mt-5 pt-4 border-t border-[#E3DACB] text-sm">
+            <div>
+              <span className="text-xs text-[#59636A] block">Total de unidades</span>
+              <span className="font-semibold text-[#142B3A]">{resumo.totalUnidades}</span>
+            </div>
+            <div>
+              <span className="text-xs text-[#59636A] block">Área vendável equivalente</span>
+              <span className="font-semibold text-[#142B3A]">{Math.round(resumo.areaVendavelEquivalenteTotal)} m²</span>
+            </div>
+            <div>
+              <span className="text-xs text-[#59636A] block">Receita total (GDV)</span>
+              <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.receitaTotal).toLocaleString("pt-PT")}</span>
+            </div>
+          </div>
+        )}
       </Card>
     </>
   );
