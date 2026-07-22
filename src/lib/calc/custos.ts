@@ -188,22 +188,7 @@ export function agregarCustos(linhasResolvidas: LinhaCustoResolvida[]): ResumoCu
 }
 
 // --- Calendário de cada linha (secção 11 do plano: início + duração = fim) ---
-
-/**
- * Data final = último dia do N.º mês contado a partir do mês da data inicial.
- * Duração de 1 mês termina no último dia do MESMO mês da data inicial.
- */
-export function calcDataFinal(dataInicial: string, duracaoMeses: number): string {
-  const [ano, mes, dia] = dataInicial.split("-").map(Number);
-  // Mês-alvo (0-indexed em JS Date): mês inicial + (duração - 1), depois o dia 0 do mês seguinte = último dia do mês-alvo.
-  const dataFinal = new Date(Date.UTC(ano, mes - 1 + duracaoMeses, 0));
-  void dia;
-  return dataFinal.toISOString().slice(0, 10);
-}
-
-/** Recalcula a duração (em meses inteiros) a partir de duas datas — usado quando a data final é editada manualmente. */
-export function calcDuracaoMeses(dataInicial: string, dataFinal: string): number {
-  const [anoI, mesI] = dataInicial.split("-").map(Number);
-  const [anoF, mesF] = dataFinal.split("-").map(Number);
-  return (anoF - anoI) * 12 + (mesF - mesI) + 1;
-}
+//
+// A implementação vive em calendario.ts (Fase 7) — reexportada aqui para não
+// duplicar a lógica (secção 19 do plano: um único motor por indicador).
+export { calcDataFinal, calcDuracaoMeses } from "./calendario";
