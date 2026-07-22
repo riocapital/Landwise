@@ -33,6 +33,7 @@ export type LinhaCusto = {
   dataInicial: string | null;
   duracaoMeses: number | null;
   dataFinal: string | null;
+  perfilDesembolso: "unico_inicio" | "unico_fim" | "linear" | "curva_s" | "front_loaded" | "back_loaded" | "personalizado";
 };
 
 export type ContextoCusto = {

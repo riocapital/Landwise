@@ -32,6 +32,7 @@ function linha(overrides: Partial<LinhaCusto>): LinhaCusto {
     dataInicial: null,
     duracaoMeses: null,
     dataFinal: null,
+    perfilDesembolso: "linear",
     ...overrides,
   };
 }

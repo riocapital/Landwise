@@ -140,6 +140,7 @@ describe("IVA consolidado — sempre calculado a partir dos custos, nunca preenc
       dataInicial: null,
       duracaoMeses: null,
       dataFinal: null,
+      perfilDesembolso: "linear",
       valorResolvido: 10_000,
       custoSemIva: 10_000,
       ivaSuportado: 2300,
