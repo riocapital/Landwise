@@ -84,8 +84,9 @@ function normalizarLinha(row: Record<string, unknown>): LinhaNormalizada {
   const area = typeof row["Área (m²)"] === "number" ? (row["Área (m²)"] as number) : null;
   const tipoArea = row["Tipo de área"] as string | undefined;
 
-  const areaBasis: LinhaNormalizada["area_basis"] = tipoArea === "Bruta" ? "area_bruta" : "nao_identificada";
-  const grossArea = areaBasis === "area_bruta" ? area : null;
+  const areaBasis: LinhaNormalizada["area_basis"] =
+    tipoArea === "Bruta" ? "area_bruta" : tipoArea === "Área indicada pelo portal" ? "area_total" : "nao_identificada";
+  const grossArea = areaBasis === "area_bruta" || areaBasis === "area_total" ? area : null;
   const precoPorM2 = preco && area ? Number((preco / area).toFixed(2)) : null;
 
   const estado = (row["Estado"] as string) ?? "Não indicado";
