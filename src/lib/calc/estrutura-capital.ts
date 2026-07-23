@@ -9,8 +9,10 @@
 // promote — cada resultado (investidor/promotor) separa estas quatro
 // componentes explicitamente.
 
-import type { NivelHurdle, LinhaCascataMensal } from "./waterfall";
+import type { NivelHurdle, LinhaCascataMensal, MesDisponivelParaDistribuicao } from "./waterfall";
+import { distribuirCascata } from "./waterfall";
 import { calcXIRR, type FluxoDatado } from "./xirr";
+import type { LinhaCashFlowMensal } from "./cashflow";
 
 export type ModeloCapital =
   | "promotor_sozinho"
@@ -153,4 +155,61 @@ export function calcResultadoPromotor(reparto: RepartoMensal[], coInvestimentoCo
     lucroTotal: retornoCoInvestimento - coInvestimentoContribuido + feesTotais + promote,
     moicCoInvestimento: coInvestimentoContribuido > 0 ? retornoCoInvestimento / coInvestimentoContribuido : 0,
   };
+}
+
+// --- Orquestração: liga o ledger mensal do cash flow (cashflow.ts) à waterfall (waterfall.ts) ---
+
+/**
+ * Converte o ledger mensal do motor de cash flow em meses de
+ * disponibilidade para a cascata: quando o cash flow levered do mês é
+ * negativo, é um capital call; quando é positivo, é caixa disponível para
+ * distribuir. Esta regra é a mesma usada por equity.ts (secção 8 do
+ * plano) — a waterfall só muda COMO se distribui o que sobra, nunca
+ * QUANDO se chama capital.
+ */
+export function construirMesesParaCascata(linhas: LinhaCashFlowMensal[]): MesDisponivelParaDistribuicao[] {
+  return linhas.map((l) => ({
+    mes: l.mes,
+    data: `${l.mes}-01`,
+    capitalCallDoMes: l.cashFlowLevered < 0 ? -l.cashFlowLevered : 0,
+    disponivelParaDistribuir: l.cashFlowLevered > 0 ? l.cashFlowLevered : 0,
+  }));
+}
+
+export type ResultadosInvestidorPromotor = {
+  investidor: ResultadoInvestidorExterno;
+  promotor: ResultadoPromotor;
+};
+
+/**
+ * Função de topo: dado o ledger mensal já calculado (cashflow.ts) e os
+ * parâmetros da estrutura de capital (hurdles, % de participação, fees),
+ * devolve os resultados separados do investidor externo e do promotor —
+ * a devolução de capital, o retorno preferencial e os tiers de promote
+ * calculados pela waterfall real (waterfall.ts), nunca uma percentagem
+ * aplicada diretamente ao lucro total.
+ */
+export function calcularResultadosComWaterfall(
+  linhasCashFlow: LinhaCashFlowMensal[],
+  hurdles: NivelHurdle[],
+  percentagemInvestidor: number,
+  feesTotais: number
+): ResultadosInvestidorPromotor {
+  const meses = construirMesesParaCascata(linhasCashFlow);
+  const { linhas: linhasCascata, historicoInvestidor: historicoCombinado } = distribuirCascata(meses, hurdles);
+  void historicoCombinado; // histórico combinado (100% do capital) — usado só internamente pela cascata
+
+  const reparto = repartirPorParticipacao(linhasCascata, percentagemInvestidor);
+  const datas = meses.map((m) => m.data);
+
+  const fluxosCapitalCallInvestidor: FluxoDatado[] = meses
+    .filter((m) => m.capitalCallDoMes > 0)
+    .map((m) => ({ data: m.data, valor: -m.capitalCallDoMes * percentagemInvestidor }));
+
+  const investidor = calcResultadoInvestidorExterno(reparto, fluxosCapitalCallInvestidor, datas);
+
+  const coInvestimentoContribuido = meses.reduce((s, m) => s + m.capitalCallDoMes, 0) * (1 - percentagemInvestidor);
+  const promotor = calcResultadoPromotor(reparto, coInvestimentoContribuido, feesTotais);
+
+  return { investidor, promotor };
 }

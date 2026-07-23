@@ -148,12 +148,14 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   const linhasFinanciamento = simularFinanciamento(necessidadesFinanciamento, premissas.parametrosFinanciamento);
 
   // 3) Equity: cobre o que sobrar depois do financiamento, mês a mês.
-  let acumuladoLevered = 0;
+  //    IMPORTANTE: passa o valor MENSAL (delta), não acumulado — o motor de
+  //    equity (equity.ts) já tem o seu próprio mecanismo de arrasto entre
+  //    meses (caixaLivre). Passar aqui um valor acumulado duplicaria os
+  //    capital calls em qualquer cenário com mais de um mês de défice.
   const necessidadesEquity: NecessidadeMensalEquity[] = unleveredPorMes.map((l, i) => {
     const fin = linhasFinanciamento[i];
     const cashFlowLevered = l.cashFlowUnlevered + fin.drawdown - fin.juros - fin.fees - fin.impostoSelo - fin.amortizacao;
-    acumuladoLevered += cashFlowLevered;
-    return { mes: l.mes, saldoCaixaAposFinanciamento: acumuladoLevered, recebimentosClientes: l.receita };
+    return { mes: l.mes, saldoCaixaAposFinanciamento: cashFlowLevered, recebimentosClientes: l.receita };
   });
   const linhasEquity = simularEquity(necessidadesEquity);
 

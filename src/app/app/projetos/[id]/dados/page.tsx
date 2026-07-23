@@ -41,6 +41,8 @@ import {
   type EstruturaCapitalEstado,
   ESTRUTURA_CAPITAL_VAZIA,
 } from "@/lib/supabase/project-capital";
+import { calcularResultadosComWaterfall } from "@/lib/calc/estrutura-capital";
+import { criarLeadConsultoria, type NovoLeadConsultoria } from "@/lib/supabase/consulting-leads";
 import {
   calcSeguro,
   calcIMI,
@@ -69,6 +71,17 @@ import {
   apagarAtividade,
   duplicarAtividade,
 } from "@/lib/supabase/project-timeline";
+import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
+import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
+import { calcularCashFlow } from "@/lib/calc/cashflow";
+import { gerarRecebimentosMensais } from "@/lib/calc/vendas";
+import {
+  calcularMatrizSensibilidade,
+  extrairIndicador,
+  type MatrizSensibilidade,
+  type IndicadorSensibilidade,
+  type PremissasBaseSensibilidade,
+} from "@/lib/calc/sensibilidades";
 
 const STEPS = [
   "Identificação",
@@ -78,7 +91,7 @@ const STEPS = [
   "Estrutura de capital e fees",
   "Impostos",
   "Calendário",
-  "Revisão",
+  "Cash flow e resultados",
 ];
 
 // --- Fase 2: localização e áreas estruturadas (colunas novas em `projects`) ---
@@ -150,6 +163,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [feesNovos, setFeesNovos] = useState<Fee[]>([]);
   const [impostos, setImpostos] = useState<ImpostosEstado>(IMPOSTOS_VAZIO);
   const [atividades, setAtividades] = useState<Atividade[]>([]);
+  const [planoVendas, setPlanoVendas] = useState<PlanoVendas>(PLANO_VENDAS_VAZIO);
   const [aLoadearCp, setALoadearCp] = useState(false);
   const [opcoesCp, setOpcoesCp] = useState<
     { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[]
@@ -204,6 +218,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setImpostos(impostosCarregados);
     const atividadesCarregadas = await listarAtividades(supabase, id);
     setAtividades(atividadesCarregadas);
+    const planoVendasCarregado = await carregarPlanoVendas(supabase, id);
+    setPlanoVendas(planoVendasCarregado);
     setLoading(false);
   }, [id, supabase]);
 
@@ -265,6 +281,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       await Promise.all(feesNovos.map((f) => atualizarFee(supabase, f.id, f)));
       await guardarImpostos(supabase, id, impostos);
       await Promise.all(atividades.map((a) => atualizarAtividade(supabase, a.id, a)));
+      await guardarPlanoVendas(supabase, id, planoVendas);
 
       setSavedAt(new Date());
       if (!silencioso) setSaving(false);
@@ -283,6 +300,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       feesNovos,
       impostos,
       atividades,
+      planoVendas,
       supabase,
     ]
   );
@@ -306,6 +324,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     feesNovos,
     impostos,
     atividades,
+    planoVendas,
     loading,
   ]);
 
@@ -455,6 +474,41 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setImpostos((prev) => ({ ...prev, [key]: value }));
   }
 
+  async function handleSolicitarConsultoria(
+    dadosFormulario: {
+      name: string;
+      company: string;
+      email: string;
+      phone: string;
+      message: string;
+      preferenciaContacto: "email" | "telefone";
+    },
+    impostoEstimado: number
+  ): Promise<{ ok: boolean; erro?: string }> {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData.user) return { ok: false, erro: "Sessão não encontrada. Inicia sessão novamente." };
+
+    const lead: NovoLeadConsultoria = {
+      userId: userData.user.id,
+      projectId: id,
+      name: dadosFormulario.name,
+      company: dadosFormulario.company || null,
+      email: dadosFormulario.email,
+      phone: dadosFormulario.phone || null,
+      message: dadosFormulario.message || null,
+      preferenciaContacto: dadosFormulario.preferenciaContacto,
+      projectSummary: {
+        projeto: nome,
+        localizacao: [identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || null,
+        valorAquisicao: inputs.custoTerreno || 0,
+        gdv: resumoProgramaAtual.receitaTotal,
+        custoTotal: resumoCustosAtual.custoTotal,
+        impostoEstimado,
+      },
+    };
+    return criarLeadConsultoria(supabase, lead);
+  }
+
   async function adicionarAtividade(nome: string) {
     const nova = await criarAtividade(supabase, id, nome, atividades.length);
     if (nova) setAtividades((prev) => [...prev, nova]);
@@ -520,6 +574,17 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         return a;
       });
     });
+  }
+
+  function updatePlanoVendas<K extends keyof PlanoVendas>(key: K, value: PlanoVendas[K]) {
+    setPlanoVendas((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function updateEstruturaRecebimentos<K extends keyof PlanoVendas["estruturaRecebimentos"]>(
+    key: K,
+    value: PlanoVendas["estruturaRecebimentos"][K]
+  ) {
+    setPlanoVendas((prev) => ({ ...prev, estruturaRecebimentos: { ...prev.estruturaRecebimentos, [key]: value } }));
   }
 
   async function pedirSugestaoLandwise(tip: Typology) {
@@ -596,6 +661,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
   };
   const resumoCustosAtual = agregarCustos(resolverCustos(custosNovos, contextoCustoAtual));
+  const resumoProgramaAtual = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const contextoFeesAtual: ContextoFees = {
     valorAquisicao: contextoCustoAtual.valorAquisicao,
     hardCostsTotal: resumoCustosAtual.totalHardCosts,
@@ -705,6 +771,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           impostos={impostos}
           updateImpostos={updateImpostos}
           valorAquisicao={inputs.custoTerreno || 0}
+          onSolicitarConsultoria={handleSolicitarConsultoria}
         />
       )}
       {step === 6 && (
@@ -722,7 +789,24 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           onReordenarAtividade={reordenarAtividade}
         />
       )}
-      {step === 7 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
+      {step === 7 && (
+        <StepCashFlowResultados
+          calculando={calculando}
+          onCalcular={calcular}
+          planoVendas={planoVendas}
+          updatePlanoVendas={updatePlanoVendas}
+          updateEstruturaRecebimentos={updateEstruturaRecebimentos}
+          custosNovos={custosNovos}
+          contextoCusto={contextoCustoAtual}
+          resumoPrograma={resumoProgramaAtual}
+          identificacao={identificacao}
+          financiamento={financiamento}
+          estruturaCapital={estruturaCapital}
+          hurdles={hurdles}
+          feesNovos={feesNovos}
+          contextoFees={contextoFeesAtual}
+        />
+      )}
 
       <div className="flex mt-8">
         {step > 0 && (
@@ -1924,10 +2008,15 @@ function StepImpostos({
   impostos,
   updateImpostos,
   valorAquisicao,
+  onSolicitarConsultoria,
 }: {
   impostos: ImpostosEstado;
   updateImpostos: <K extends keyof ImpostosEstado>(k: K, v: ImpostosEstado[K]) => void;
   valorAquisicao: number;
+  onSolicitarConsultoria: (
+    dados: { name: string; company: string; email: string; phone: string; message: string; preferenciaContacto: "email" | "telefone" },
+    impostoEstimado: number
+  ) => Promise<{ ok: boolean; erro?: string }>;
 }) {
   const seguro = calcSeguro(impostos.seguroTaxa, "valor_aquisicao", valorAquisicao, impostos.seguroDuracaoAnos);
   const imi = calcIMI(impostos.imiVpt ?? 0, impostos.imiTaxa, impostos.imiNumAnos);
@@ -1938,6 +2027,9 @@ function StepImpostos({
   const derramaEstadual = calcDerramaEstadual(lucroTributavel);
   const impostoAquisicao = valorAquisicao * impostos.imtValor;
   const seloAquisicao = valorAquisicao * impostos.impostoSeloAquisicaoTaxa;
+  const impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual + impostoAquisicao + seloAquisicao;
+
+  const [modalAberto, setModalAberto] = useState(false);
 
   return (
     <>
@@ -2069,9 +2161,117 @@ function StepImpostos({
 
       <Card title="★ A estrutura fiscal pode impactar significativamente o retorno do projeto.">
         <p className="text-sm text-[#142B3A] mb-3">Saiba como otimizar. Esta estimativa não substitui uma análise fiscal, jurídica ou contabilística individual.</p>
-        <button className="text-sm font-semibold text-white bg-[#142B3A] px-4 py-2 rounded-lg">Solicitar análise especializada</button>
+        <button onClick={() => setModalAberto(true)} className="text-sm font-semibold text-white bg-[#142B3A] px-4 py-2 rounded-lg">
+          Solicitar análise especializada
+        </button>
       </Card>
+
+      {modalAberto && (
+        <ConsultoriaModal onFechar={() => setModalAberto(false)} onEnviar={(dados) => onSolicitarConsultoria(dados, impostoEstimadoTotal)} />
+      )}
     </>
+  );
+}
+
+function ConsultoriaModal({
+  onFechar,
+  onEnviar,
+}: {
+  onFechar: () => void;
+  onEnviar: (dados: {
+    name: string;
+    company: string;
+    email: string;
+    phone: string;
+    message: string;
+    preferenciaContacto: "email" | "telefone";
+  }) => Promise<{ ok: boolean; erro?: string }>;
+}) {
+  const [nome, setNomeLead] = useState("");
+  const [empresa, setEmpresa] = useState("");
+  const [email, setEmail] = useState("");
+  const [telefone, setTelefone] = useState("");
+  const [mensagem, setMensagem] = useState("");
+  const [preferencia, setPreferencia] = useState<"email" | "telefone">("email");
+  const [aEnviar, setAEnviar] = useState(false);
+  const [enviado, setEnviado] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function handleEnviar() {
+    if (!nome || !email) {
+      setErro("Preenche pelo menos o nome e o email.");
+      return;
+    }
+    setAEnviar(true);
+    setErro(null);
+    const resultado = await onEnviar({ name: nome, company: empresa, email, phone: telefone, message: mensagem, preferenciaContacto: preferencia });
+    setAEnviar(false);
+    if (resultado.ok) {
+      setEnviado(true);
+    } else {
+      setErro(resultado.erro ?? "Não foi possível enviar o pedido. Tenta novamente.");
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onFechar}>
+      <div className="bg-white rounded-xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
+        {enviado ? (
+          <>
+            <h3 className="text-[#142B3A] font-bold text-lg mb-2">Pedido enviado</h3>
+            <p className="text-sm text-[#59636A] mb-4">
+              Obrigado. A nossa equipa entra em contacto por {preferencia === "email" ? "email" : "telefone"} em breve.
+            </p>
+            <button onClick={onFechar} className="px-4 py-2 rounded-lg bg-[#142B3A] text-white text-sm font-bold">
+              Fechar
+            </button>
+          </>
+        ) : (
+          <>
+            <h3 className="text-[#142B3A] font-bold text-lg mb-1">Solicitar análise especializada</h3>
+            <p className="text-xs text-[#8FA6AF] mb-4">Esta estimativa não substitui uma análise fiscal, jurídica ou contabilística individual.</p>
+            <Row>
+              <Field label="Nome">
+                <input className="input-dark" value={nome} onChange={(e) => setNomeLead(e.target.value)} />
+              </Field>
+              <Field label="Empresa">
+                <input className="input-dark" value={empresa} onChange={(e) => setEmpresa(e.target.value)} />
+              </Field>
+            </Row>
+            <Row>
+              <Field label="Email">
+                <input type="email" className="input-dark" value={email} onChange={(e) => setEmail(e.target.value)} />
+              </Field>
+              <Field label="Telefone">
+                <input className="input-dark" value={telefone} onChange={(e) => setTelefone(e.target.value)} />
+              </Field>
+            </Row>
+            <Row>
+              <Field label="Preferência de contacto">
+                <select className="input-dark" value={preferencia} onChange={(e) => setPreferencia(e.target.value as "email" | "telefone")}>
+                  <option value="email">Email</option>
+                  <option value="telefone">Telefone</option>
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              <Field label="Mensagem (opcional)">
+                <textarea className="input-dark" rows={3} value={mensagem} onChange={(e) => setMensagem(e.target.value)} />
+              </Field>
+            </Row>
+            {erro && <p className="text-xs text-[#A13D2E] mb-2">{erro}</p>}
+            <div className="flex gap-2 mt-2">
+              <button onClick={handleEnviar} disabled={aEnviar} className="px-4 py-2 rounded-lg bg-[#142B3A] text-white text-sm font-bold disabled:opacity-60">
+                {aEnviar ? "A enviar…" : "Enviar pedido"}
+              </button>
+              <button onClick={onFechar} className="px-4 py-2 rounded-lg border border-[#E3DACB] text-[#142B3A] text-sm font-semibold">
+                Cancelar
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -2278,46 +2478,467 @@ function StepCalendario({
 }
 
 // ============================================================
-// Etapa 5 — Revisão
+// Etapa final — Cash flow e resultados
 // ============================================================
-function StepRevisao({
-  inputs,
+const SUBTABS_RESULTADOS = ["Plano de vendas", "Resumo", "Cash flow", "Capex", "Funding", "Financiamento", "Investidor e promotor", "Sensibilidades"] as const;
+
+function StepCashFlowResultados({
   calculando,
   onCalcular,
+  planoVendas,
+  updatePlanoVendas,
+  updateEstruturaRecebimentos,
+  custosNovos,
+  contextoCusto,
+  resumoPrograma,
+  identificacao,
+  financiamento,
+  estruturaCapital,
+  hurdles,
+  feesNovos,
+  contextoFees,
 }: {
-  inputs: ProjectInputs;
   calculando: boolean;
   onCalcular: () => void;
+  planoVendas: PlanoVendas;
+  updatePlanoVendas: <K extends keyof PlanoVendas>(k: K, v: PlanoVendas[K]) => void;
+  updateEstruturaRecebimentos: <K extends keyof PlanoVendas["estruturaRecebimentos"]>(k: K, v: PlanoVendas["estruturaRecebimentos"][K]) => void;
+  custosNovos: LinhaCusto[];
+  contextoCusto: ContextoCusto;
+  resumoPrograma: ReturnType<typeof calcResumoPrograma>;
+  identificacao: IdentificacaoEstruturada;
+  financiamento: ParametrosFinanciamento;
+  estruturaCapital: EstruturaCapitalEstado;
+  hurdles: (NivelHurdle & { id: string })[];
+  feesNovos: Fee[];
+  contextoFees: ContextoFees;
 }) {
-  const faltam: string[] = [];
-  if (!inputs.localizacao) faltam.push("Localização");
-  if (!inputs.custoTerreno) faltam.push("Custo de aquisição do terreno");
-  if (inputs.mapaVendas.length === 0) faltam.push("Mapa de vendas (nenhuma unidade definida)");
+  const [subtab, setSubtab] = useState<(typeof SUBTABS_RESULTADOS)[number]>("Resumo");
+  const [sensMatriz, setSensMatriz] = useState<MatrizSensibilidade>("aquisicao_vs_custo_construcao");
+  const [sensIndicador, setSensIndicador] = useState<IndicadorSensibilidade>("margem");
+
+  const recebimentosValidos = validarEstruturaRecebimentos(planoVendas.estruturaRecebimentos);
+  const datasPreenchidas = Boolean(
+    planoVendas.dataLancamentoComercial && planoVendas.dataInicioConstrucao && planoVendas.dataFimConstrucao && planoVendas.dataEscritura
+  );
+  const prontoParaCalcular = recebimentosValidos && datasPreenchidas && custosNovos.length > 0;
+
+  let resultado: ReturnType<typeof calcularCashFlow> | null = null;
+  if (prontoParaCalcular) {
+    const { linhas: recebimentos } = gerarRecebimentosMensais(resumoPrograma.receitaTotal, planoVendas);
+    resultado = calcularCashFlow({
+      linhasCusto: custosNovos,
+      contextoCusto,
+      recebimentos,
+      parametrosFinanciamento: financiamento,
+      saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
+    });
+  }
+
+  const somaRecebimentos =
+    planoVendas.estruturaRecebimentos.pctReserva +
+    planoVendas.estruturaRecebimentos.pctCpcv +
+    planoVendas.estruturaRecebimentos.pctDuranteConstrucao +
+    planoVendas.estruturaRecebimentos.pctConclusao +
+    planoVendas.estruturaRecebimentos.pctEscritura;
 
   return (
-    <Card title="Revisão antes de calcular">
-      {faltam.length > 0 ? (
-        <div className="bg-[#D6A65D]/10 border border-[#D6A65D]/30 rounded-lg px-4 py-3 mb-4">
-          <p className="text-sm text-[#B8863F] font-semibold mb-1">Dados em falta — o cálculo prossegue, mas o nível de confiança será mais baixo:</p>
-          <ul className="text-sm text-[#59636A] list-disc list-inside">
-            {faltam.map((f) => (
-              <li key={f}>{f}</li>
-            ))}
-          </ul>
-        </div>
-      ) : (
-        <div className="bg-[#4E7A5C]/10 border border-[#4E7A5C]/30 rounded-lg px-4 py-3 mb-4">
-          <p className="text-sm text-[#4E7A5C] font-semibold">Todos os dados essenciais foram preenchidos.</p>
-        </div>
+    <>
+      <div className="flex gap-1 mb-5 flex-wrap">
+        {SUBTABS_RESULTADOS.map((t) => (
+          <button
+            key={t}
+            onClick={() => setSubtab(t)}
+            className={`text-xs px-3 py-1.5 rounded-full border ${
+              subtab === t ? "bg-[#142B3A] text-white border-[#142B3A]" : "border-[#E3DACB] text-[#142B3A]"
+            }`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {!prontoParaCalcular && subtab !== "Plano de vendas" && (
+        <Card title="Preenche o Plano de Vendas primeiro">
+          <p className="text-sm text-[#59636A]">
+            {!datasPreenchidas && "Faltam datas do plano de vendas (lançamento, início/fim de construção, escritura). "}
+            {!recebimentosValidos && `A estrutura de recebimentos soma ${Math.round(somaRecebimentos * 100)}%, tem de somar 100%. `}
+            {custosNovos.length === 0 && "Ainda não há linhas de custo na etapa Aquisição e Custos."}
+          </p>
+        </Card>
       )}
-      <button
-        onClick={onCalcular}
-        disabled={calculando}
-        className="px-6 py-3 rounded-lg bg-[#142B3A] text-white text-sm font-bold disabled:opacity-60"
-      >
-        {calculando ? "A calcular…" : "Calcular viabilidade"}
-      </button>
-    </Card>
+
+      {subtab === "Plano de vendas" && (
+        <Card title="Plano de vendas">
+          <Row>
+            <Field label="Data de lançamento comercial">
+              <input
+                type="date"
+                className="input-dark"
+                value={planoVendas.dataLancamentoComercial}
+                onChange={(e) => updatePlanoVendas("dataLancamentoComercial", e.target.value)}
+              />
+            </Field>
+            <Field label="Duração esperada das vendas (meses)">
+              <input
+                type="number"
+                className="input-dark"
+                value={planoVendas.duracaoVendasMeses}
+                onChange={(e) => updatePlanoVendas("duracaoVendasMeses", Number(e.target.value))}
+              />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="Início da construção">
+              <input
+                type="date"
+                className="input-dark"
+                value={planoVendas.dataInicioConstrucao}
+                onChange={(e) => updatePlanoVendas("dataInicioConstrucao", e.target.value)}
+              />
+            </Field>
+            <Field label="Fim da construção">
+              <input
+                type="date"
+                className="input-dark"
+                value={planoVendas.dataFimConstrucao}
+                onChange={(e) => updatePlanoVendas("dataFimConstrucao", e.target.value)}
+              />
+            </Field>
+            <Field label="Data da escritura">
+              <input type="date" className="input-dark" value={planoVendas.dataEscritura} onChange={(e) => updatePlanoVendas("dataEscritura", e.target.value)} />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="Comissão de mediação (%)">
+              <PercentInput value={planoVendas.comissaoMediacaoPct} onChange={(v) => updatePlanoVendas("comissaoMediacaoPct", v)} />
+            </Field>
+            <Field label="Cancelamentos estimados (%)">
+              <PercentInput value={planoVendas.cancelamentosEstimadosPct} onChange={(v) => updatePlanoVendas("cancelamentosEstimadosPct", v)} />
+            </Field>
+          </Row>
+
+          <h4 className="text-sm font-semibold text-[#142B3A] mt-4 mb-2">
+            Estrutura de recebimentos — soma: {Math.round(somaRecebimentos * 100)}% {!recebimentosValidos && <span className="text-[#A13D2E]">(tem de ser 100%)</span>}
+          </h4>
+          <Row>
+            <Field label="% na reserva">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctReserva} onChange={(v) => updateEstruturaRecebimentos("pctReserva", v)} />
+            </Field>
+            <Field label="% no CPCV">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctCpcv} onChange={(v) => updateEstruturaRecebimentos("pctCpcv", v)} />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="% durante a construção">
+              <PercentInput
+                value={planoVendas.estruturaRecebimentos.pctDuranteConstrucao}
+                onChange={(v) => updateEstruturaRecebimentos("pctDuranteConstrucao", v)}
+              />
+            </Field>
+            <Field label="% na conclusão">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctConclusao} onChange={(v) => updateEstruturaRecebimentos("pctConclusao", v)} />
+            </Field>
+            <Field label="% na escritura">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctEscritura} onChange={(v) => updateEstruturaRecebimentos("pctEscritura", v)} />
+            </Field>
+          </Row>
+        </Card>
+      )}
+
+      {subtab === "Resumo" && resultado && (
+        <Card title="Resumo">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <ResumoItem label="Freguesia / Concelho" valor={[identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || "—"} />
+            <ResumoItem label="ABC total" valor={`${Math.round((identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0))} m²`} />
+            <ResumoItem label="GCA total" valor={`${Math.round(resumoPrograma.gcaTotal)} m²`} />
+            <ResumoItem label="ABP" valor={`${Math.round(resumoPrograma.abpTotal)} m²`} />
+            <ResumoItem label="Área vendável equivalente" valor={`${Math.round(resumoPrograma.areaVendavelEquivalenteTotal)} m²`} />
+            <ResumoItem label="Número de unidades" valor={String(resumoPrograma.totalUnidades)} />
+            <ResumoItem label="Preço médio por m²" valor={`€${Math.round(resumoPrograma.precoMedioPonderadoM2).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="GDV" valor={`€${Math.round(resultado.gdv).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Custo total" valor={`€${Math.round(resultado.custoTotal).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Lucro" valor={`€${Math.round(resultado.lucroLevered).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Margem" valor={`${(resultado.margem * 100).toFixed(1)}%`} />
+            <ResumoItem label="Peak cash exposure" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Peak debt" valor={`€${Math.round(resultado.financiamento.peakDebt).toLocaleString("pt-PT")}`} />
+            <ResumoItem
+              label="IRR (levered)"
+              valor={(() => {
+                const irr = extrairIndicador(resultado, "irr_levered");
+                return irr !== null ? `${(irr * 100).toFixed(1)}%` : "Não calculável";
+              })()}
+            />
+            <ResumoItem label="MOIC" valor={`${(extrairIndicador(resultado, "moic") ?? 0).toFixed(2)}x`} />
+          </div>
+        </Card>
+      )}
+
+      {subtab === "Cash flow" && resultado && (
+        <Card title="Cash flow mensal" subtitle={`${resultado.linhas.length} meses`}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[#59636A] uppercase">
+                  <th className="pb-2 pr-2">Mês</th>
+                  <th className="pb-2 pr-2">Receita</th>
+                  <th className="pb-2 pr-2">Custos</th>
+                  <th className="pb-2 pr-2">CF unlevered</th>
+                  <th className="pb-2 pr-2">Drawdown</th>
+                  <th className="pb-2 pr-2">Juros+fees</th>
+                  <th className="pb-2 pr-2">CF levered</th>
+                  <th className="pb-2 pr-2">Equity call</th>
+                  <th className="pb-2 pr-2">Distribuições</th>
+                  <th className="pb-2 pr-2">Saldo acumulado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {resultado.linhas.map((l) => (
+                  <tr key={l.mes} className="border-t border-[#E3DACB]">
+                    <td className="py-1 pr-2">{l.mes}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.receitaVendas).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.cashFlowUnlevered).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.drawdown).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.jurosEFees).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.cashFlowLevered).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.equityCall).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.distribuicoes).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.saldoCaixaAcumulado).toLocaleString("pt-PT")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      {subtab === "Capex" && resultado && (
+        <Card title="Capex por categoria">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[#59636A] uppercase text-xs">
+                <th className="pb-2">Categoria</th>
+                <th className="pb-2">Total</th>
+                <th className="pb-2">% do custo total</th>
+                <th className="pb-2">% do GDV</th>
+                <th className="pb-2">€/unidade</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(
+                custosNovos.reduce<Record<string, number>>((acc, c) => {
+                  const resolvido = resolverCustos([c], contextoCusto)[0];
+                  acc[c.categoria] = (acc[c.categoria] ?? 0) + resolvido.valorResolvido;
+                  return acc;
+                }, {})
+              ).map(([categoria, valor]) => (
+                <tr key={categoria} className="border-t border-[#E3DACB]">
+                  <td className="py-1.5">{categoria}</td>
+                  <td className="py-1.5">€{Math.round(valor).toLocaleString("pt-PT")}</td>
+                  <td className="py-1.5">{resultado!.custoTotal > 0 ? `${((valor / resultado!.custoTotal) * 100).toFixed(1)}%` : "—"}</td>
+                  <td className="py-1.5">{resultado!.gdv > 0 ? `${((valor / resultado!.gdv) * 100).toFixed(1)}%` : "—"}</td>
+                  <td className="py-1.5">
+                    {contextoCusto.numeroUnidades > 0 ? `€${Math.round(valor / contextoCusto.numeroUnidades).toLocaleString("pt-PT")}` : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      )}
+
+      {subtab === "Funding" && resultado && (
+        <Card title="Funding">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+            <ResumoItem label="Equity" valor={`€${Math.round(resultado.equity.equityContributed).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Dívida bancária" valor={`€${Math.round(resultado.financiamento.dividaTotalLevantada).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Recebimentos de clientes" valor={`€${Math.round(resultado.gdv).toLocaleString("pt-PT")}`} />
+            <ResumoItem
+              label="Total funding"
+              valor={`€${Math.round(resultado.equity.equityContributed + resultado.financiamento.dividaTotalLevantada).toLocaleString("pt-PT")}`}
+            />
+            <ResumoItem label="Peak funding (equity)" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Capital devolvido" valor={`€${Math.round(resultado.equity.capitalDevolvidoTotal).toLocaleString("pt-PT")}`} />
+          </div>
+        </Card>
+      )}
+
+      {subtab === "Financiamento" && resultado && (
+        <Card title="Financiamento">
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+            <ResumoItem label="Peak debt" valor={`€${Math.round(resultado.financiamento.peakDebt).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Total drawdown" valor={`€${Math.round(resultado.financiamento.dividaTotalLevantada).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Juros totais" valor={`€${Math.round(resultado.financiamento.jurosTotais).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Fees bancários" valor={`€${Math.round(resultado.financiamento.feesBancarios).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="LTV" valor={resultado.financiamento.ltv !== null ? `${(resultado.financiamento.ltv * 100).toFixed(1)}%` : "—"} />
+            <ResumoItem label="LTC" valor={resultado.financiamento.ltc !== null ? `${(resultado.financiamento.ltc * 100).toFixed(1)}%` : "—"} />
+            <ResumoItem label="Mês da dívida máxima" valor={resultado.financiamento.mesDividaMaxima ?? "—"} />
+          </div>
+        </Card>
+      )}
+
+      {subtab === "Investidor e promotor" && resultado && (
+        <>
+          {estruturaCapital.temInvestidorExterno ? (
+            (() => {
+              const feesTotais = agregarFees(feesNovos, contextoFees).total;
+              const { investidor, promotor } = calcularResultadosComWaterfall(
+                resultado.linhas,
+                hurdles,
+                estruturaCapital.percentagemInvestidor,
+                feesTotais
+              );
+              return (
+                <>
+                  <Card title="Resultado do investidor externo" subtitle="Devolução de capital, retorno preferencial e tiers calculados pela waterfall real (waterfall.ts) — nunca uma percentagem sobre o lucro total.">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                      <ResumoItem label="Equity contributed" valor={`€${Math.round(investidor.equityContributed).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="Capital devolvido" valor={`€${Math.round(investidor.capitalDevolvido).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="Distribuições totais" valor={`€${Math.round(investidor.distribuicoesTotais).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="Lucro" valor={`€${Math.round(investidor.lucro).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="MOIC" valor={`${investidor.moic.toFixed(2)}x`} />
+                      <ResumoItem label="IRR" valor={investidor.irr !== null ? `${(investidor.irr * 100).toFixed(1)}%` : "Não calculável"} />
+                    </div>
+                  </Card>
+                  <Card title="Resultado do promotor" subtitle="Co-investimento, fees e promote sempre separados — nunca somados sem discriminação.">
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                      <ResumoItem label="Co-investimento contribuído" valor={`€${Math.round(promotor.coInvestimentoContribuido).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="Retorno do co-investimento" valor={`€${Math.round(promotor.retornoCoInvestimento).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="Fees" valor={`€${Math.round(promotor.fees).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="Promote" valor={`€${Math.round(promotor.promote).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="Lucro total" valor={`€${Math.round(promotor.lucroTotal).toLocaleString("pt-PT")}`} />
+                      <ResumoItem label="MOIC do co-investimento" valor={`${promotor.moicCoInvestimento.toFixed(2)}x`} />
+                    </div>
+                  </Card>
+                </>
+              );
+            })()
+          ) : (
+            <Card title="Resultado do promotor" subtitle="Sem investidor externo — todo o resultado é do promotor.">
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                <ResumoItem label="Equity contributed" valor={`€${Math.round(resultado.equity.equityContributed).toLocaleString("pt-PT")}`} />
+                <ResumoItem label="Peak cash exposure" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
+                <ResumoItem label="Capital devolvido" valor={`€${Math.round(resultado.equity.capitalDevolvidoTotal).toLocaleString("pt-PT")}`} />
+                <ResumoItem label="Lucro" valor={`€${Math.round(resultado.lucroLevered).toLocaleString("pt-PT")}`} />
+                <ResumoItem label="MOIC" valor={`${(extrairIndicador(resultado, "moic") ?? 0).toFixed(2)}x`} />
+                <ResumoItem
+                  label="IRR"
+                  valor={(() => {
+                    const irr = extrairIndicador(resultado, "irr_levered");
+                    return irr !== null ? `${(irr * 100).toFixed(1)}%` : "Não calculável";
+                  })()}
+                />
+              </div>
+            </Card>
+          )}
+        </>
+      )}
+
+      {subtab === "Sensibilidades" && prontoParaCalcular && (
+        <Card title="Sensibilidades" subtitle="Cada célula recalcula o modelo completo — a célula central (0%×0%) é sempre igual ao cenário-base.">
+          <Row>
+            <Field label="Matriz">
+              <select className="input-dark" value={sensMatriz} onChange={(e) => setSensMatriz(e.target.value as MatrizSensibilidade)}>
+                <option value="aquisicao_vs_custo_construcao">Aquisição × Custo de construção</option>
+                <option value="custo_construcao_vs_preco_venda">Custo de construção × Preço de venda</option>
+                <option value="aquisicao_vs_preco_venda">Aquisição × Preço de venda</option>
+              </select>
+            </Field>
+            <Field label="Indicador">
+              <select className="input-dark" value={sensIndicador} onChange={(e) => setSensIndicador(e.target.value as IndicadorSensibilidade)}>
+                <option value="margem">Margem</option>
+                <option value="lucro">Lucro</option>
+                <option value="irr_levered">IRR levered</option>
+                <option value="irr_unlevered">IRR unlevered</option>
+                <option value="moic">MOIC</option>
+                <option value="roe">ROE</option>
+                <option value="peak_cash_exposure">Peak cash exposure</option>
+                <option value="peak_debt">Peak debt</option>
+                <option value="equity_contributed">Equity contributed</option>
+              </select>
+            </Field>
+          </Row>
+          <SensibilidadesMatriz
+            base={{
+              linhasCusto: custosNovos,
+              contextoCusto,
+              receitaTotalGdvBase: resumoPrograma.receitaTotal,
+              planoVendas,
+              parametrosFinanciamento: financiamento,
+            }}
+            matriz={sensMatriz}
+            indicador={sensIndicador}
+          />
+        </Card>
+      )}
+
+      <Card title="Motor antigo (compatibilidade)" subtitle="Continua a alimentar o dashboard atual — independente do motor novo acima.">
+        <button
+          onClick={onCalcular}
+          disabled={calculando}
+          className="px-6 py-3 rounded-lg bg-[#142B3A] text-white text-sm font-bold disabled:opacity-60"
+        >
+          {calculando ? "A calcular…" : "Calcular viabilidade (motor antigo)"}
+        </button>
+      </Card>
+
+      <Card title="Relatório">
+        <button disabled className="px-6 py-3 rounded-lg bg-[#E3DACB] text-[#8FA6AF] text-sm font-bold cursor-not-allowed">
+          Gerar relatório — Em breve
+        </button>
+      </Card>
+    </>
+  );
+}
+
+function ResumoItem({ label, valor }: { label: string; valor: string }) {
+  return (
+    <div>
+      <span className="text-xs text-[#59636A] block">{label}</span>
+      <span className="font-semibold text-[#142B3A]">{valor}</span>
+    </div>
+  );
+}
+
+function SensibilidadesMatriz({
+  base,
+  matriz,
+  indicador,
+}: {
+  base: PremissasBaseSensibilidade;
+  matriz: MatrizSensibilidade;
+  indicador: IndicadorSensibilidade;
+}) {
+  const resultado = calcularMatrizSensibilidade(base, matriz, indicador);
+  const formatar = (v: number | null) => {
+    if (v === null) return "—";
+    if (indicador.startsWith("irr") || indicador === "margem" || indicador === "roe") return `${(v * 100).toFixed(1)}%`;
+    if (indicador === "moic") return `${v.toFixed(2)}x`;
+    return `€${Math.round(v).toLocaleString("pt-PT")}`;
+  };
+
+  return (
+    <table className="w-full text-xs text-center">
+      <tbody>
+        {resultado.celulas.map((linha, i) => (
+          <tr key={i}>
+            {linha.map((celula, j) => {
+              const central = celula.variacaoLinha === 0 && celula.variacaoColuna === 0;
+              return (
+                <td
+                  key={j}
+                  title={`GDV: €${Math.round(celula.gdv).toLocaleString("pt-PT")} · Custo total: €${Math.round(celula.custoTotal).toLocaleString("pt-PT")} · Lucro: €${Math.round(celula.lucro).toLocaleString("pt-PT")} · Margem: ${(celula.margem * 100).toFixed(1)}%`}
+                  className={`p-2 border border-[#E3DACB] ${central ? "bg-[#B96343]/20 font-bold" : ""}`}
+                >
+                  {formatar(celula.valor)}
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 

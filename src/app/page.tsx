@@ -1,6 +1,5 @@
 import fs from "fs";
 import path from "path";
-import { PreAnaliseForm } from "@/components/pre-analise-form";
 
 function readContent(file: string) {
   return fs.readFileSync(path.join(process.cwd(), "src/content", file), "utf-8");
@@ -20,7 +19,6 @@ export default function LandingPage() {
       />
       <style dangerouslySetInnerHTML={{ __html: style }} />
       <div dangerouslySetInnerHTML={{ __html: before }} />
-      <PreAnaliseForm />
       <div dangerouslySetInnerHTML={{ __html: after }} />
     </div>
   );

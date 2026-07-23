@@ -37,6 +37,9 @@
 .lw-public .hero-flex > div{min-width:0;}
 .lw-public .hero-flex > div:first-child{flex:0.95 1 0; margin-right:48px;}
 .lw-public .hero-flex > div:last-child{flex:1.05 1 0;}
+.lw-public .hero-flex > div:only-child{flex:1 1 100%; max-width:640px; margin-left:auto; margin-right:auto; text-align:center;}
+.lw-public .hero-flex > div:only-child p.lead{margin-left:auto; margin-right:auto;}
+.lw-public .hero-flex > div:only-child .hero-cta{justify-content:center;}
 .lw-public .hero h1{font-size:clamp(2.0rem,3.4vw,2.7rem); line-height:1.18; margin-bottom:18px;}
 .lw-public .hero p.lead{font-size:1.06rem; color:var(--slate); max-width:50ch; margin-bottom:26px;}
 .lw-public .hero-cta{display:flex; margin-bottom:16px;}

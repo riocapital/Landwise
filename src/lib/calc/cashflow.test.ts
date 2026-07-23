@@ -113,6 +113,37 @@ describe("calcularCashFlow — com financiamento bancário", () => {
   });
 });
 
+describe("calcularCashFlow — regressão: equity nunca duplica capital calls ao longo de vários meses", () => {
+  it("em vários meses de défice consecutivo, o total de equity aportado é igual ao custo total, nunca inflacionado pela acumulação", () => {
+    // 3 meses de custo fixo consecutivo, sem financiamento e sem receita —
+    // se o motor passasse o saldo ACUMULADO ao equity.ts (bug), o total
+    // aportado seria muito maior do que o custo real (100k+200k+300k=600k
+    // em vez de 100k+100k+100k=300k).
+    const premissas: PremissasCashFlow = {
+      linhasCusto: [
+        custo({ grupo: "aquisicao", tipoCalculo: "valor_fixo", valorInput: 100_000, dataInicial: "2026-01-01", duracaoMeses: 1, dataFinal: "2026-01-31" }),
+        custo({ grupo: "hard_cost", tipoCalculo: "valor_fixo", valorInput: 100_000, dataInicial: "2026-02-01", duracaoMeses: 1, dataFinal: "2026-02-28" }),
+        custo({ grupo: "hard_cost", tipoCalculo: "valor_fixo", valorInput: 100_000, dataInicial: "2026-03-01", duracaoMeses: 1, dataFinal: "2026-03-31" }),
+      ],
+      contextoCusto: contexto,
+      recebimentos: [],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    };
+    const resultado = calcularCashFlow(premissas);
+    expect(resultado.custoTotal).toBeCloseTo(300_000, 2);
+    expect(resultado.equity.equityContributed).toBeCloseTo(300_000, 2);
+
+    // Cada mês chama exatamente o seu próprio custo, nunca a soma acumulada.
+    const jan = resultado.linhas.find((l) => l.mes === "2026-01")!;
+    const fev = resultado.linhas.find((l) => l.mes === "2026-02")!;
+    const mar = resultado.linhas.find((l) => l.mes === "2026-03")!;
+    expect(jan.equityCall).toBeCloseTo(100_000, 2);
+    expect(fev.equityCall).toBeCloseTo(100_000, 2);
+    expect(mar.equityCall).toBeCloseTo(100_000, 2);
+  });
+});
+
 describe("calcularCashFlow — caso vazio", () => {
   it("devolve resultado zerado sem lançar erro quando não há custos nem receitas", () => {
     const resultado = calcularCashFlow({
