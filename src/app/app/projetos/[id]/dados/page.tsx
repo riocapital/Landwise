@@ -53,6 +53,22 @@ import {
   TAXA_IMI_SUGERIDA,
 } from "@/lib/calc/impostos";
 import { carregarImpostos, guardarImpostos, type ImpostosEstado, IMPOSTOS_VAZIO } from "@/lib/supabase/project-taxes";
+import {
+  resolverAtividadesEncadeadas,
+  gerarDadosGantt,
+  aoEditarDataFinal,
+  aoEditarDuracao,
+  aoEditarDataInicial,
+  ATIVIDADES_INICIAIS_SUGERIDAS,
+  type Atividade,
+} from "@/lib/calc/calendario";
+import {
+  listarAtividades,
+  criarAtividade,
+  atualizarAtividade,
+  apagarAtividade,
+  duplicarAtividade,
+} from "@/lib/supabase/project-timeline";
 
 const STEPS = [
   "Identificação",
@@ -133,6 +149,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [hurdles, setHurdles] = useState<(NivelHurdle & { id: string })[]>([]);
   const [feesNovos, setFeesNovos] = useState<Fee[]>([]);
   const [impostos, setImpostos] = useState<ImpostosEstado>(IMPOSTOS_VAZIO);
+  const [atividades, setAtividades] = useState<Atividade[]>([]);
   const [aLoadearCp, setALoadearCp] = useState(false);
   const [opcoesCp, setOpcoesCp] = useState<
     { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[]
@@ -185,6 +202,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setFeesNovos(feesCarregados);
     const impostosCarregados = await carregarImpostos(supabase, id);
     setImpostos(impostosCarregados);
+    const atividadesCarregadas = await listarAtividades(supabase, id);
+    setAtividades(atividadesCarregadas);
     setLoading(false);
   }, [id, supabase]);
 
@@ -245,11 +264,27 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       await Promise.all(hurdles.map((h) => atualizarHurdle(supabase, h.id, h)));
       await Promise.all(feesNovos.map((f) => atualizarFee(supabase, f.id, f)));
       await guardarImpostos(supabase, id, impostos);
+      await Promise.all(atividades.map((a) => atualizarAtividade(supabase, a.id, a)));
 
       setSavedAt(new Date());
       if (!silencioso) setSaving(false);
     },
-    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, estruturaCapital, hurdles, feesNovos, impostos, supabase]
+    [
+      id,
+      nome,
+      tipoProjeto,
+      inputs,
+      identificacao,
+      tipologiasNovas,
+      custosNovos,
+      financiamento,
+      estruturaCapital,
+      hurdles,
+      feesNovos,
+      impostos,
+      atividades,
+      supabase,
+    ]
   );
 
   // Autosave: 1.5s depois da última alteração
@@ -258,7 +293,21 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     const t = setTimeout(() => guardar(true), 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, estruturaCapital, hurdles, feesNovos, impostos, loading]);
+  }, [
+    nome,
+    tipoProjeto,
+    inputs,
+    identificacao,
+    tipologiasNovas,
+    custosNovos,
+    financiamento,
+    estruturaCapital,
+    hurdles,
+    feesNovos,
+    impostos,
+    atividades,
+    loading,
+  ]);
 
   function updateIdentificacao<K extends keyof IdentificacaoEstruturada>(key: K, value: IdentificacaoEstruturada[K]) {
     setIdentificacao((prev) => ({ ...prev, [key]: value }));
@@ -404,6 +453,73 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
   function updateImpostos<K extends keyof ImpostosEstado>(key: K, value: ImpostosEstado[K]) {
     setImpostos((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function adicionarAtividade(nome: string) {
+    const nova = await criarAtividade(supabase, id, nome, atividades.length);
+    if (nova) setAtividades((prev) => [...prev, nova]);
+  }
+
+  function atualizarAtividadeLocal(atividadeId: string, patch: Partial<Atividade>) {
+    setAtividades((prev) => prev.map((a) => (a.id === atividadeId ? { ...a, ...patch } : a)));
+  }
+
+  function handleDataInicialAtividade(atividadeId: string, novaData: string) {
+    const atividade = atividades.find((a) => a.id === atividadeId);
+    if (!atividade) return;
+    if (novaData && atividade.duracaoMeses) {
+      const r = aoEditarDataInicial(novaData, atividade.duracaoMeses);
+      atualizarAtividadeLocal(atividadeId, { dataInicial: r.dataInicial, dataFinal: r.dataFinal });
+    } else {
+      atualizarAtividadeLocal(atividadeId, { dataInicial: novaData || null });
+    }
+  }
+
+  function handleDuracaoAtividade(atividadeId: string, novaDuracao: number) {
+    const atividade = atividades.find((a) => a.id === atividadeId);
+    if (!atividade) return;
+    if (atividade.dataInicial && novaDuracao > 0) {
+      const r = aoEditarDuracao(atividade.dataInicial, novaDuracao);
+      atualizarAtividadeLocal(atividadeId, { duracaoMeses: r.duracaoMeses, dataFinal: r.dataFinal });
+    } else {
+      atualizarAtividadeLocal(atividadeId, { duracaoMeses: novaDuracao || null });
+    }
+  }
+
+  function handleDataFinalAtividade(atividadeId: string, novaDataFinal: string) {
+    const atividade = atividades.find((a) => a.id === atividadeId);
+    if (!atividade || !atividade.dataInicial || !novaDataFinal) {
+      atualizarAtividadeLocal(atividadeId, { dataFinal: novaDataFinal || null });
+      return;
+    }
+    const r = aoEditarDataFinal(atividade.dataInicial, novaDataFinal);
+    atualizarAtividadeLocal(atividadeId, { duracaoMeses: r.duracaoMeses, dataFinal: r.dataFinal });
+  }
+
+  async function removerAtividade(atividadeId: string) {
+    await apagarAtividade(supabase, atividadeId);
+    setAtividades((prev) => prev.filter((a) => a.id !== atividadeId));
+  }
+
+  async function duplicarAtividadeHandler(atividade: Atividade) {
+    const nova = await duplicarAtividade(supabase, id, atividade, atividades.length);
+    if (nova) setAtividades((prev) => [...prev, nova]);
+  }
+
+  function reordenarAtividade(atividadeId: string, direcao: -1 | 1) {
+    setAtividades((prev) => {
+      const ordenadas = [...prev].sort((a, b) => a.ordem - b.ordem);
+      const idx = ordenadas.findIndex((a) => a.id === atividadeId);
+      const novoIdx = idx + direcao;
+      if (idx === -1 || novoIdx < 0 || novoIdx >= ordenadas.length) return prev;
+      const ordemA = ordenadas[idx].ordem;
+      const ordemB = ordenadas[novoIdx].ordem;
+      return prev.map((a) => {
+        if (a.id === ordenadas[idx].id) return { ...a, ordem: ordemB };
+        if (a.id === ordenadas[novoIdx].id) return { ...a, ordem: ordemA };
+        return a;
+      });
+    });
   }
 
   async function pedirSugestaoLandwise(tip: Typology) {
@@ -591,7 +707,21 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           valorAquisicao={inputs.custoTerreno || 0}
         />
       )}
-      {step === 6 && <StepCalendario inputs={inputs} updateInput={updateInput} />}
+      {step === 6 && (
+        <StepCalendario
+          inputs={inputs}
+          updateInput={updateInput}
+          atividades={atividades}
+          onAdicionarAtividade={adicionarAtividade}
+          onAtualizarAtividade={atualizarAtividadeLocal}
+          onHandleDataInicial={handleDataInicialAtividade}
+          onHandleDuracao={handleDuracaoAtividade}
+          onHandleDataFinal={handleDataFinalAtividade}
+          onRemoverAtividade={removerAtividade}
+          onDuplicarAtividade={duplicarAtividadeHandler}
+          onReordenarAtividade={reordenarAtividade}
+        />
+      )}
       {step === 7 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
 
       <div className="flex mt-8">
@@ -1948,47 +2078,202 @@ function StepImpostos({
 function StepCalendario({
   inputs,
   updateInput,
+  atividades,
+  onAdicionarAtividade,
+  onAtualizarAtividade,
+  onHandleDataInicial,
+  onHandleDuracao,
+  onHandleDataFinal,
+  onRemoverAtividade,
+  onDuplicarAtividade,
+  onReordenarAtividade,
 }: {
   inputs: ProjectInputs;
   updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
+  atividades: Atividade[];
+  onAdicionarAtividade: (nome: string) => void;
+  onAtualizarAtividade: (id: string, patch: Partial<Atividade>) => void;
+  onHandleDataInicial: (id: string, data: string) => void;
+  onHandleDuracao: (id: string, duracao: number) => void;
+  onHandleDataFinal: (id: string, data: string) => void;
+  onRemoverAtividade: (id: string) => void;
+  onDuplicarAtividade: (atividade: Atividade) => void;
+  onReordenarAtividade: (id: string, direcao: -1 | 1) => void;
 }) {
+  const { atividades: resolvidas, alertas } = resolverAtividadesEncadeadas(atividades);
+  const ordenadas = [...resolvidas].sort((a, b) => a.ordem - b.ordem);
+  const gantt = gerarDadosGantt(resolvidas);
+
+  const datasValidas = gantt.flatMap((g) => [new Date(g.inicio).getTime(), new Date(g.fim).getTime()]);
+  const dataMinMs = datasValidas.length > 0 ? Math.min(...datasValidas) : 0;
+  const dataMaxMs = datasValidas.length > 0 ? Math.max(...datasValidas) : 1;
+  const totalMs = dataMaxMs - dataMinMs || 1;
+
   return (
-    <Card title="Calendário e comercialização">
-      <Row>
-        <Field label="Duração total do projeto (meses)">
-          <input
-            type="number"
-            className="input-dark"
-            value={inputs.duracaoTotalMeses}
-            onChange={(e) => updateInput("duracaoTotalMeses", Number(e.target.value))}
-          />
-        </Field>
-        <Field label="Duração da obra (meses)">
-          <input
-            type="number"
-            className="input-dark"
-            value={inputs.duracaoObraMeses}
-            onChange={(e) => updateInput("duracaoObraMeses", Number(e.target.value))}
-          />
-        </Field>
-        <Field label="Mês de início da obra">
-          <input
-            type="number"
-            className="input-dark"
-            value={inputs.mesInicioObra}
-            onChange={(e) => updateInput("mesInicioObra", Number(e.target.value))}
-          />
-        </Field>
-      </Row>
-      <Row>
-        <Field label="Sinal de venda (%)">
-          <PercentInput value={inputs.sinalVendaPct} onChange={(v) => updateInput("sinalVendaPct", v)} />
-        </Field>
-        <Field label="Comissão de mediador (% s/IVA)">
-          <PercentInput value={inputs.comissaoMediadorPct} onChange={(v) => updateInput("comissaoMediadorPct", v)} />
-        </Field>
-      </Row>
-    </Card>
+    <>
+      <Card title="Calendário e comercialização (motor antigo — alimenta o dashboard atual)">
+        <Row>
+          <Field label="Duração total do projeto (meses)">
+            <input
+              type="number"
+              className="input-dark"
+              value={inputs.duracaoTotalMeses}
+              onChange={(e) => updateInput("duracaoTotalMeses", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Duração da obra (meses)">
+            <input
+              type="number"
+              className="input-dark"
+              value={inputs.duracaoObraMeses}
+              onChange={(e) => updateInput("duracaoObraMeses", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Mês de início da obra">
+            <input
+              type="number"
+              className="input-dark"
+              value={inputs.mesInicioObra}
+              onChange={(e) => updateInput("mesInicioObra", Number(e.target.value))}
+            />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Sinal de venda (%)">
+            <PercentInput value={inputs.sinalVendaPct} onChange={(v) => updateInput("sinalVendaPct", v)} />
+          </Field>
+          <Field label="Comissão de mediador (% s/IVA)">
+            <PercentInput value={inputs.comissaoMediadorPct} onChange={(v) => updateInput("comissaoMediadorPct", v)} />
+          </Field>
+        </Row>
+      </Card>
+
+      <Card title="Calendário de atividades" subtitle="Início + duração = fim, calculado automaticamente. Editar qualquer um dos três recalcula os outros dois.">
+        {alertas.length > 0 && (
+          <div className="mb-3">
+            {alertas.map((al, i) => (
+              <p key={i} className={`text-xs ${al.tipo === "erro" ? "text-[#A13D2E]" : "text-[#B96343]"}`}>
+                {al.mensagem}
+              </p>
+            ))}
+          </div>
+        )}
+
+        {ordenadas.map((a) => (
+          <div key={a.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+            <Row>
+              <Field label="Atividade">
+                <input className="input-dark" value={a.nome} onChange={(e) => onAtualizarAtividade(a.id, { nome: e.target.value })} />
+              </Field>
+              <Field label="Dependência (início = fim da anterior + 1 dia)">
+                <select
+                  className="input-dark"
+                  value={a.dependenciaId ?? ""}
+                  onChange={(e) => onAtualizarAtividade(a.id, { dependenciaId: e.target.value || null })}
+                >
+                  <option value="">Sem dependência</option>
+                  {atividades
+                    .filter((outra) => outra.id !== a.id)
+                    .map((outra) => (
+                      <option key={outra.id} value={outra.id}>
+                        {outra.nome}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              <Field label="Data inicial">
+                <input
+                  type="date"
+                  className="input-dark"
+                  value={a.dataInicial ?? ""}
+                  onChange={(e) => onHandleDataInicial(a.id, e.target.value)}
+                  disabled={!!a.dependenciaId}
+                />
+              </Field>
+              <Field label="Duração (meses)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={a.duracaoMeses ?? ""}
+                  onChange={(e) => onHandleDuracao(a.id, Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Data final">
+                <input type="date" className="input-dark" value={a.dataFinal ?? ""} onChange={(e) => onHandleDataFinal(a.id, e.target.value)} />
+              </Field>
+            </Row>
+            <Row>
+              <Field label="Perfil de desembolso">
+                <select
+                  className="input-dark"
+                  value={a.perfilDesembolso}
+                  onChange={(e) => onAtualizarAtividade(a.id, { perfilDesembolso: e.target.value as Atividade["perfilDesembolso"] })}
+                >
+                  {PERFIS_DESEMBOLSO.map((p) => (
+                    <option key={p.value} value={p.value}>
+                      {p.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </Row>
+            <div className="flex justify-between items-center mt-1">
+              <div className="flex gap-2">
+                <button onClick={() => onReordenarAtividade(a.id, -1)} className="text-xs text-[#59636A]">
+                  ↑ Subir
+                </button>
+                <button onClick={() => onReordenarAtividade(a.id, 1)} className="text-xs text-[#59636A]">
+                  ↓ Descer
+                </button>
+                <button onClick={() => onDuplicarAtividade(a)} className="text-xs text-[#142B3A] underline">
+                  Duplicar
+                </button>
+              </div>
+              <button onClick={() => onRemoverAtividade(a.id)} className="text-[#A13D2E] text-xs">
+                Remover
+              </button>
+            </div>
+          </div>
+        ))}
+
+        <div className="flex flex-wrap gap-2 mt-2">
+          {ATIVIDADES_INICIAIS_SUGERIDAS.map((nome) => (
+            <button
+              key={nome}
+              onClick={() => onAdicionarAtividade(nome)}
+              className="text-xs px-2.5 py-1 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]"
+            >
+              + {nome}
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      {gantt.length > 0 && (
+        <Card title="Gantt simples">
+          <div className="space-y-2">
+            {gantt.map((g) => {
+              const offsetPct = ((new Date(g.inicio).getTime() - dataMinMs) / totalMs) * 100;
+              const larguraPct = Math.max(1, ((new Date(g.fim).getTime() - new Date(g.inicio).getTime()) / totalMs) * 100);
+              return (
+                <div key={g.id} className="flex items-center gap-3 text-xs">
+                  <span className="w-40 truncate text-[#142B3A]">{g.nome}</span>
+                  <div className="flex-1 h-4 bg-[#F4EFE6] rounded relative">
+                    <div
+                      className="absolute h-4 rounded bg-[#B96343]"
+                      style={{ left: `${offsetPct}%`, width: `${larguraPct}%` }}
+                      title={`${g.inicio} → ${g.fim}`}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      )}
+    </>
   );
 }
 
