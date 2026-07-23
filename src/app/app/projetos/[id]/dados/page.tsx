@@ -22,6 +22,8 @@ import type { SugestaoPreco, SujeitoComparacao } from "@/lib/calc/comparaveis";
 import { resolverCustos, agregarCustos, type LinhaCusto, type GrupoCusto, type ContextoCusto } from "@/lib/calc/custos";
 import { listarCustosProjeto, criarCusto, atualizarCusto, apagarCusto } from "@/lib/supabase/project-costs";
 import { calcDataFinal } from "@/lib/calc/calendario";
+import { taxaAnual, taxaMensal, type ParametrosFinanciamento } from "@/lib/calc/financiamento";
+import { carregarFinanciamento, guardarFinanciamento, FINANCIAMENTO_VAZIO } from "@/lib/supabase/project-financing";
 
 const STEPS = ["Identificação", "Programa e vendas", "Aquisição e custos", "Financiamento e mais", "Calendário", "Revisão"];
 
@@ -88,6 +90,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
   const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
   const [custosNovos, setCustosNovos] = useState<LinhaCusto[]>([]);
+  const [financiamento, setFinanciamento] = useState<ParametrosFinanciamento>(FINANCIAMENTO_VAZIO);
   const [aLoadearCp, setALoadearCp] = useState(false);
   const [opcoesCp, setOpcoesCp] = useState<
     { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[]
@@ -130,6 +133,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setTipologiasNovas(tipologias);
     const custos = await listarCustosProjeto(supabase, id);
     setCustosNovos(custos);
+    const parametrosFinanciamento = await carregarFinanciamento(supabase, id);
+    setFinanciamento(parametrosFinanciamento);
     setLoading(false);
   }, [id, supabase]);
 
@@ -185,11 +190,12 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       // clicar "+ Adicionar"), por isso aqui é sempre update, nunca insert.
       await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
       await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
+      await guardarFinanciamento(supabase, id, financiamento);
 
       setSavedAt(new Date());
       if (!silencioso) setSaving(false);
     },
-    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, supabase]
+    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, supabase]
   );
 
   // Autosave: 1.5s depois da última alteração
@@ -198,7 +204,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     const t = setTimeout(() => guardar(true), 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, loading]);
+  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, loading]);
 
   function updateIdentificacao<K extends keyof IdentificacaoEstruturada>(key: K, value: IdentificacaoEstruturada[K]) {
     setIdentificacao((prev) => ({ ...prev, [key]: value }));
@@ -274,6 +280,24 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   async function removerCustoNovo(custoId: string) {
     await apagarCusto(supabase, custoId);
     setCustosNovos((prev) => prev.filter((c) => c.id !== custoId));
+  }
+
+  function handleToggleFinanciamento(novoComFinanciamento: boolean) {
+    if (!novoComFinanciamento && financiamento.comFinanciamento) {
+      const temValoresBancarios =
+        financiamento.euribor > 0 || financiamento.spread > 0 || (financiamento.limiteCredito ?? 0) > 0;
+      if (temValoresBancarios) {
+        const confirmar = window.confirm(
+          "Este projeto tinha financiamento configurado. Ao desativar, todos os campos bancários (euribor, spread, limite, fees) vão ser zerados e desativados. Continuar?"
+        );
+        if (!confirmar) return;
+      }
+    }
+    setFinanciamento((prev) => ({ ...prev, comFinanciamento: novoComFinanciamento }));
+  }
+
+  function updateFinanciamento<K extends keyof ParametrosFinanciamento>(key: K, value: ParametrosFinanciamento[K]) {
+    setFinanciamento((prev) => ({ ...prev, [key]: value }));
   }
 
   async function pedirSugestaoLandwise(tip: Typology) {
@@ -413,7 +437,15 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           onRemoverCusto={removerCustoNovo}
         />
       )}
-      {step === 3 && <StepCustosFinanciamento inputs={inputs} updateInput={updateInput} />}
+      {step === 3 && (
+        <StepFinanciamento
+          inputs={inputs}
+          updateInput={updateInput}
+          financiamento={financiamento}
+          onToggleComFinanciamento={handleToggleFinanciamento}
+          updateFinanciamento={updateFinanciamento}
+        />
+      )}
       {step === 4 && <StepCalendario inputs={inputs} updateInput={updateInput} />}
       {step === 5 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
 
@@ -1235,16 +1267,24 @@ function StepAquisicaoCustos({
   );
 }
 
-function StepCustosFinanciamento({
+function StepFinanciamento({
   inputs,
   updateInput,
+  financiamento,
+  onToggleComFinanciamento,
+  updateFinanciamento,
 }: {
   inputs: ProjectInputs;
   updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
+  financiamento: ParametrosFinanciamento;
+  onToggleComFinanciamento: (v: boolean) => void;
+  updateFinanciamento: <K extends keyof ParametrosFinanciamento>(k: K, v: ParametrosFinanciamento[K]) => void;
 }) {
+  const desativado = !financiamento.comFinanciamento;
+
   return (
     <>
-      <Card title="Custos">
+      <Card title="Custos (motor antigo — alimenta o dashboard atual)">
         <Row>
           <Field label="Custo de construção (€/m²) — fallback se o mapa de vendas não bastar">
             <input
@@ -1283,34 +1323,116 @@ function StepCustosFinanciamento({
         </Row>
       </Card>
 
-      <Card title="Estrutura de capital e financiamento">
+      <Card title="Financiamento bancário">
         <Row>
-          <Field label="% Capital próprio">
-            <PercentInput value={inputs.pctCapitalProprio} onChange={(v) => updateInput("pctCapitalProprio", v)} />
+          <Field label="Este projeto terá financiamento bancário?">
+            <select
+              className="input-dark"
+              value={financiamento.comFinanciamento ? "sim" : "nao"}
+              onChange={(e) => onToggleComFinanciamento(e.target.value === "sim")}
+            >
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
           </Field>
-          <Field label="% Dívida bancária">
-            <PercentInput value={inputs.pctDivida} onChange={(v) => updateInput("pctDivida", v)} />
+        </Row>
+        {desativado && (
+          <p className="text-xs text-[#59636A] mb-3">
+            Sem financiamento bancário: dívida, juros, fees e imposto de selo ficam a €0. O funding passa a ser só equity + recebimentos de clientes.
+          </p>
+        )}
+
+        <Row>
+          <Field label="% dos hard costs financiada">
+            <PercentInput
+              value={financiamento.percentagemHardCostsFinanciada}
+              onChange={(v) => updateFinanciamento("percentagemHardCostsFinanciada", v)}
+              disabled={desativado}
+            />
           </Field>
-          <Field label="% Capital de investidores">
-            <PercentInput value={inputs.pctInvestidores} onChange={(v) => updateInput("pctInvestidores", v)} />
+          <Field label="% da aquisição financiada">
+            <PercentInput
+              value={financiamento.percentagemAquisicaoFinanciada}
+              onChange={(v) => updateFinanciamento("percentagemAquisicaoFinanciada", v)}
+              disabled={desativado}
+            />
           </Field>
         </Row>
         <Row>
-          <Field label="Recorre a banco?">
+          <Field label="Euribor">
+            <PercentInput value={financiamento.euribor} onChange={(v) => updateFinanciamento("euribor", v)} disabled={desativado} />
+          </Field>
+          <Field label="Spread">
+            <PercentInput value={financiamento.spread} onChange={(v) => updateFinanciamento("spread", v)} disabled={desativado} />
+          </Field>
+          <Field label="Taxa anual (calculada)">
+            <input className="input-dark" value={`${(taxaAnual(financiamento) * 100).toFixed(2)}%`} disabled />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Metodologia da taxa mensal">
             <select
               className="input-dark"
-              value={inputs.recorreBanco ? "sim" : "nao"}
-              onChange={(e) => updateInput("recorreBanco", e.target.value === "sim")}
+              value={financiamento.metodoTaxaMensal}
+              onChange={(e) => updateFinanciamento("metodoTaxaMensal", e.target.value as ParametrosFinanciamento["metodoTaxaMensal"])}
+              disabled={desativado}
             >
-              <option value="sim">Sim</option>
-              <option value="nao">Não</option>
+              <option value="nominal_anual_div_12">Taxa nominal anual ÷ 12</option>
+              <option value="mensal_equivalente">Taxa mensal equivalente</option>
             </select>
           </Field>
-          <Field label="LTV (% financiado sobre CAPEX)">
-            <PercentInput value={inputs.ltv} onChange={(v) => updateInput("ltv", v)} />
+          <Field label="Taxa mensal (calculada)">
+            <input className="input-dark" value={`${(taxaMensal(financiamento) * 100).toFixed(3)}%`} disabled />
           </Field>
-          <Field label="Taxa de juro anual (%)">
-            <PercentInput value={inputs.taxaJuroAnual} onChange={(v) => updateInput("taxaJuroAnual", v)} />
+        </Row>
+        <Row>
+          <Field label="Structuring fee (% do limite)">
+            <PercentInput value={financiamento.structuringFeePct} onChange={(v) => updateFinanciamento("structuringFeePct", v)} disabled={desativado} />
+          </Field>
+          <Field label="Setup costs (€)">
+            <input
+              type="number"
+              className="input-dark"
+              value={financiamento.setupCosts}
+              onChange={(e) => updateFinanciamento("setupCosts", Number(e.target.value))}
+              disabled={desativado}
+            />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Imposto de selo do empréstimo">
+            <PercentInput
+              value={financiamento.impostoSeloEmprestimoPct}
+              onChange={(v) => updateFinanciamento("impostoSeloEmprestimoPct", v)}
+              disabled={desativado}
+            />
+          </Field>
+          <Field label="Imposto de selo sobre juros">
+            <PercentInput
+              value={financiamento.impostoSeloJurosPct}
+              onChange={(v) => updateFinanciamento("impostoSeloJurosPct", v)}
+              disabled={desativado}
+            />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Limite da linha (€) — vazio = sem limite explícito">
+            <input
+              type="number"
+              className="input-dark"
+              value={financiamento.limiteCredito ?? ""}
+              onChange={(e) => updateFinanciamento("limiteCredito", e.target.value ? Number(e.target.value) : null)}
+              disabled={desativado}
+            />
+          </Field>
+          <Field label="Saldo mínimo de caixa (€)">
+            <input
+              type="number"
+              className="input-dark"
+              value={financiamento.saldoMinimoCaixa}
+              onChange={(e) => updateFinanciamento("saldoMinimoCaixa", Number(e.target.value))}
+              disabled={desativado}
+            />
           </Field>
         </Row>
       </Card>
@@ -1436,13 +1558,22 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </div>
   );
 }
-function PercentInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function PercentInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+}) {
   return (
     <input
       type="number"
       className="input-dark"
       value={Math.round(value * 1000) / 10}
       onChange={(e) => onChange(Number(e.target.value) / 100)}
+      disabled={disabled}
     />
   );
 }
