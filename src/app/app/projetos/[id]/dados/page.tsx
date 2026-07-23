@@ -24,8 +24,46 @@ import { listarCustosProjeto, criarCusto, atualizarCusto, apagarCusto } from "@/
 import { calcDataFinal } from "@/lib/calc/calendario";
 import { taxaAnual, taxaMensal, type ParametrosFinanciamento } from "@/lib/calc/financiamento";
 import { carregarFinanciamento, guardarFinanciamento, FINANCIAMENTO_VAZIO } from "@/lib/supabase/project-financing";
+import { obterModeloPreset, type ModeloCapital } from "@/lib/calc/estrutura-capital";
+import type { NivelHurdle } from "@/lib/calc/waterfall";
+import { resolverValorFee, agregarFees, type Fee, type TipoFee, type ContextoFees } from "@/lib/calc/fees";
+import {
+  carregarEstruturaCapital,
+  guardarEstruturaCapital,
+  listarHurdles,
+  criarHurdle,
+  atualizarHurdle,
+  apagarHurdle,
+  listarFees,
+  criarFee,
+  atualizarFee,
+  apagarFee,
+  type EstruturaCapitalEstado,
+  ESTRUTURA_CAPITAL_VAZIA,
+} from "@/lib/supabase/project-capital";
+import {
+  calcSeguro,
+  calcIMI,
+  resolverTaxaIRC,
+  calcLucroTributavel,
+  calcIRC,
+  calcDerramaMunicipal,
+  calcDerramaEstadual,
+  TAXA_SEGURO_SUGERIDA,
+  TAXA_IMI_SUGERIDA,
+} from "@/lib/calc/impostos";
+import { carregarImpostos, guardarImpostos, type ImpostosEstado, IMPOSTOS_VAZIO } from "@/lib/supabase/project-taxes";
 
-const STEPS = ["Identificação", "Programa e vendas", "Aquisição e custos", "Financiamento e mais", "Calendário", "Revisão"];
+const STEPS = [
+  "Identificação",
+  "Programa e vendas",
+  "Aquisição e custos",
+  "Financiamento",
+  "Estrutura de capital e fees",
+  "Impostos",
+  "Calendário",
+  "Revisão",
+];
 
 // --- Fase 2: localização e áreas estruturadas (colunas novas em `projects`) ---
 type IdentificacaoEstruturada = {
@@ -91,6 +129,10 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
   const [custosNovos, setCustosNovos] = useState<LinhaCusto[]>([]);
   const [financiamento, setFinanciamento] = useState<ParametrosFinanciamento>(FINANCIAMENTO_VAZIO);
+  const [estruturaCapital, setEstruturaCapital] = useState<EstruturaCapitalEstado>(ESTRUTURA_CAPITAL_VAZIA);
+  const [hurdles, setHurdles] = useState<(NivelHurdle & { id: string })[]>([]);
+  const [feesNovos, setFeesNovos] = useState<Fee[]>([]);
+  const [impostos, setImpostos] = useState<ImpostosEstado>(IMPOSTOS_VAZIO);
   const [aLoadearCp, setALoadearCp] = useState(false);
   const [opcoesCp, setOpcoesCp] = useState<
     { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[]
@@ -135,6 +177,14 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setCustosNovos(custos);
     const parametrosFinanciamento = await carregarFinanciamento(supabase, id);
     setFinanciamento(parametrosFinanciamento);
+    const estruturaCapitalCarregada = await carregarEstruturaCapital(supabase, id);
+    setEstruturaCapital(estruturaCapitalCarregada);
+    const hurdlesCarregados = await listarHurdles(supabase, id);
+    setHurdles(hurdlesCarregados);
+    const feesCarregados = await listarFees(supabase, id);
+    setFeesNovos(feesCarregados);
+    const impostosCarregados = await carregarImpostos(supabase, id);
+    setImpostos(impostosCarregados);
     setLoading(false);
   }, [id, supabase]);
 
@@ -191,11 +241,15 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
       await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
       await guardarFinanciamento(supabase, id, financiamento);
+      await guardarEstruturaCapital(supabase, id, estruturaCapital);
+      await Promise.all(hurdles.map((h) => atualizarHurdle(supabase, h.id, h)));
+      await Promise.all(feesNovos.map((f) => atualizarFee(supabase, f.id, f)));
+      await guardarImpostos(supabase, id, impostos);
 
       setSavedAt(new Date());
       if (!silencioso) setSaving(false);
     },
-    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, supabase]
+    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, estruturaCapital, hurdles, feesNovos, impostos, supabase]
   );
 
   // Autosave: 1.5s depois da última alteração
@@ -204,7 +258,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     const t = setTimeout(() => guardar(true), 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, loading]);
+  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, financiamento, estruturaCapital, hurdles, feesNovos, impostos, loading]);
 
   function updateIdentificacao<K extends keyof IdentificacaoEstruturada>(key: K, value: IdentificacaoEstruturada[K]) {
     setIdentificacao((prev) => ({ ...prev, [key]: value }));
@@ -300,6 +354,58 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setFinanciamento((prev) => ({ ...prev, [key]: value }));
   }
 
+  async function aplicarModeloCapital(modelo: ModeloCapital) {
+    const preset = obterModeloPreset(modelo);
+    setEstruturaCapital((prev) => ({
+      ...prev,
+      modelo,
+      temInvestidorExterno: preset.temInvestidorExterno,
+      percentagemInvestidor: preset.percentagemInvestidor,
+    }));
+    // Substitui os hurdles atuais pelos do preset (apaga os antigos, cria os novos)
+    await Promise.all(hurdles.map((h) => apagarHurdle(supabase, h.id)));
+    const novos = await Promise.all(preset.hurdles.map((_, i) => criarHurdle(supabase, id, i)));
+    const novosValidos = novos.filter((h): h is NivelHurdle & { id: string } => h !== null);
+    await Promise.all(novosValidos.map((h, i) => atualizarHurdle(supabase, h.id, preset.hurdles[i])));
+    setHurdles(novosValidos.map((h, i) => ({ ...h, ...preset.hurdles[i] })));
+  }
+
+  function updateEstruturaCapital<K extends keyof EstruturaCapitalEstado>(key: K, value: EstruturaCapitalEstado[K]) {
+    setEstruturaCapital((prev) => ({ ...prev, [key]: value }));
+  }
+
+  async function adicionarHurdle() {
+    const novo = await criarHurdle(supabase, id, hurdles.length);
+    if (novo) setHurdles((prev) => [...prev, novo]);
+  }
+
+  function atualizarHurdleLocal(hurdleId: string, patch: Partial<NivelHurdle>) {
+    setHurdles((prev) => prev.map((h) => (h.id === hurdleId ? { ...h, ...patch } : h)));
+  }
+
+  async function removerHurdle(hurdleId: string) {
+    await apagarHurdle(supabase, hurdleId);
+    setHurdles((prev) => prev.filter((h) => h.id !== hurdleId));
+  }
+
+  async function adicionarFee(tipo: TipoFee, nome: string) {
+    const novo = await criarFee(supabase, id, tipo, nome, feesNovos.length);
+    if (novo) setFeesNovos((prev) => [...prev, novo]);
+  }
+
+  function atualizarFeeLocal(feeId: string, patch: Partial<Fee>) {
+    setFeesNovos((prev) => prev.map((f) => (f.id === feeId ? { ...f, ...patch } : f)));
+  }
+
+  async function removerFee(feeId: string) {
+    await apagarFee(supabase, feeId);
+    setFeesNovos((prev) => prev.filter((f) => f.id !== feeId));
+  }
+
+  function updateImpostos<K extends keyof ImpostosEstado>(key: K, value: ImpostosEstado[K]) {
+    setImpostos((prev) => ({ ...prev, [key]: value }));
+  }
+
   async function pedirSugestaoLandwise(tip: Typology) {
     setSugestoes((prev) => ({ ...prev, [tip.id]: { loading: true } }));
     try {
@@ -366,6 +472,22 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   }
 
   if (loading) return <div className="p-8 text-sm text-[#8FA6AF]">A carregar…</div>;
+
+  const contextoCustoAtual: ContextoCusto = {
+    valorAquisicao: inputs.custoTerreno || 0,
+    abcTotal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
+    gcaTotal: calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
+  };
+  const resumoCustosAtual = agregarCustos(resolverCustos(custosNovos, contextoCustoAtual));
+  const contextoFeesAtual: ContextoFees = {
+    valorAquisicao: contextoCustoAtual.valorAquisicao,
+    hardCostsTotal: resumoCustosAtual.totalHardCosts,
+    capexTotal: resumoCustosAtual.custoTotal,
+    custoTotal: resumoCustosAtual.custoTotal,
+    abcTotal: contextoCustoAtual.abcTotal,
+    numeroUnidades: contextoCustoAtual.numeroUnidades,
+  };
 
   return (
     <div className="max-w-4xl mx-auto p-8">
@@ -446,8 +568,31 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           updateFinanciamento={updateFinanciamento}
         />
       )}
-      {step === 4 && <StepCalendario inputs={inputs} updateInput={updateInput} />}
-      {step === 5 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
+      {step === 4 && (
+        <StepEstruturaCapital
+          estruturaCapital={estruturaCapital}
+          hurdles={hurdles}
+          feesNovos={feesNovos}
+          onAplicarModelo={aplicarModeloCapital}
+          updateEstruturaCapital={updateEstruturaCapital}
+          onAdicionarHurdle={adicionarHurdle}
+          onAtualizarHurdle={atualizarHurdleLocal}
+          onRemoverHurdle={removerHurdle}
+          onAdicionarFee={adicionarFee}
+          onAtualizarFee={atualizarFeeLocal}
+          onRemoverFee={removerFee}
+          contextoFees={contextoFeesAtual}
+        />
+      )}
+      {step === 5 && (
+        <StepImpostos
+          impostos={impostos}
+          updateImpostos={updateImpostos}
+          valorAquisicao={inputs.custoTerreno || 0}
+        />
+      )}
+      {step === 6 && <StepCalendario inputs={inputs} updateInput={updateInput} />}
+      {step === 7 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
 
       <div className="flex mt-8">
         {step > 0 && (
@@ -1443,6 +1588,363 @@ function StepFinanciamento({
 // ============================================================
 // Etapa 4 — Calendário e comercialização
 // ============================================================
+// ============================================================
+// Etapa nova — Estrutura de Capital e Fees
+// ============================================================
+const MODELOS_CAPITAL: { value: ModeloCapital; label: string }[] = [
+  { value: "promotor_sozinho", label: "Promotor sem investidor externo" },
+  { value: "joint_venture_simples", label: "Joint venture simples" },
+  { value: "family_office_sem_fees", label: "Family office sem fees" },
+  { value: "family_office_com_fees", label: "Family office com fees" },
+  { value: "personalizado", label: "Estrutura personalizada" },
+];
+
+const TIPOS_FEE: { value: TipoFee; label: string }[] = [
+  { value: "origination", label: "Origination fee" },
+  { value: "development", label: "Development fee" },
+  { value: "asset_management", label: "Asset management fee" },
+  { value: "project_management", label: "Project management fee" },
+  { value: "acquisition", label: "Acquisition fee" },
+  { value: "disposition", label: "Disposition fee" },
+  { value: "outro", label: "Outro fee" },
+];
+
+function StepEstruturaCapital({
+  estruturaCapital,
+  hurdles,
+  feesNovos,
+  onAplicarModelo,
+  updateEstruturaCapital,
+  onAdicionarHurdle,
+  onAtualizarHurdle,
+  onRemoverHurdle,
+  onAdicionarFee,
+  onAtualizarFee,
+  onRemoverFee,
+  contextoFees,
+}: {
+  estruturaCapital: EstruturaCapitalEstado;
+  hurdles: (NivelHurdle & { id: string })[];
+  feesNovos: Fee[];
+  onAplicarModelo: (modelo: ModeloCapital) => void;
+  updateEstruturaCapital: <K extends keyof EstruturaCapitalEstado>(k: K, v: EstruturaCapitalEstado[K]) => void;
+  onAdicionarHurdle: () => void;
+  onAtualizarHurdle: (id: string, patch: Partial<NivelHurdle>) => void;
+  onRemoverHurdle: (id: string) => void;
+  onAdicionarFee: (tipo: TipoFee, nome: string) => void;
+  onAtualizarFee: (id: string, patch: Partial<Fee>) => void;
+  onRemoverFee: (id: string) => void;
+  contextoFees: ContextoFees;
+}) {
+  const resumoFees = agregarFees(feesNovos, contextoFees);
+
+  return (
+    <>
+      <Card title="Este projeto possui investidores externos?">
+        <Row>
+          <Field label="Investidor externo">
+            <select
+              className="input-dark"
+              value={estruturaCapital.temInvestidorExterno ? "sim" : "nao"}
+              onChange={(e) => updateEstruturaCapital("temInvestidorExterno", e.target.value === "sim")}
+            >
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
+          </Field>
+          <Field label="Modelo inicial (aplica valores de referência, tudo editável depois)">
+            <select className="input-dark" value={estruturaCapital.modelo} onChange={(e) => onAplicarModelo(e.target.value as ModeloCapital)}>
+              {MODELOS_CAPITAL.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </Row>
+        {!estruturaCapital.temInvestidorExterno && (
+          <p className="text-xs text-[#59636A]">
+            Sem investidor externo: mostra-se só equity do promotor, capital calls, peak cash exposure e resultado do projeto — sem waterfall avançada.
+          </p>
+        )}
+      </Card>
+
+      {estruturaCapital.temInvestidorExterno && (
+        <>
+          <Card title="Estrutura de capital">
+            <Row>
+              <Field label="% do investidor">
+                <PercentInput
+                  value={estruturaCapital.percentagemInvestidor}
+                  onChange={(v) => updateEstruturaCapital("percentagemInvestidor", v)}
+                />
+              </Field>
+              <Field label="% do promotor (co-investimento, calculado)">
+                <input className="input-dark" value={`${((1 - estruturaCapital.percentagemInvestidor) * 100).toFixed(1)}%`} disabled />
+              </Field>
+            </Row>
+            <Row>
+              <Field label="Catch-up ativo?">
+                <select
+                  className="input-dark"
+                  value={estruturaCapital.catchUpAtivo ? "sim" : "nao"}
+                  onChange={(e) => updateEstruturaCapital("catchUpAtivo", e.target.value === "sim")}
+                >
+                  <option value="nao">Não</option>
+                  <option value="sim">Sim</option>
+                </select>
+              </Field>
+              {estruturaCapital.catchUpAtivo && (
+                <Field label="% de catch-up">
+                  <PercentInput value={estruturaCapital.catchUpPct} onChange={(v) => updateEstruturaCapital("catchUpPct", v)} />
+                </Field>
+              )}
+            </Row>
+          </Card>
+
+          <Card title="Hurdles e promote" subtitle="Ordem: retorno preferencial até ao 1.º hurdle, depois promote sobre o incremento de cada tier.">
+            {hurdles.map((h, i) => (
+              <Row key={h.id}>
+                <Field label={`Hurdle ${i + 1} (IRR)`}>
+                  <PercentInput value={h.hurdleIRR} onChange={(v) => onAtualizarHurdle(h.id, { hurdleIRR: v })} />
+                </Field>
+                <Field label={`Promote ${i + 1} (acima deste hurdle)`}>
+                  <PercentInput value={h.promotePctAcima} onChange={(v) => onAtualizarHurdle(h.id, { promotePctAcima: v })} />
+                </Field>
+                <div className="flex items-end pb-1">
+                  <button onClick={() => onRemoverHurdle(h.id)} className="text-[#A13D2E] text-xs">
+                    Remover
+                  </button>
+                </div>
+              </Row>
+            ))}
+            <button onClick={onAdicionarHurdle} className="text-[#B96343] text-sm font-semibold mt-2">
+              + Adicionar tier
+            </button>
+          </Card>
+        </>
+      )}
+
+      <Card title="Development fees" subtitle={`Total: €${Math.round(resumoFees.total).toLocaleString("pt-PT")}`}>
+        {feesNovos.map((f) => (
+          <div key={f.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+            <Row>
+              <Field label="Nome">
+                <input className="input-dark" value={f.nome} onChange={(e) => onAtualizarFee(f.id, { nome: e.target.value })} />
+              </Field>
+              <Field label="Base de cálculo">
+                <select
+                  className="input-dark"
+                  value={f.baseCalculo}
+                  onChange={(e) => onAtualizarFee(f.id, { baseCalculo: e.target.value as Fee["baseCalculo"] })}
+                >
+                  <option value="valor_fixo">Valor fixo</option>
+                  <option value="percentagem_aquisicao">% da aquisição</option>
+                  <option value="percentagem_hard_costs">% dos hard costs</option>
+                  <option value="percentagem_capex">% do capex</option>
+                  <option value="percentagem_custo_total">% do custo total</option>
+                  <option value="eur_m2">€/m²</option>
+                  <option value="eur_unidade">€/unidade</option>
+                </select>
+              </Field>
+              <Field label={f.baseCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
+                {f.baseCalculo.startsWith("percentagem") ? (
+                  <PercentInput value={f.valorInput} onChange={(v) => onAtualizarFee(f.id, { valorInput: v })} />
+                ) : (
+                  <input
+                    type="number"
+                    className="input-dark"
+                    value={f.valorInput}
+                    onChange={(e) => onAtualizarFee(f.id, { valorInput: Number(e.target.value) })}
+                  />
+                )}
+              </Field>
+            </Row>
+            <div className="flex justify-between items-center">
+              <span className="text-xs text-[#59636A]">
+                Valor resolvido: €{Math.round(resolverValorFee(f, contextoFees)).toLocaleString("pt-PT")}
+              </span>
+              <button onClick={() => onRemoverFee(f.id)} className="text-[#A13D2E] text-xs">
+                Remover
+              </button>
+            </div>
+          </div>
+        ))}
+        <div className="flex flex-wrap gap-2 mt-2">
+          {TIPOS_FEE.map((t) => (
+            <button
+              key={t.value}
+              onClick={() => onAdicionarFee(t.value, t.label)}
+              className="text-xs px-2.5 py-1 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]"
+            >
+              + {t.label}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-[#8FA6AF] mt-3">Todos os fees começam em €0 até serem configurados — nunca um valor pré-definido.</p>
+      </Card>
+    </>
+  );
+}
+
+// ============================================================
+// Etapa nova — Impostos e Seguros
+// ============================================================
+function StepImpostos({
+  impostos,
+  updateImpostos,
+  valorAquisicao,
+}: {
+  impostos: ImpostosEstado;
+  updateImpostos: <K extends keyof ImpostosEstado>(k: K, v: ImpostosEstado[K]) => void;
+  valorAquisicao: number;
+}) {
+  const seguro = calcSeguro(impostos.seguroTaxa, "valor_aquisicao", valorAquisicao, impostos.seguroDuracaoAnos);
+  const imi = calcIMI(impostos.imiVpt ?? 0, impostos.imiTaxa, impostos.imiNumAnos);
+  const { taxa: taxaIrc, taxaManualAplicada } = resolverTaxaIRC(impostos.ircAnoFiscalReferencia, impostos.ircTaxaManual);
+  const lucroTributavel = calcLucroTributavel(impostos.ircLucroTributavel ?? 0, impostos.ircPrejuizosFiscaisAcumulados);
+  const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
+  const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa);
+  const derramaEstadual = calcDerramaEstadual(lucroTributavel);
+  const impostoAquisicao = valorAquisicao * impostos.imtValor;
+  const seloAquisicao = valorAquisicao * impostos.impostoSeloAquisicaoTaxa;
+
+  return (
+    <>
+      <Card title="Seguro">
+        <Row>
+          <Field label={`Taxa de seguro (sugestão: ${(TAXA_SEGURO_SUGERIDA * 100).toFixed(2)}%, editável)`}>
+            <PercentInput value={impostos.seguroTaxa} onChange={(v) => updateImpostos("seguroTaxa", v)} />
+          </Field>
+          <Field label="Duração (anos)">
+            <input
+              type="number"
+              className="input-dark"
+              value={impostos.seguroDuracaoAnos}
+              onChange={(e) => updateImpostos("seguroDuracaoAnos", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Valor total (calculado)">
+            <input className="input-dark" value={`€${Math.round(seguro.valorTotal).toLocaleString("pt-PT")}`} disabled />
+          </Field>
+        </Row>
+      </Card>
+
+      <Card title="IMI" subtitle="Aplicado sobre o VPT — nunca sobre o valor de aquisição ou o GDV.">
+        <Row>
+          <Field label="VPT (€)">
+            <input
+              type="number"
+              className="input-dark"
+              value={impostos.imiVpt ?? ""}
+              onChange={(e) => updateImpostos("imiVpt", e.target.value ? Number(e.target.value) : null)}
+            />
+          </Field>
+          <Field label={`Taxa de IMI (referência: ${(TAXA_IMI_SUGERIDA * 100).toFixed(2)}%, editável)`}>
+            <PercentInput value={impostos.imiTaxa} onChange={(v) => updateImpostos("imiTaxa", v)} />
+          </Field>
+          <Field label="Número de anos">
+            <input
+              type="number"
+              className="input-dark"
+              value={impostos.imiNumAnos}
+              onChange={(e) => updateImpostos("imiNumAnos", Number(e.target.value))}
+            />
+          </Field>
+        </Row>
+        <p className="text-xs text-[#59636A]">Valor total (calculado): €{Math.round(imi.valorTotal).toLocaleString("pt-PT")}</p>
+      </Card>
+
+      <Card title="IRC">
+        <Row>
+          <Field label="Ano fiscal de referência">
+            <input
+              type="number"
+              className="input-dark"
+              value={impostos.ircAnoFiscalReferencia}
+              onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Taxa manual (vazio = usa a configuração anual)">
+            <input
+              type="number"
+              className="input-dark"
+              value={impostos.ircTaxaManual ?? ""}
+              onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)}
+              placeholder={`${(taxaIrc * 100).toFixed(0)}%`}
+            />
+          </Field>
+        </Row>
+        {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa manual aplicada.</p>}
+        <Row>
+          <Field label="Lucro tributável estimado (€)">
+            <input
+              type="number"
+              className="input-dark"
+              value={impostos.ircLucroTributavel ?? ""}
+              onChange={(e) => updateImpostos("ircLucroTributavel", e.target.value ? Number(e.target.value) : null)}
+            />
+          </Field>
+          <Field label="Prejuízos fiscais acumulados (€)">
+            <input
+              type="number"
+              className="input-dark"
+              value={impostos.ircPrejuizosFiscaisAcumulados}
+              onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))}
+            />
+          </Field>
+          <Field label="Derrama municipal (%)">
+            <PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} />
+          </Field>
+        </Row>
+        <div className="grid grid-cols-3 gap-4 text-sm mt-2">
+          <div>
+            <span className="text-xs text-[#59636A] block">IRC estimado</span>
+            <span className="font-semibold text-[#142B3A]">€{Math.round(ircEstimado).toLocaleString("pt-PT")}</span>
+          </div>
+          <div>
+            <span className="text-xs text-[#59636A] block">Derrama municipal</span>
+            <span className="font-semibold text-[#142B3A]">€{Math.round(derramaMunicipal).toLocaleString("pt-PT")}</span>
+          </div>
+          <div>
+            <span className="text-xs text-[#59636A] block">Derrama estadual (escalões)</span>
+            <span className="font-semibold text-[#142B3A]">€{Math.round(derramaEstadual).toLocaleString("pt-PT")}</span>
+          </div>
+        </div>
+      </Card>
+
+      <Card title="IMT e Imposto de Selo da aquisição">
+        <Row>
+          <Field label="Método de cálculo do IMT">
+            <select className="input-dark" value={impostos.imtMetodo} onChange={(e) => updateImpostos("imtMetodo", e.target.value as ImpostosEstado["imtMetodo"])}>
+              <option value="percentagem">Percentagem da aquisição</option>
+              <option value="valor_manual">Valor manual</option>
+            </select>
+          </Field>
+          <Field label={impostos.imtMetodo === "percentagem" ? "Taxa de IMT" : "Valor de IMT (€)"}>
+            {impostos.imtMetodo === "percentagem" ? (
+              <PercentInput value={impostos.imtValor} onChange={(v) => updateImpostos("imtValor", v)} />
+            ) : (
+              <input type="number" className="input-dark" value={impostos.imtValor} onChange={(e) => updateImpostos("imtValor", Number(e.target.value))} />
+            )}
+          </Field>
+          <Field label="Taxa de imposto de selo da aquisição">
+            <PercentInput value={impostos.impostoSeloAquisicaoTaxa} onChange={(v) => updateImpostos("impostoSeloAquisicaoTaxa", v)} />
+          </Field>
+        </Row>
+        <p className="text-xs text-[#59636A]">
+          IMT (calculado): €{Math.round(impostoAquisicao).toLocaleString("pt-PT")} · Selo (calculado): €{Math.round(seloAquisicao).toLocaleString("pt-PT")}
+        </p>
+      </Card>
+
+      <Card title="★ A estrutura fiscal pode impactar significativamente o retorno do projeto.">
+        <p className="text-sm text-[#142B3A] mb-3">Saiba como otimizar. Esta estimativa não substitui uma análise fiscal, jurídica ou contabilística individual.</p>
+        <button className="text-sm font-semibold text-white bg-[#142B3A] px-4 py-2 rounded-lg">Solicitar análise especializada</button>
+      </Card>
+    </>
+  );
+}
+
 function StepCalendario({
   inputs,
   updateInput,
