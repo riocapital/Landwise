@@ -40,7 +40,7 @@ export type ReportPayload = {
     distrito: string | null;
     latitude: number | null;
     longitude: number | null;
-    origem: OrigemValor;
+    origem: "manual" | "codigo_postal" | "geocodificacao";
   };
 
   areas: {

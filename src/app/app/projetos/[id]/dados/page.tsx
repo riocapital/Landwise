@@ -19,8 +19,11 @@ import {
   guardarPrecoSugerido,
 } from "@/lib/supabase/project-typologies";
 import type { SugestaoPreco, SujeitoComparacao } from "@/lib/calc/comparaveis";
+import { resolverCustos, agregarCustos, type LinhaCusto, type GrupoCusto, type ContextoCusto } from "@/lib/calc/custos";
+import { listarCustosProjeto, criarCusto, atualizarCusto, apagarCusto } from "@/lib/supabase/project-costs";
+import { calcDataFinal } from "@/lib/calc/calendario";
 
-const STEPS = ["Identificação", "Programa e vendas", "Custos e financiamento", "Calendário", "Revisão"];
+const STEPS = ["Identificação", "Programa e vendas", "Aquisição e custos", "Financiamento e mais", "Calendário", "Revisão"];
 
 // --- Fase 2: localização e áreas estruturadas (colunas novas em `projects`) ---
 type IdentificacaoEstruturada = {
@@ -84,6 +87,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   // Fase 2: localização/áreas estruturadas + tipologias no motor novo (areas.ts)
   const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
   const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
+  const [custosNovos, setCustosNovos] = useState<LinhaCusto[]>([]);
   const [aLoadearCp, setALoadearCp] = useState(false);
   const [opcoesCp, setOpcoesCp] = useState<
     { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[]
@@ -124,6 +128,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     }
     const tipologias = await listarTipologiasProjeto(supabase, id);
     setTipologiasNovas(tipologias);
+    const custos = await listarCustosProjeto(supabase, id);
+    setCustosNovos(custos);
     setLoading(false);
   }, [id, supabase]);
 
@@ -178,11 +184,12 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       // Tipologias do motor novo: cada uma já tem id real na BD (criada ao
       // clicar "+ Adicionar"), por isso aqui é sempre update, nunca insert.
       await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
+      await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
 
       setSavedAt(new Date());
       if (!silencioso) setSaving(false);
     },
-    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, supabase]
+    [id, nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, supabase]
   );
 
   // Autosave: 1.5s depois da última alteração
@@ -191,7 +198,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     const t = setTimeout(() => guardar(true), 1500);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, loading]);
+  }, [nome, tipoProjeto, inputs, identificacao, tipologiasNovas, custosNovos, loading]);
 
   function updateIdentificacao<K extends keyof IdentificacaoEstruturada>(key: K, value: IdentificacaoEstruturada[K]) {
     setIdentificacao((prev) => ({ ...prev, [key]: value }));
@@ -253,6 +260,20 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   async function removerTipologiaNova(tipId: string) {
     await apagarTipologia(supabase, tipId);
     setTipologiasNovas((prev) => prev.filter((t) => t.id !== tipId));
+  }
+
+  async function adicionarCustoNovo(grupo: GrupoCusto, nome: string) {
+    const novo = await criarCusto(supabase, id, grupo, nome, custosNovos.length);
+    if (novo) setCustosNovos((prev) => [...prev, novo]);
+  }
+
+  function atualizarCustoNovoLocal(custoId: string, patch: Partial<LinhaCusto>) {
+    setCustosNovos((prev) => prev.map((c) => (c.id === custoId ? { ...c, ...patch } : c)));
+  }
+
+  async function removerCustoNovo(custoId: string) {
+    await apagarCusto(supabase, custoId);
+    setCustosNovos((prev) => prev.filter((c) => c.id !== custoId));
   }
 
   async function pedirSugestaoLandwise(tip: Typology) {
@@ -381,9 +402,20 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           onAplicarSugestao={aplicarSugestao}
         />
       )}
-      {step === 2 && <StepCustosFinanciamento inputs={inputs} updateInput={updateInput} />}
-      {step === 3 && <StepCalendario inputs={inputs} updateInput={updateInput} />}
-      {step === 4 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
+      {step === 2 && (
+        <StepAquisicaoCustos
+          custosNovos={custosNovos}
+          identificacao={identificacao}
+          tipologiasNovas={tipologiasNovas}
+          inputs={inputs}
+          onAdicionarCusto={adicionarCustoNovo}
+          onAtualizarCusto={atualizarCustoNovoLocal}
+          onRemoverCusto={removerCustoNovo}
+        />
+      )}
+      {step === 3 && <StepCustosFinanciamento inputs={inputs} updateInput={updateInput} />}
+      {step === 4 && <StepCalendario inputs={inputs} updateInput={updateInput} />}
+      {step === 5 && <StepRevisao inputs={inputs} calculando={calculando} onCalcular={calcular} />}
 
       <div className="flex mt-8">
         {step > 0 && (
@@ -987,6 +1019,222 @@ function StepPrograma({
 // ============================================================
 // Etapa 3 — Custos e financiamento
 // ============================================================
+// ============================================================
+// Etapa nova — Aquisição e Custos (liga project_costs ao motor custos.ts)
+// ============================================================
+const GRUPOS_CUSTO: { grupo: GrupoCusto; titulo: string; sugestoes: string[] }[] = [
+  { grupo: "aquisicao", titulo: "Aquisição", sugestoes: ["Sinal", "Due diligence técnica", "Due diligence legal", "Comissão de aquisição", "Notário", "Registos"] },
+  { grupo: "hard_cost", titulo: "Hard costs", sugestoes: ["Obra acima do solo", "Obra abaixo do solo", "Jardinagem e exteriores", "Demolição", "Infraestruturas", "Contingência"] },
+  { grupo: "soft_cost", titulo: "Soft costs", sugestoes: ["Arquitetura", "Engenharia", "Especialidades", "Licenciamento", "Fiscalização de obra", "Seguros"] },
+  { grupo: "outro", titulo: "Outros custos", sugestoes: ["Branding", "Marketing", "Comercialização", "Outro"] },
+];
+
+const TIPOS_CALCULO_CUSTO: { value: LinhaCusto["tipoCalculo"]; label: string }[] = [
+  { value: "valor_fixo", label: "Valor fixo (€)" },
+  { value: "percentagem_aquisicao", label: "% da aquisição" },
+  { value: "percentagem_hard_costs", label: "% dos hard costs" },
+  { value: "percentagem_capex", label: "% do capex" },
+  { value: "percentagem_custo_total", label: "% do custo total" },
+  { value: "eur_m2_abc", label: "€/m² de ABC" },
+  { value: "eur_m2_gca", label: "€/m² de GCA" },
+  { value: "eur_unidade", label: "€/unidade" },
+];
+
+const PERFIS_DESEMBOLSO: { value: LinhaCusto["perfilDesembolso"]; label: string }[] = [
+  { value: "unico_inicio", label: "Único no início" },
+  { value: "unico_fim", label: "Único no fim" },
+  { value: "linear", label: "Linear" },
+  { value: "curva_s", label: "Curva S" },
+  { value: "front_loaded", label: "Front-loaded" },
+  { value: "back_loaded", label: "Back-loaded" },
+];
+
+function StepAquisicaoCustos({
+  custosNovos,
+  identificacao,
+  tipologiasNovas,
+  inputs,
+  onAdicionarCusto,
+  onAtualizarCusto,
+  onRemoverCusto,
+}: {
+  custosNovos: LinhaCusto[];
+  identificacao: IdentificacaoEstruturada;
+  tipologiasNovas: Typology[];
+  inputs: ProjectInputs;
+  onAdicionarCusto: (grupo: GrupoCusto, nome: string) => void;
+  onAtualizarCusto: (id: string, patch: Partial<LinhaCusto>) => void;
+  onRemoverCusto: (id: string) => void;
+}) {
+  const contexto: ContextoCusto = {
+    valorAquisicao: inputs.custoTerreno || 0,
+    abcTotal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
+    gcaTotal: calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
+  };
+
+  const resolvidas = resolverCustos(custosNovos, contexto);
+  const resumo = agregarCustos(resolvidas);
+
+  function handleData(custo: LinhaCusto, dataInicial: string, duracaoMeses: number) {
+    const dataFinal = dataInicial && duracaoMeses > 0 ? calcDataFinal(dataInicial, duracaoMeses) : null;
+    onAtualizarCusto(custo.id, { dataInicial: dataInicial || null, duracaoMeses: duracaoMeses || null, dataFinal });
+  }
+
+  return (
+    <>
+      {GRUPOS_CUSTO.map(({ grupo, titulo, sugestoes }) => {
+        const linhasDoGrupo = custosNovos.filter((c) => c.grupo === grupo);
+        const subtotal =
+          grupo === "aquisicao"
+            ? resumo.totalAquisicao
+            : grupo === "hard_cost"
+              ? resumo.totalHardCosts
+              : grupo === "soft_cost"
+                ? resumo.totalSoftCosts
+                : resumo.totalOutros;
+
+        return (
+          <Card key={grupo} title={titulo} subtitle={`Subtotal: €${Math.round(subtotal).toLocaleString("pt-PT")}`}>
+            {linhasDoGrupo.length === 0 && <p className="text-xs text-[#8FA6AF] mb-3">Ainda sem linhas neste grupo.</p>}
+            {linhasDoGrupo.map((c) => (
+              <div key={c.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+                <Row>
+                  <Field label="Nome">
+                    <input className="input-dark" value={c.nome} onChange={(e) => onAtualizarCusto(c.id, { nome: e.target.value })} />
+                  </Field>
+                  <Field label="Tipo de cálculo">
+                    <select
+                      className="input-dark"
+                      value={c.tipoCalculo}
+                      onChange={(e) => onAtualizarCusto(c.id, { tipoCalculo: e.target.value as LinhaCusto["tipoCalculo"] })}
+                    >
+                      {TIPOS_CALCULO_CUSTO.map((t) => (
+                        <option key={t.value} value={t.value}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  <Field label={c.tipoCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
+                    {c.tipoCalculo.startsWith("percentagem") ? (
+                      <PercentInput value={c.valorInput} onChange={(v) => onAtualizarCusto(c.id, { valorInput: v })} />
+                    ) : (
+                      <input
+                        type="number"
+                        className="input-dark"
+                        value={c.valorInput}
+                        onChange={(e) => onAtualizarCusto(c.id, { valorInput: Number(e.target.value) })}
+                      />
+                    )}
+                  </Field>
+                </Row>
+                <Row>
+                  <Field label="Taxa de IVA">
+                    <select
+                      className="input-dark"
+                      value={c.taxaIva ?? ""}
+                      onChange={(e) => onAtualizarCusto(c.id, { taxaIva: e.target.value ? Number(e.target.value) : null })}
+                    >
+                      <option value="">Sem IVA</option>
+                      <option value={0.06}>6%</option>
+                      <option value={0.13}>13%</option>
+                      <option value={0.23}>23%</option>
+                    </select>
+                  </Field>
+                  <Field label="% de IVA recuperável">
+                    <PercentInput value={c.ivaRecuperavelPct} onChange={(v) => onAtualizarCusto(c.id, { ivaRecuperavelPct: v })} />
+                  </Field>
+                  <Field label="Perfil de desembolso">
+                    <select
+                      className="input-dark"
+                      value={c.perfilDesembolso}
+                      onChange={(e) => onAtualizarCusto(c.id, { perfilDesembolso: e.target.value as LinhaCusto["perfilDesembolso"] })}
+                    >
+                      {PERFIS_DESEMBOLSO.map((p) => (
+                        <option key={p.value} value={p.value}>
+                          {p.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </Row>
+                <Row>
+                  <Field label="Data inicial">
+                    <input
+                      type="date"
+                      className="input-dark"
+                      value={c.dataInicial ?? ""}
+                      onChange={(e) => handleData(c, e.target.value, c.duracaoMeses ?? 1)}
+                    />
+                  </Field>
+                  <Field label="Duração (meses)">
+                    <input
+                      type="number"
+                      className="input-dark"
+                      value={c.duracaoMeses ?? ""}
+                      onChange={(e) => handleData(c, c.dataInicial ?? "", Number(e.target.value))}
+                    />
+                  </Field>
+                  <Field label="Data final (calculada)">
+                    <input type="date" className="input-dark" value={c.dataFinal ?? ""} disabled />
+                  </Field>
+                </Row>
+                <div className="flex justify-between items-center mt-1">
+                  <span className="text-xs text-[#59636A]">
+                    Valor resolvido: €{Math.round(resolvidas.find((r) => r.id === c.id)?.valorResolvido ?? 0).toLocaleString("pt-PT")}
+                  </span>
+                  <button onClick={() => onRemoverCusto(c.id)} className="text-[#A13D2E] text-xs">
+                    Remover
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div className="flex flex-wrap gap-2 mt-2">
+              {sugestoes.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => onAdicionarCusto(grupo, s)}
+                  className="text-xs px-2.5 py-1 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]"
+                >
+                  + {s}
+                </button>
+              ))}
+              <button
+                onClick={() => onAdicionarCusto(grupo, "Nova linha")}
+                className="text-xs px-2.5 py-1 rounded-full border border-dashed border-[#B96343] text-[#B96343]"
+              >
+                + Linha personalizada
+              </button>
+            </div>
+          </Card>
+        );
+      })}
+
+      <Card title="Resumo de custos e IVA">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div>
+            <span className="text-xs text-[#59636A] block">Custo total</span>
+            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.custoTotal).toLocaleString("pt-PT")}</span>
+          </div>
+          <div>
+            <span className="text-xs text-[#59636A] block">IVA suportado</span>
+            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaSuportadoTotal).toLocaleString("pt-PT")}</span>
+          </div>
+          <div>
+            <span className="text-xs text-[#59636A] block">IVA recuperável</span>
+            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaRecuperavelTotal).toLocaleString("pt-PT")}</span>
+          </div>
+          <div>
+            <span className="text-xs text-[#59636A] block">IVA não recuperável</span>
+            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaNaoRecuperavelTotal).toLocaleString("pt-PT")}</span>
+          </div>
+        </div>
+      </Card>
+    </>
+  );
+}
+
 function StepCustosFinanciamento({
   inputs,
   updateInput,

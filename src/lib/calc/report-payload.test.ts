@@ -79,7 +79,7 @@ describe("montarReportPayload", () => {
       promotor,
       sensibilidades: [],
       alertas: [],
-      premissas: { areaLote: { valor: null, origem: "manual" } },
+      premissas: { areaLote: { valor: null, origem: "utilizador" } },
       fontesComparaveis: { totalUsados: 0, fontesUnicas: [] },
       fonteLocalizacao: null,
     });
