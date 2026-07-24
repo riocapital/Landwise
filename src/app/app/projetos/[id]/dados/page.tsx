@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   DEFAULT_INPUTS,
-  calcularViabilidade,
   type ProjectInputs,
 } from "@/lib/calc/viabilidade";
 import { calcResumoPrograma, calcAbcTotalProgramado, calcEficiencia, calcDivergenciaAbp, type Typology } from "@/lib/calc/areas";
@@ -158,7 +157,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [calculando, setCalculando] = useState(false);
 
   // Fase 2: localização/áreas estruturadas + tipologias no motor novo (areas.ts)
   const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
@@ -690,23 +688,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setStep((s) => Math.min(s + 1, STEPS.length - 1));
   }
 
-  async function calcular() {
-    setCalculando(true);
-    const results = calcularViabilidade(inputs);
-    await supabase
-      .from("projects")
-      .update({
-        nome,
-        tipo_projeto: tipoProjeto,
-        localizacao: inputs.localizacao,
-        inputs,
-        results,
-        status: "calculado",
-        tir: results.tir,
-        roi: results.roi,
-        margem: results.margem,
-      })
-      .eq("id", id);
+  function verResultados() {
     router.push(`/app/projetos/${id}`);
   }
 
@@ -809,8 +791,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       )}
       {step === 3 && (
         <StepFinanciamento
-          inputs={inputs}
-          updateInput={updateInput}
           financiamento={financiamento}
           onToggleComFinanciamento={handleToggleFinanciamento}
           updateFinanciamento={updateFinanciamento}
@@ -842,8 +822,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       )}
       {step === 6 && (
         <StepCalendario
-          inputs={inputs}
-          updateInput={updateInput}
           atividades={atividades}
           onAdicionarAtividade={adicionarAtividade}
           onAtualizarAtividade={atualizarAtividadeLocal}
@@ -857,8 +835,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       )}
       {step === 7 && (
         <StepCashFlowResultados
-          calculando={calculando}
-          onCalcular={calcular}
+          onVerResultados={verResultados}
           planoVendas={planoVendas}
           updatePlanoVendas={updatePlanoVendas}
           updateEstruturaRecebimentos={updateEstruturaRecebimentos}
@@ -1636,14 +1613,10 @@ function StepAquisicaoCustos({
 }
 
 function StepFinanciamento({
-  inputs,
-  updateInput,
   financiamento,
   onToggleComFinanciamento,
   updateFinanciamento,
 }: {
-  inputs: ProjectInputs;
-  updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
   financiamento: ParametrosFinanciamento;
   onToggleComFinanciamento: (v: boolean) => void;
   updateFinanciamento: <K extends keyof ParametrosFinanciamento>(k: K, v: ParametrosFinanciamento[K]) => void;
@@ -1652,45 +1625,6 @@ function StepFinanciamento({
 
   return (
     <>
-      <Card title="Custos (motor antigo — alimenta o dashboard atual)">
-        <Row>
-          <Field label="Custo de construção (€/m²) — fallback se o mapa de vendas não bastar">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.custoConstrucaoM2 ?? ""}
-              onChange={(e) => updateInput("custoConstrucaoM2", e.target.value ? Number(e.target.value) : null)}
-            />
-          </Field>
-          <Field label="IVA da construção">
-            <select
-              className="input-dark"
-              value={inputs.ivaConstrucao}
-              onChange={(e) => updateInput("ivaConstrucao", Number(e.target.value) as 0.06 | 0.23)}
-            >
-              <option value={0.23}>23%</option>
-              <option value={0.06}>6% — reabilitação urbana</option>
-            </select>
-          </Field>
-        </Row>
-        <Row>
-          <Field label="Custos de aquisição (% sobre terreno — IMT, IS, notário)">
-            <PercentInput value={inputs.custosAquisicaoPct} onChange={(v) => updateInput("custosAquisicaoPct", v)} />
-          </Field>
-          <Field label="Soft costs (% sobre construção)">
-            <PercentInput value={inputs.softCostsPct} onChange={(v) => updateInput("softCostsPct", v)} />
-          </Field>
-        </Row>
-        <Row>
-          <Field label="Contingência (% sobre construção)">
-            <PercentInput value={inputs.contingenciaPct} onChange={(v) => updateInput("contingenciaPct", v)} />
-          </Field>
-          <Field label="Marketing (% sobre CAPEX de obra)">
-            <PercentInput value={inputs.marketingPct} onChange={(v) => updateInput("marketingPct", v)} />
-          </Field>
-        </Row>
-      </Card>
-
       <Card title="Financiamento bancário">
         <Row>
           <Field label="Este projeto terá financiamento bancário?">
@@ -2285,8 +2219,6 @@ function ConsultoriaModal({
 }
 
 function StepCalendario({
-  inputs,
-  updateInput,
   atividades,
   onAdicionarAtividade,
   onAtualizarAtividade,
@@ -2297,8 +2229,6 @@ function StepCalendario({
   onDuplicarAtividade,
   onReordenarAtividade,
 }: {
-  inputs: ProjectInputs;
-  updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
   atividades: Atividade[];
   onAdicionarAtividade: (nome: string) => void;
   onAtualizarAtividade: (id: string, patch: Partial<Atividade>) => void;
@@ -2320,43 +2250,6 @@ function StepCalendario({
 
   return (
     <>
-      <Card title="Calendário e comercialização (motor antigo — alimenta o dashboard atual)">
-        <Row>
-          <Field label="Duração total do projeto (meses)">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.duracaoTotalMeses}
-              onChange={(e) => updateInput("duracaoTotalMeses", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Duração da obra (meses)">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.duracaoObraMeses}
-              onChange={(e) => updateInput("duracaoObraMeses", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Mês de início da obra">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.mesInicioObra}
-              onChange={(e) => updateInput("mesInicioObra", Number(e.target.value))}
-            />
-          </Field>
-        </Row>
-        <Row>
-          <Field label="Sinal de venda (%)">
-            <PercentInput value={inputs.sinalVendaPct} onChange={(v) => updateInput("sinalVendaPct", v)} />
-          </Field>
-          <Field label="Comissão de mediador (% s/IVA)">
-            <PercentInput value={inputs.comissaoMediadorPct} onChange={(v) => updateInput("comissaoMediadorPct", v)} />
-          </Field>
-        </Row>
-      </Card>
-
       <Card title="Calendário de atividades" subtitle="Início + duração = fim, calculado automaticamente. Editar qualquer um dos três recalcula os outros dois.">
         {alertas.length > 0 && (
           <div className="mb-3">
@@ -2492,8 +2385,7 @@ function StepCalendario({
 const SUBTABS_RESULTADOS = ["Plano de vendas", "Resumo", "Cash flow", "Capex", "Funding", "Financiamento", "Investidor e promotor", "Sensibilidades"] as const;
 
 function StepCashFlowResultados({
-  calculando,
-  onCalcular,
+  onVerResultados,
   planoVendas,
   updatePlanoVendas,
   updateEstruturaRecebimentos,
@@ -2508,8 +2400,7 @@ function StepCashFlowResultados({
   feesNovos,
   contextoFees,
 }: {
-  calculando: boolean;
-  onCalcular: () => void;
+  onVerResultados: () => void;
   planoVendas: PlanoVendas;
   updatePlanoVendas: <K extends keyof PlanoVendas>(k: K, v: PlanoVendas[K]) => void;
   updateEstruturaRecebimentos: <K extends keyof PlanoVendas["estruturaRecebimentos"]>(k: K, v: PlanoVendas["estruturaRecebimentos"][K]) => void;
@@ -2884,13 +2775,10 @@ function StepCashFlowResultados({
         </Card>
       )}
 
-      <Card title="Motor antigo (compatibilidade)" subtitle="Continua a alimentar o dashboard atual — independente do motor novo acima.">
-        <button
-          onClick={onCalcular}
-          disabled={calculando}
-          className="px-6 py-3 rounded-lg bg-[#142B3A] text-white text-sm font-bold disabled:opacity-60"
-        >
-          {calculando ? "A calcular…" : "Calcular viabilidade (motor antigo)"}
+      <Card title="Ver resultados">
+        <p className="text-sm text-[#59636A] mb-3">O dashboard do projeto recalcula os resultados ao vivo a partir do que foi preenchido aqui — não é preciso nenhum passo de &quot;calcular&quot; separado.</p>
+        <button onClick={onVerResultados} className="px-6 py-3 rounded-lg bg-[#142B3A] text-white text-sm font-bold">
+          Ver dashboard do projeto
         </button>
       </Card>
 
