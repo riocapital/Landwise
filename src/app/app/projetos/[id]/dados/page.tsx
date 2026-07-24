@@ -7,8 +7,6 @@ import {
   DEFAULT_INPUTS,
   calcularViabilidade,
   type ProjectInputs,
-  type Tipologia,
-  type LinhaVendas,
 } from "@/lib/calc/viabilidade";
 import { calcResumoPrograma, calcGcaProgramado, calcEficiencia, calcDivergenciaAbp, type Typology } from "@/lib/calc/areas";
 import {
@@ -43,6 +41,15 @@ import {
 } from "@/lib/supabase/project-capital";
 import { calcularResultadosComWaterfall } from "@/lib/calc/estrutura-capital";
 import { criarLeadConsultoria, type NovoLeadConsultoria } from "@/lib/supabase/consulting-leads";
+import {
+  gerarUnidadesDeTipologia,
+  calcularSincronizacao,
+  resolverSalesTable,
+  calcVgvBruto,
+  validarVenda,
+  type UnidadeVenda,
+} from "@/lib/calc/sales-table";
+import { listarUnidades, criarUnidades, atualizarUnidade, apagarUnidades } from "@/lib/supabase/project-units";
 import {
   calcSeguro,
   calcIMI,
@@ -156,6 +163,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   // Fase 2: localização/áreas estruturadas + tipologias no motor novo (areas.ts)
   const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
   const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
+  const [unidades, setUnidades] = useState<UnidadeVenda[]>([]);
   const [custosNovos, setCustosNovos] = useState<LinhaCusto[]>([]);
   const [financiamento, setFinanciamento] = useState<ParametrosFinanciamento>(FINANCIAMENTO_VAZIO);
   const [estruturaCapital, setEstruturaCapital] = useState<EstruturaCapitalEstado>(ESTRUTURA_CAPITAL_VAZIA);
@@ -204,6 +212,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     }
     const tipologias = await listarTipologiasProjeto(supabase, id);
     setTipologiasNovas(tipologias);
+    const unidadesCarregadas = await listarUnidades(supabase, id);
+    setUnidades(unidadesCarregadas);
     const custos = await listarCustosProjeto(supabase, id);
     setCustosNovos(custos);
     const parametrosFinanciamento = await carregarFinanciamento(supabase, id);
@@ -274,6 +284,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       // Tipologias do motor novo: cada uma já tem id real na BD (criada ao
       // clicar "+ Adicionar"), por isso aqui é sempre update, nunca insert.
       await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
+      await Promise.all(unidades.map((u) => atualizarUnidade(supabase, u.id, u)));
       await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
       await guardarFinanciamento(supabase, id, financiamento);
       await guardarEstruturaCapital(supabase, id, estruturaCapital);
@@ -293,6 +304,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       inputs,
       identificacao,
       tipologiasNovas,
+      unidades,
       custosNovos,
       financiamento,
       estruturaCapital,
@@ -317,6 +329,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     inputs,
     identificacao,
     tipologiasNovas,
+    unidades,
     custosNovos,
     financiamento,
     estruturaCapital,
@@ -388,6 +401,55 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   async function removerTipologiaNova(tipId: string) {
     await apagarTipologia(supabase, tipId);
     setTipologiasNovas((prev) => prev.filter((t) => t.id !== tipId));
+    setUnidades((prev) => prev.filter((u) => u.tipologiaId !== tipId));
+  }
+
+  /**
+   * Sincroniza as unidades da Sales Table com a quantidade atual da
+   * tipologia. Nunca apaga sozinho uma unidade vendida ou personalizada —
+   * quando há candidatas a remover, pede confirmação primeiro (secção 14).
+   */
+  async function sincronizarUnidades(tipologia: Typology) {
+    const existentes = unidades.filter((u) => u.tipologiaId === tipologia.id);
+    const r = calcularSincronizacao(existentes, tipologia.quantidade);
+
+    if (r.paraCriar > 0) {
+      const novas = gerarUnidadesDeTipologia(tipologia, r.paraCriar, existentes.length);
+      const criadas = await criarUnidades(supabase, id, novas);
+      setUnidades((prev) => [...prev, ...criadas]);
+      return;
+    }
+
+    if (r.candidatasARemover.length > 0) {
+      const confirmar = window.confirm(
+        `A quantidade de "${tipologia.nome}" desceu para ${tipologia.quantidade}. Isto remove ${r.candidatasARemover.length} unidade(s) ainda disponível(is) e não personalizada(s). Unidades vendidas ou editadas manualmente nunca são apagadas. Continuar?`
+      );
+      if (!confirmar) return;
+      const ids = r.candidatasARemover.map((u) => u.id);
+      await apagarUnidades(supabase, ids);
+      setUnidades((prev) => prev.filter((u) => !ids.includes(u.id)));
+    }
+
+    if (r.bloqueadasParaRemover.length > 0 && r.candidatasARemover.length === 0 && r.paraCriar === 0) {
+      window.alert(
+        `Não é possível reduzir mais "${tipologia.nome}": as ${r.bloqueadasParaRemover.length} unidades restantes já estão vendidas ou foram personalizadas.`
+      );
+    }
+  }
+
+  function atualizarUnidadeLocal(unidadeId: string, patch: Partial<UnidadeVenda>) {
+    setUnidades((prev) => prev.map((u) => (u.id === unidadeId ? { ...u, ...patch, personalizada: true } : u)));
+  }
+
+  function venderUnidade(unidadeId: string, dataVenda: string) {
+    const unidade = unidades.find((u) => u.id === unidadeId);
+    if (!unidade) return;
+    const validacao = validarVenda(unidade);
+    if (!validacao.valido) {
+      window.alert(validacao.erro);
+      return;
+    }
+    setUnidades((prev) => prev.map((u) => (u.id === unidadeId ? { ...u, estadoComercial: "vendido", dataVenda } : u)));
   }
 
   async function adicionarCustoNovo(grupo: GrupoCusto, nome: string) {
@@ -501,7 +563,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         projeto: nome,
         localizacao: [identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || null,
         valorAquisicao: inputs.custoTerreno || 0,
-        gdv: resumoProgramaAtual.receitaTotal,
+        gdv: vgvBrutoAtual,
         custoTotal: resumoCustosAtual.custoTotal,
         impostoEstimado,
       },
@@ -662,6 +724,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   };
   const resumoCustosAtual = agregarCustos(resolverCustos(custosNovos, contextoCustoAtual));
   const resumoProgramaAtual = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
+  const salesTableResolvida = resolverSalesTable(unidades, tipologiasNovas);
+  const vgvBrutoAtual = calcVgvBruto(salesTableResolvida);
   const contextoFeesAtual: ContextoFees = {
     valorAquisicao: contextoCustoAtual.valorAquisicao,
     hardCostsTotal: resumoCustosAtual.totalHardCosts,
@@ -718,8 +782,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       )}
       {step === 1 && (
         <StepPrograma
-          inputs={inputs}
-          updateInput={updateInput}
           tipologiasNovas={tipologiasNovas}
           identificacao={identificacao}
           onAdicionarTipologiaNova={adicionarTipologiaNova}
@@ -728,6 +790,10 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           sugestoes={sugestoes}
           onPedirSugestao={pedirSugestaoLandwise}
           onAplicarSugestao={aplicarSugestao}
+          unidades={unidades}
+          onSincronizarUnidades={sincronizarUnidades}
+          onAtualizarUnidade={atualizarUnidadeLocal}
+          onVenderUnidade={venderUnidade}
         />
       )}
       {step === 2 && (
@@ -799,6 +865,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           custosNovos={custosNovos}
           contextoCusto={contextoCustoAtual}
           resumoPrograma={resumoProgramaAtual}
+          vgvBruto={vgvBrutoAtual}
           identificacao={identificacao}
           financiamento={financiamento}
           estruturaCapital={estruturaCapital}
@@ -1063,8 +1130,6 @@ function CheckboxIdent({ label, checked, onChange }: { label: string; checked: b
 // Etapa 2 — Programa e vendas (tipologias + mapa de vendas)
 // ============================================================
 function StepPrograma({
-  inputs,
-  updateInput,
   tipologiasNovas,
   identificacao,
   onAdicionarTipologiaNova,
@@ -1073,9 +1138,11 @@ function StepPrograma({
   sugestoes,
   onPedirSugestao,
   onAplicarSugestao,
+  unidades,
+  onSincronizarUnidades,
+  onAtualizarUnidade,
+  onVenderUnidade,
 }: {
-  inputs: ProjectInputs;
-  updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
   tipologiasNovas: Typology[];
   identificacao: IdentificacaoEstruturada;
   onAdicionarTipologiaNova: () => void;
@@ -1084,182 +1151,19 @@ function StepPrograma({
   sugestoes: Record<string, { loading: boolean; resultado?: SugestaoPreco; erro?: boolean }>;
   onPedirSugestao: (t: Typology) => void;
   onAplicarSugestao: (id: string, precoM2: number) => void;
+  unidades: UnidadeVenda[];
+  onSincronizarUnidades: (t: Typology) => void;
+  onAtualizarUnidade: (id: string, patch: Partial<UnidadeVenda>) => void;
+  onVenderUnidade: (id: string, dataVenda: string) => void;
 }) {
   const resumo = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const semLocalizacao = !identificacao.freguesia && !identificacao.concelho;
-  function updateTipologia(i: number, patch: Partial<Tipologia>) {
-    const novas = [...inputs.tipologias];
-    novas[i] = { ...novas[i], ...patch };
-    updateInput("tipologias", novas);
-  }
-  function addTipologia() {
-    updateInput("tipologias", [
-      ...inputs.tipologias,
-      { nome: `T${inputs.tipologias.length}`, gpa: 80, varanda: 10, terraco: 0, precoBaseM2: 3800 },
-    ]);
-  }
-  function removeTipologia(i: number) {
-    updateInput(
-      "tipologias",
-      inputs.tipologias.filter((_, idx) => idx !== i)
-    );
-  }
-
-  function updateLinha(i: number, patch: Partial<LinhaVendas>) {
-    const novas = [...inputs.mapaVendas];
-    novas[i] = { ...novas[i], ...patch };
-    updateInput("mapaVendas", novas);
-  }
-  function addLinha() {
-    updateInput("mapaVendas", [
-      ...inputs.mapaVendas,
-      { bloco: "Bloco A", piso: 0, tipologia: inputs.tipologias[0]?.nome ?? "", quantidade: 1, premioPiso: 0 },
-    ]);
-  }
-  function removeLinha(i: number) {
-    updateInput(
-      "mapaVendas",
-      inputs.mapaVendas.filter((_, idx) => idx !== i)
-    );
-  }
-
-  const totalUnidades = inputs.mapaVendas.reduce((s, l) => s + l.quantidade, 0);
 
   return (
     <>
-      <Card title="Tipologias" subtitle="Defina cada tipologia uma vez — o mapa de vendas usa-as automaticamente.">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-xs text-[#59636A] uppercase text-left">
-              <th className="pb-2">Tipologia</th>
-              <th className="pb-2">GPA (m²)</th>
-              <th className="pb-2">Varanda (m²)</th>
-              <th className="pb-2">Terraço (m²)</th>
-              <th className="pb-2">Preço base (€/m²)</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {inputs.tipologias.map((t, i) => (
-              <tr key={i}>
-                <td className="pr-2 py-1">
-                  <input className="input-dark" value={t.nome} onChange={(e) => updateTipologia(i, { nome: e.target.value })} />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.gpa}
-                    onChange={(e) => updateTipologia(i, { gpa: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.varanda}
-                    onChange={(e) => updateTipologia(i, { varanda: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.terraco}
-                    onChange={(e) => updateTipologia(i, { terraco: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.precoBaseM2}
-                    onChange={(e) => updateTipologia(i, { precoBaseM2: Number(e.target.value) })}
-                  />
-                </td>
-                <td>
-                  <button onClick={() => removeTipologia(i)} className="text-[#A13D2E] text-xs">
-                    Remover
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <button onClick={addTipologia} className="text-[#B96343] text-sm font-semibold mt-3">
-          + Adicionar tipologia
-        </button>
-      </Card>
-
-      <Card title="Mapa de vendas" subtitle="Cada linha é um grupo de unidades iguais — bloco, piso, tipologia e quantidade.">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-xs text-[#59636A] uppercase text-left">
-              <th className="pb-2">Bloco</th>
-              <th className="pb-2">Piso</th>
-              <th className="pb-2">Tipologia</th>
-              <th className="pb-2">Quantidade</th>
-              <th className="pb-2">Prémio piso (%)</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {inputs.mapaVendas.map((l, i) => (
-              <tr key={i}>
-                <td className="pr-2 py-1">
-                  <input className="input-dark" value={l.bloco} onChange={(e) => updateLinha(i, { bloco: e.target.value })} />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={l.piso}
-                    onChange={(e) => updateLinha(i, { piso: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <select className="input-dark" value={l.tipologia} onChange={(e) => updateLinha(i, { tipologia: e.target.value })}>
-                    {inputs.tipologias.map((t) => (
-                      <option key={t.nome} value={t.nome}>
-                        {t.nome}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={l.quantidade}
-                    onChange={(e) => updateLinha(i, { quantidade: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={l.premioPiso * 100}
-                    onChange={(e) => updateLinha(i, { premioPiso: Number(e.target.value) / 100 })}
-                  />
-                </td>
-                <td>
-                  <button onClick={() => removeLinha(i)} className="text-[#A13D2E] text-xs">
-                    Remover
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <button onClick={addLinha} className="text-[#B96343] text-sm font-semibold mt-3">
-          + Adicionar grupo de unidades
-        </button>
-        <p className="text-xs text-[#59636A] mt-4">Total de unidades: {totalUnidades}</p>
-      </Card>
-
       <Card
-        title="Tipologias — motor novo (Fase 2)"
-        subtitle="Áreas dependentes e área vendável equivalente calculadas por src/lib/calc/areas.ts. Ainda não alimenta o resultado financeiro abaixo — só o motor antigo (tipologias/mapa de vendas acima) faz isso, por agora."
+        title="Programa de tipologias"
+        subtitle="Cada alteração de quantidade sincroniza automaticamente a Sales Table abaixo — que é a única fonte do VGV."
       >
         {semLocalizacao && (
           <p className="text-xs text-[#B96343] mb-3">
@@ -1372,7 +1276,10 @@ function StepPrograma({
                   <td className="pr-2 py-1 text-[#59636A]">
                     €{Math.round((t.abpUnidade + t.varandaM2 * t.varandaPctValorizacao + t.terracoM2 * t.terracoPctValorizacao) * t.precoBaseM2 * t.quantidade).toLocaleString("pt-PT")}
                   </td>
-                  <td>
+                  <td className="flex gap-2">
+                    <button onClick={() => onSincronizarUnidades(t)} className="text-[#B96343] text-xs font-semibold">
+                      Sincronizar Sales Table
+                    </button>
                     <button onClick={() => onRemoverTipologiaNova(t.id)} className="text-[#A13D2E] text-xs">
                       Remover
                     </button>
@@ -1397,13 +1304,115 @@ function StepPrograma({
               <span className="font-semibold text-[#142B3A]">{Math.round(resumo.areaVendavelEquivalenteTotal)} m²</span>
             </div>
             <div>
-              <span className="text-xs text-[#59636A] block">Receita total (GDV)</span>
+              <span className="text-xs text-[#59636A] block">Receita estimada (antes de gerar a Sales Table)</span>
               <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.receitaTotal).toLocaleString("pt-PT")}</span>
             </div>
           </div>
         )}
       </Card>
+
+      <Card
+        title="Sales Table"
+        subtitle="Uma linha por unidade real. É a única fonte do VGV — nenhum outro ecrã soma preços de tipologias para chegar a este valor."
+      >
+        {unidades.length === 0 && (
+          <p className="text-xs text-[#8FA6AF] mb-3">
+            Ainda sem unidades. Clica em &quot;Sincronizar Sales Table&quot; em cada tipologia acima para gerar as unidades.
+          </p>
+        )}
+        {tipologiasNovas.map((tipologia) => {
+          const unidadesDaTipologia = salesTableDaTipologia(unidades, tipologiasNovas, tipologia.id);
+          if (unidadesDaTipologia.length === 0) return null;
+          return (
+            <div key={tipologia.id} className="mb-5">
+              <p className="text-xs font-semibold text-[#142B3A] mb-2">{tipologia.nome}</p>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[#59636A] uppercase">
+                    <th className="pb-1 pr-2">Bloco</th>
+                    <th className="pb-1 pr-2">Piso</th>
+                    <th className="pb-1 pr-2">Área vendável</th>
+                    <th className="pb-1 pr-2">Prémio/desconto</th>
+                    <th className="pb-1 pr-2">Override manual</th>
+                    <th className="pb-1 pr-2">Preço final</th>
+                    <th className="pb-1 pr-2">Estado</th>
+                    <th className="pb-1 pr-2">Data venda</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unidadesDaTipologia.map((u) => (
+                    <tr key={u.id} className="border-t border-[#E3DACB]">
+                      <td className="py-1 pr-2">
+                        <input className="input-dark w-20" value={u.bloco ?? ""} onChange={(e) => onAtualizarUnidade(u.id, { bloco: e.target.value })} />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <input className="input-dark w-16" value={u.piso ?? ""} onChange={(e) => onAtualizarUnidade(u.id, { piso: e.target.value })} />
+                      </td>
+                      <td className="py-1 pr-2 text-[#59636A]">{Math.round(u.areaVendavel)} m²</td>
+                      <td className="py-1 pr-2">
+                        <input
+                          type="number"
+                          className="input-dark w-24"
+                          value={u.premioDescontoUnidade}
+                          onChange={(e) => onAtualizarUnidade(u.id, { premioDescontoUnidade: Number(e.target.value) })}
+                          disabled={u.estadoComercial !== "disponivel"}
+                        />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <input
+                          type="number"
+                          className="input-dark w-24"
+                          placeholder="—"
+                          value={u.overrideManualValor ?? ""}
+                          onChange={(e) => onAtualizarUnidade(u.id, { overrideManualValor: e.target.value ? Number(e.target.value) : null })}
+                          disabled={u.estadoComercial !== "disponivel"}
+                        />
+                      </td>
+                      <td className="py-1 pr-2 font-semibold text-[#142B3A]">€{Math.round(u.precoFinal).toLocaleString("pt-PT")}</td>
+                      <td className="py-1 pr-2">
+                        <span
+                          className={
+                            u.estadoComercial === "disponivel"
+                              ? "text-[#59636A]"
+                              : u.estadoComercial === "vendido" || u.estadoComercial === "escriturado"
+                                ? "text-[#4E7A5C] font-semibold"
+                                : "text-[#B96343]"
+                          }
+                        >
+                          {u.estadoComercial}
+                        </span>
+                      </td>
+                      <td className="py-1 pr-2">
+                        {u.estadoComercial === "disponivel" ? (
+                          <input type="date" className="input-dark" onChange={(e) => e.target.value && onVenderUnidade(u.id, e.target.value)} />
+                        ) : (
+                          u.dataVenda
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+        {unidades.length > 0 && (
+          <div className="pt-4 border-t border-[#E3DACB] text-sm">
+            <span className="text-xs text-[#59636A] block">VGV Bruto (fonte única — soma real da Sales Table)</span>
+            <span className="font-bold text-lg text-[#142B3A]">
+              €{Math.round(calcVgvBruto(resolverSalesTable(unidades, tipologiasNovas))).toLocaleString("pt-PT")}
+            </span>
+          </div>
+        )}
+      </Card>
     </>
+  );
+}
+
+function salesTableDaTipologia(unidades: UnidadeVenda[], tipologias: Typology[], tipologiaId: string) {
+  return resolverSalesTable(
+    unidades.filter((u) => u.tipologiaId === tipologiaId),
+    tipologias
   );
 }
 
@@ -2491,6 +2500,7 @@ function StepCashFlowResultados({
   custosNovos,
   contextoCusto,
   resumoPrograma,
+  vgvBruto,
   identificacao,
   financiamento,
   estruturaCapital,
@@ -2506,6 +2516,7 @@ function StepCashFlowResultados({
   custosNovos: LinhaCusto[];
   contextoCusto: ContextoCusto;
   resumoPrograma: ReturnType<typeof calcResumoPrograma>;
+  vgvBruto: number;
   identificacao: IdentificacaoEstruturada;
   financiamento: ParametrosFinanciamento;
   estruturaCapital: EstruturaCapitalEstado;
@@ -2525,7 +2536,7 @@ function StepCashFlowResultados({
 
   let resultado: ReturnType<typeof calcularCashFlow> | null = null;
   if (prontoParaCalcular) {
-    const { linhas: recebimentos } = gerarRecebimentosMensais(resumoPrograma.receitaTotal, planoVendas);
+    const { linhas: recebimentos } = gerarRecebimentosMensais(vgvBruto, planoVendas);
     resultado = calcularCashFlow({
       linhasCusto: custosNovos,
       contextoCusto,
@@ -2863,7 +2874,7 @@ function StepCashFlowResultados({
             base={{
               linhasCusto: custosNovos,
               contextoCusto,
-              receitaTotalGdvBase: resumoPrograma.receitaTotal,
+              receitaTotalGdvBase: vgvBruto,
               planoVendas,
               parametrosFinanciamento: financiamento,
             }}
