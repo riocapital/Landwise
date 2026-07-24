@@ -32,6 +32,8 @@ function tipologia(overrides: Partial<Typology>): Typology {
     precoBaseM2: 4000,
     metodoPrecificacao: "area_vendavel_equivalente",
     precoManualUnidade: null,
+    mesesParaPrimeiraVenda: 0,
+    unidadesPorMes: 1,
     ...overrides,
   };
 }

@@ -49,6 +49,7 @@ import {
   type UnidadeVenda,
 } from "@/lib/calc/sales-table";
 import { listarUnidades, criarUnidades, atualizarUnidade, apagarUnidades } from "@/lib/supabase/project-units";
+import { gerarAgendaAbsorcao, calcResumoAbsorcao } from "@/lib/calc/sales-curve";
 import {
   calcSeguro,
   calcIMI,
@@ -776,6 +777,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           onSincronizarUnidades={sincronizarUnidades}
           onAtualizarUnidade={atualizarUnidadeLocal}
           onVenderUnidade={venderUnidade}
+          dataLancamentoComercial={planoVendas.dataLancamentoComercial}
         />
       )}
       {step === 2 && (
@@ -1119,6 +1121,7 @@ function StepPrograma({
   onSincronizarUnidades,
   onAtualizarUnidade,
   onVenderUnidade,
+  dataLancamentoComercial,
 }: {
   tipologiasNovas: Typology[];
   identificacao: IdentificacaoEstruturada;
@@ -1132,6 +1135,7 @@ function StepPrograma({
   onSincronizarUnidades: (t: Typology) => void;
   onAtualizarUnidade: (id: string, patch: Partial<UnidadeVenda>) => void;
   onVenderUnidade: (id: string, dataVenda: string) => void;
+  dataLancamentoComercial: string;
 }) {
   const resumo = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const semLocalizacao = !identificacao.freguesia && !identificacao.concelho;
@@ -1286,6 +1290,55 @@ function StepPrograma({
             </div>
           </div>
         )}
+      </Card>
+
+      <Card
+        title="Curva de vendas por tipologia"
+        subtitle="Informa só meses e velocidade — o Landwise projeta a data de cada unidade, nunca fraciona uma unidade nem excede o stock."
+      >
+        {!dataLancamentoComercial && (
+          <p className="text-xs text-[#B96343] mb-3">
+            Preenche a data de lançamento comercial na etapa &quot;Cash flow e resultados&quot; → &quot;Plano de vendas&quot; para ver a projeção de datas.
+          </p>
+        )}
+        {tipologiasNovas.map((t) => {
+          const agenda = dataLancamentoComercial
+            ? gerarAgendaAbsorcao(t.quantidade, t.mesesParaPrimeiraVenda, t.unidadesPorMes, dataLancamentoComercial)
+            : [];
+          const resumoAbsorcao = calcResumoAbsorcao(agenda, t.quantidade);
+          return (
+            <div key={t.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+              <p className="text-xs font-semibold text-[#142B3A] mb-2">{t.nome}</p>
+              <Row>
+                <Field label="Meses após o lançamento para a primeira venda">
+                  <input
+                    type="number"
+                    className="input-dark"
+                    value={t.mesesParaPrimeiraVenda}
+                    onChange={(e) => onAtualizarTipologiaNova(t.id, { mesesParaPrimeiraVenda: Number(e.target.value) })}
+                  />
+                </Field>
+                <Field label="Unidades vendidas por mês">
+                  <input
+                    type="number"
+                    step="0.1"
+                    className="input-dark"
+                    value={t.unidadesPorMes}
+                    onChange={(e) => onAtualizarTipologiaNova(t.id, { unidadesPorMes: Number(e.target.value) })}
+                  />
+                </Field>
+              </Row>
+              {resumoAbsorcao.length > 0 && (
+                <div className="mt-2 text-xs text-[#59636A]">
+                  <p>
+                    Última venda projetada: <strong className="text-[#142B3A]">{resumoAbsorcao[resumoAbsorcao.length - 1].mes}</strong> ·
+                    Duração da absorção: <strong className="text-[#142B3A]">{resumoAbsorcao.length} meses</strong>
+                  </p>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </Card>
 
       <Card

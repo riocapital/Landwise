@@ -36,6 +36,8 @@ function makeTypology(overrides: Partial<Typology> = {}): Typology {
     valorEstacionamento: 15000,
     precoBaseM2: 4000,
     metodoPrecificacao: "abp_mais_coeficientes",
+    mesesParaPrimeiraVenda: 0,
+    unidadesPorMes: 1,
     ...overrides,
   };
 }

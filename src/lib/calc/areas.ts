@@ -30,6 +30,10 @@ export type Typology = {
   precoBaseM2: number;
   metodoPrecificacao: "abp_mais_coeficientes" | "area_vendavel_equivalente" | "manual_por_unidade";
   precoManualUnidade?: number | null;
+
+  // Curva de vendas (secção 15 da revisão estrutural)
+  mesesParaPrimeiraVenda: number;
+  unidadesPorMes: number;
 };
 
 export type IdentificacaoAreas = {
