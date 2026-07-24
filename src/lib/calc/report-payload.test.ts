@@ -44,7 +44,7 @@ describe("montarReportPayload", () => {
   it("monta o objeto completo a partir de resultados já calculados, sem inventar valores", () => {
     const cashFlow = calcularCashFlow({
       linhasCusto: [custo({ grupo: "aquisicao", tipoCalculo: "valor_fixo", valorInput: 500_000, duracaoMeses: 1, dataFinal: "2026-01-31" })],
-      contextoCusto: { valorAquisicao: 500_000, abcTotal: 500, gcaTotal: 600, numeroUnidades: 5 },
+      contextoCusto: { valorAquisicao: 500_000, abcPrincipal: 500, abcTotal: 600, numeroUnidades: 5 },
       recebimentos: [{ mes: "2027-01", reserva: 0, cpcv: 0, duranteConstrucao: 0, conclusao: 1_500_000, escritura: 0, total: 1_500_000 }],
       parametrosFinanciamento: parametrosSemFinanciamento,
       saldoMinimoCaixa: 0,
@@ -62,11 +62,11 @@ describe("montarReportPayload", () => {
         dataReferenciaAnalise: "2026-01-01",
       },
       localizacao: { codigoPostal: null, rua: null, freguesia: null, concelho: null, distrito: null, latitude: null, longitude: null, origem: "manual" },
-      areas: { areaLote: null, abcAcimaSolo: null, abcAbaixoSolo: null, abcTotal: 0, gcaTotal: 0, abpEstimada: null, abpProgramada: 0, eficiencia: null },
+      areas: { areaLote: null, abcAcimaSolo: null, abcAbaixoSolo: null, abcPrincipal: 0, abcTotal: 0, abpEstimada: null, abpProgramada: 0, eficiencia: null },
       programa: {
         totalUnidades: 0, abpTotal: 0, areaVarandas: 0, varandaVendavel: 0, areaTerracos: 0, terracoVendavel: 0,
         areaJardins: 0, jardimVendavel: 0, areaArrecadacoes: 0, arrecadacaoVendavel: 0, areaDependenteTotal: 0,
-        areaDependenteVendavel: 0, gcaTotal: 0, areaVendavelEquivalenteTotal: 0, totalEstacionamentos: 0,
+        areaDependenteVendavel: 0, abcTotal: 0, areaVendavelEquivalenteTotal: 0, totalEstacionamentos: 0,
         precoMedioUnidade: 0, precoMedioPonderadoM2: 0, receitaTotal: 1_500_000,
       },
       tipologias: [],

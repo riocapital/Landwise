@@ -47,8 +47,8 @@ export type ReportPayload = {
     areaLote: number | null;
     abcAcimaSolo: number | null;
     abcAbaixoSolo: number | null;
-    abcTotal: number;
-    gcaTotal: number;
+    abcPrincipal: number; // ABC acima + ABC abaixo, sem a ABD
+    abcTotal: number; // ABC acima + ABC abaixo + ABD (secção 8 da revisão estrutural)
     abpEstimada: number | null;
     abpProgramada: number;
     eficiencia: number | null;

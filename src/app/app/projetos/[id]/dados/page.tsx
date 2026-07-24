@@ -8,7 +8,7 @@ import {
   calcularViabilidade,
   type ProjectInputs,
 } from "@/lib/calc/viabilidade";
-import { calcResumoPrograma, calcGcaProgramado, calcEficiencia, calcDivergenciaAbp, type Typology } from "@/lib/calc/areas";
+import { calcResumoPrograma, calcAbcTotalProgramado, calcEficiencia, calcDivergenciaAbp, type Typology } from "@/lib/calc/areas";
 import {
   listarTipologiasProjeto,
   criarTipologia,
@@ -718,8 +718,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
   const contextoCustoAtual: ContextoCusto = {
     valorAquisicao: inputs.custoTerreno || 0,
-    abcTotal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
-    gcaTotal: calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    abcPrincipal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
+    abcTotal: calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
     numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
   };
   const resumoCustosAtual = agregarCustos(resolverCustos(custosNovos, contextoCustoAtual));
@@ -924,9 +924,9 @@ function StepIdentificacao({
   onEscolherOpcaoCp: (opcao: { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }) => void;
   tipologiasNovas: Typology[];
 }) {
-  const gcaProgramado = calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas);
+  const abcTotalProgramado = calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas);
   const abpProgramada = tipologiasNovas.reduce((s, t) => s + t.quantidade * t.abpUnidade, 0);
-  const eficiencia = calcEficiencia(abpProgramada, gcaProgramado);
+  const eficiencia = calcEficiencia(abpProgramada, abcTotalProgramado);
   const divergencia =
     identificacao.abpEstimada && tipologiasNovas.length > 0
       ? calcDivergenciaAbp(identificacao.abpEstimada, tipologiasNovas)
@@ -1034,7 +1034,7 @@ function StepIdentificacao({
 
       <Card
         title="Áreas do projeto"
-        subtitle="GCA e eficiência são calculados automaticamente a partir destes valores e do programa de tipologias."
+        subtitle="ABC Total e eficiência são calculados automaticamente a partir destes valores e do programa de tipologias."
       >
         <Row>
           <Field label="ABC acima do solo (m²)">
@@ -1074,8 +1074,8 @@ function StepIdentificacao({
         </Row>
         <div className="flex gap-6 mt-2 text-sm">
           <div>
-            <span className="text-xs text-[#59636A] block">GCA programado</span>
-            <span className="font-semibold text-[#142B3A]">{gcaProgramado ? `${Math.round(gcaProgramado)} m²` : "—"}</span>
+            <span className="text-xs text-[#59636A] block">ABC Total programado</span>
+            <span className="font-semibold text-[#142B3A]">{abcTotalProgramado ? `${Math.round(abcTotalProgramado)} m²` : "—"}</span>
           </div>
           <div>
             <span className="text-xs text-[#59636A] block">Eficiência</span>
@@ -1435,8 +1435,8 @@ const TIPOS_CALCULO_CUSTO: { value: LinhaCusto["tipoCalculo"]; label: string }[]
   { value: "percentagem_hard_costs", label: "% dos hard costs" },
   { value: "percentagem_capex", label: "% do capex" },
   { value: "percentagem_custo_total", label: "% do custo total" },
-  { value: "eur_m2_abc", label: "€/m² de ABC" },
-  { value: "eur_m2_gca", label: "€/m² de GCA" },
+  { value: "eur_m2_abc_principal", label: "€/m² de ABC (sem ABD)" },
+  { value: "eur_m2_abc_total", label: "€/m² de ABC Total (com ABD)" },
   { value: "eur_unidade", label: "€/unidade" },
 ];
 
@@ -1468,8 +1468,8 @@ function StepAquisicaoCustos({
 }) {
   const contexto: ContextoCusto = {
     valorAquisicao: inputs.custoTerreno || 0,
-    abcTotal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
-    gcaTotal: calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    abcPrincipal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
+    abcTotal: calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
     numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
   };
 
@@ -2662,7 +2662,7 @@ function StepCashFlowResultados({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <ResumoItem label="Freguesia / Concelho" valor={[identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || "—"} />
             <ResumoItem label="ABC total" valor={`${Math.round((identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0))} m²`} />
-            <ResumoItem label="GCA total" valor={`${Math.round(resumoPrograma.gcaTotal)} m²`} />
+            <ResumoItem label="ABC Total" valor={`${Math.round(resumoPrograma.abcTotal)} m²`} />
             <ResumoItem label="ABP" valor={`${Math.round(resumoPrograma.abpTotal)} m²`} />
             <ResumoItem label="Área vendável equivalente" valor={`${Math.round(resumoPrograma.areaVendavelEquivalenteTotal)} m²`} />
             <ResumoItem label="Número de unidades" valor={String(resumoPrograma.totalUnidades)} />

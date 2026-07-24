@@ -44,19 +44,19 @@ export type IdentificacaoAreas = {
 
 // --- Fórmulas de identificação (áreas "físicas", uma vez por projeto) ---
 
-/** ABC total = ABC acima do solo + ABC abaixo do solo. */
-export function calcAbcTotal(abcAcimaSolo: number | null, abcAbaixoSolo: number | null): number {
+/** ABC principal = ABC acima do solo + ABC abaixo do solo (sem a ABD, que é somada à parte no ABC Total). */
+export function calcAbcPrincipal(abcAcimaSolo: number | null, abcAbaixoSolo: number | null): number {
   return (abcAcimaSolo ?? 0) + (abcAbaixoSolo ?? 0);
 }
 
 /**
- * GCA total = ABC acima + ABC abaixo + Área Bruta Dependente total.
- * Usa a área dependente ESTIMADA (identificação) quando as tipologias
- * ainda não foram preenchidas; ver `calcGcaProgramado` para a versão
- * calculada a partir do programa.
+ * ABC Total = ABC acima + ABC abaixo + ABD (Área Bruta Dependente) total.
+ * Usa a ABD ESTIMADA (identificação) quando as tipologias ainda não foram
+ * preenchidas; ver `calcAbcTotalProgramado` para a versão calculada a
+ * partir do programa.
  */
-export function calcGcaEstimado(areas: IdentificacaoAreas): number {
-  return calcAbcTotal(areas.abcAcimaSolo, areas.abcAbaixoSolo) + (areas.areaDependenteEstimada ?? 0);
+export function calcAbcTotalEstimado(areas: IdentificacaoAreas): number {
+  return calcAbcPrincipal(areas.abcAcimaSolo, areas.abcAbaixoSolo) + (areas.areaDependenteEstimada ?? 0);
 }
 
 // --- Fórmulas derivadas do programa de tipologias (secção 1 e 2 do plano) ---
@@ -80,23 +80,23 @@ export function calcAreaDependenteProgramada(typologies: Typology[]): number {
   }, 0);
 }
 
-/** GCA total programado = ABC total (identificação) + área dependente programada. */
-export function calcGcaProgramado(
+/** ABC Total programado = ABC principal (identificação) + ABD programada. */
+export function calcAbcTotalProgramado(
   abcAcimaSolo: number | null,
   abcAbaixoSolo: number | null,
   typologies: Typology[]
 ): number {
-  return calcAbcTotal(abcAcimaSolo, abcAbaixoSolo) + calcAreaDependenteProgramada(typologies);
+  return calcAbcPrincipal(abcAcimaSolo, abcAbaixoSolo) + calcAreaDependenteProgramada(typologies);
 }
 
 /**
- * Eficiência = ABP total ÷ GCA total.
- * Devolve null quando o GCA é zero (evita divisão por zero) — a UI deve
- * mostrar "—" nesse caso, nunca 0% nem Infinity.
+ * Eficiência = ABP total ÷ ABC Total.
+ * Devolve null quando o ABC Total é zero (evita divisão por zero) — a UI
+ * deve mostrar "—" nesse caso, nunca 0% nem Infinity.
  */
-export function calcEficiencia(abpTotal: number, gcaTotal: number): number | null {
-  if (gcaTotal <= 0) return null;
-  return abpTotal / gcaTotal;
+export function calcEficiencia(abpTotal: number, abcTotal: number): number | null {
+  if (abcTotal <= 0) return null;
+  return abpTotal / abcTotal;
 }
 
 /**
@@ -181,7 +181,7 @@ export type ResumoPrograma = {
   arrecadacaoVendavel: number;
   areaDependenteTotal: number;
   areaDependenteVendavel: number;
-  gcaTotal: number;
+  abcTotal: number;
   areaVendavelEquivalenteTotal: number;
   totalEstacionamentos: number;
   precoMedioUnidade: number;
@@ -221,7 +221,7 @@ export function calcResumoPrograma(
   const areaDependenteTotal = areaVarandas + areaTerracos + areaJardins + areaArrecadacoes;
   const areaDependenteVendavel = varandaVendavel + terracoVendavel + jardimVendavel + arrecadacaoVendavel;
 
-  const gcaTotal = calcAbcTotal(abcAcimaSolo, abcAbaixoSolo) + areaDependenteTotal;
+  const abcTotal = calcAbcPrincipal(abcAcimaSolo, abcAbaixoSolo) + areaDependenteTotal;
   const areaVendavelEquivalenteTotal = calcAreaVendavelEquivalenteTotal(typologies);
   const totalEstacionamentos = typologies.reduce(
     (s, t) => s + t.estacionamentosIncluidos * t.quantidade,
@@ -246,7 +246,7 @@ export function calcResumoPrograma(
     arrecadacaoVendavel,
     areaDependenteTotal,
     areaDependenteVendavel,
-    gcaTotal,
+    abcTotal,
     areaVendavelEquivalenteTotal,
     totalEstacionamentos,
     precoMedioUnidade,

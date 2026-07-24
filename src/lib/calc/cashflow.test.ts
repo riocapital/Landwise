@@ -4,7 +4,7 @@ import type { LinhaCusto, ContextoCusto } from "./custos";
 import type { ParametrosFinanciamento } from "./financiamento";
 import type { LinhaRecebimentoMensal } from "./vendas";
 
-const contexto: ContextoCusto = { valorAquisicao: 1_000_000, abcTotal: 1000, gcaTotal: 1200, numeroUnidades: 10 };
+const contexto: ContextoCusto = { valorAquisicao: 1_000_000, abcPrincipal: 1000, abcTotal: 1200, numeroUnidades: 10 };
 
 function custo(overrides: Partial<LinhaCusto>): LinhaCusto {
   return {

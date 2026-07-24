@@ -60,7 +60,7 @@ const base: PremissasBaseSensibilidade = {
     custo({ grupo: "aquisicao", tipoCalculo: "valor_fixo", valorInput: 1_000_000, duracaoMeses: 1, dataFinal: "2026-01-31" }),
     custo({ grupo: "hard_cost", tipoCalculo: "valor_fixo", valorInput: 1_000_000 }),
   ],
-  contextoCusto: { valorAquisicao: 1_000_000, abcTotal: 1000, gcaTotal: 1200, numeroUnidades: 10 },
+  contextoCusto: { valorAquisicao: 1_000_000, abcPrincipal: 1000, abcTotal: 1200, numeroUnidades: 10 },
   receitaTotalGdvBase: 3_000_000,
   planoVendas,
   parametrosFinanciamento: parametrosSemFinanciamento,

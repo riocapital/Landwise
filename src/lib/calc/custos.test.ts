@@ -12,8 +12,8 @@ import {
 
 const contexto: ContextoCusto = {
   valorAquisicao: 1_000_000,
-  abcTotal: 1000,
-  gcaTotal: 1200,
+  abcPrincipal: 1000,
+  abcTotal: 1200,
   numeroUnidades: 10,
 };
 
@@ -48,13 +48,13 @@ describe("Bases diretas (estágio A)", () => {
     expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(20_000);
   });
 
-  it("eur_m2_abc multiplica pela ABC total", () => {
-    const l = linha({ tipoCalculo: "eur_m2_abc", valorInput: 900 });
+  it("eur_m2_abc_principal multiplica pelo ABC principal (sem ABD)", () => {
+    const l = linha({ tipoCalculo: "eur_m2_abc_principal", valorInput: 900 });
     expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(900 * 1000);
   });
 
-  it("eur_m2_gca multiplica pela GCA total", () => {
-    const l = linha({ tipoCalculo: "eur_m2_gca", valorInput: 50 });
+  it("eur_m2_abc_total multiplica pelo ABC Total (com ABD)", () => {
+    const l = linha({ tipoCalculo: "eur_m2_abc_total", valorInput: 50 });
     expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(50 * 1200);
   });
 

@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import {
-  calcAbcTotal,
-  calcGcaEstimado,
+  calcAbcPrincipal,
+  calcAbcTotalEstimado,
   calcAbpProgramado,
   calcAreaDependenteProgramada,
-  calcGcaProgramado,
+  calcAbcTotalProgramado,
   calcEficiencia,
   calcDivergenciaAbp,
   calcAreaVendavelEquivalenteUnidade,
@@ -40,15 +40,15 @@ function makeTypology(overrides: Partial<Typology> = {}): Typology {
   };
 }
 
-describe("ABC / GCA", () => {
-  it("ABC total = acima + abaixo do solo", () => {
-    expect(calcAbcTotal(1000, 300)).toBe(1300);
-    expect(calcAbcTotal(null, 300)).toBe(300);
-    expect(calcAbcTotal(null, null)).toBe(0);
+describe("ABC Principal / ABC Total (secção 8 da revisão estrutural)", () => {
+  it("ABC principal = acima + abaixo do solo", () => {
+    expect(calcAbcPrincipal(1000, 300)).toBe(1300);
+    expect(calcAbcPrincipal(null, 300)).toBe(300);
+    expect(calcAbcPrincipal(null, null)).toBe(0);
   });
 
-  it("GCA estimado usa a área dependente estimada da identificação", () => {
-    const gca = calcGcaEstimado({
+  it("ABC Total estimado usa a ABD estimada da identificação", () => {
+    const abcTotal = calcAbcTotalEstimado({
       abcAcimaSolo: 1000,
       abcAbaixoSolo: 300,
       areaDependenteEstimada: 150,
@@ -57,11 +57,11 @@ describe("ABC / GCA", () => {
       areaJardinsExteriores: null,
       areaDemolicao: null,
     });
-    expect(gca).toBe(1450);
+    expect(abcTotal).toBe(1450);
   });
 });
 
-describe("Programa: ABP, área dependente, GCA programado, eficiência", () => {
+describe("Programa: ABP, área dependente, ABC Total programado, eficiência", () => {
   const typologies = [makeTypology({ quantidade: 10, abpUnidade: 100 }), makeTypology({ quantidade: 5, abpUnidade: 150, nome: "T3" })];
 
   it("ABP programada = soma (quantidade × ABP unidade)", () => {
@@ -73,17 +73,17 @@ describe("Programa: ABP, área dependente, GCA programado, eficiência", () => {
     expect(calcAreaDependenteProgramada(typologies)).toBe(25 * 15); // 375
   });
 
-  it("GCA programado = ABC total + área dependente programada", () => {
-    expect(calcGcaProgramado(1000, 300, typologies)).toBe(1300 + 375);
+  it("ABC Total programado = ABC principal + área dependente programada", () => {
+    expect(calcAbcTotalProgramado(1000, 300, typologies)).toBe(1300 + 375);
   });
 
-  it("Eficiência = ABP total / GCA total", () => {
-    const gca = calcGcaProgramado(1000, 300, typologies);
+  it("Eficiência = ABP total / ABC Total", () => {
+    const abcTotal = calcAbcTotalProgramado(1000, 300, typologies);
     const abp = calcAbpProgramado(typologies);
-    expect(calcEficiencia(abp, gca)).toBeCloseTo(1750 / 1675, 6);
+    expect(calcEficiencia(abp, abcTotal)).toBeCloseTo(1750 / 1675, 6);
   });
 
-  it("Eficiência devolve null quando GCA é zero (nunca Infinity)", () => {
+  it("Eficiência devolve null quando ABC Total é zero (nunca Infinity)", () => {
     expect(calcEficiencia(100, 0)).toBeNull();
   });
 });
@@ -168,13 +168,13 @@ describe("Receita por unidade / tipologia / total", () => {
 });
 
 describe("Resumo do programa", () => {
-  it("agrega unidades, áreas, GCA, receita e preço médio ponderado", () => {
+  it("agrega unidades, áreas, ABC Total, receita e preço médio ponderado", () => {
     const typologies = [makeTypology({ quantidade: 10, abpUnidade: 100, precoBaseM2: 4000 })];
     const resumo = calcResumoPrograma(typologies, 1000, 200);
 
     expect(resumo.totalUnidades).toBe(10);
     expect(resumo.abpTotal).toBe(1000);
-    expect(resumo.gcaTotal).toBe(1000 + 200 + resumo.areaDependenteTotal);
+    expect(resumo.abcTotal).toBe(1000 + 200 + resumo.areaDependenteTotal);
     expect(resumo.precoMedioUnidade).toBeCloseTo(resumo.receitaTotal / 10, 6);
     expect(resumo.precoMedioPonderadoM2).toBeCloseTo(resumo.receitaTotal / resumo.areaVendavelEquivalenteTotal, 6);
   });
