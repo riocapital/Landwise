@@ -47,6 +47,7 @@ import {
   calcVgvBruto,
   validarVenda,
   type UnidadeVenda,
+  type LinhaSalesTableResolvida,
 } from "@/lib/calc/sales-table";
 import { listarUnidades, criarUnidades, atualizarUnidade, apagarUnidades } from "@/lib/supabase/project-units";
 import { gerarAgendaAbsorcao, calcResumoAbsorcao } from "@/lib/calc/sales-curve";
@@ -81,7 +82,7 @@ import {
 import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
 import { calcularCashFlow } from "@/lib/calc/cashflow";
-import { gerarRecebimentosMensais } from "@/lib/calc/vendas";
+import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "@/lib/calc/vendas";
 import {
   calcularMatrizSensibilidade,
   extrairIndicador,
@@ -845,6 +846,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           contextoCusto={contextoCustoAtual}
           resumoPrograma={resumoProgramaAtual}
           vgvBruto={vgvBrutoAtual}
+          salesTableResolvida={salesTableResolvida}
+          tipologiasNovas={tipologiasNovas}
           identificacao={identificacao}
           financiamento={financiamento}
           estruturaCapital={estruturaCapital}
@@ -2446,6 +2449,8 @@ function StepCashFlowResultados({
   contextoCusto,
   resumoPrograma,
   vgvBruto,
+  salesTableResolvida,
+  tipologiasNovas,
   identificacao,
   financiamento,
   estruturaCapital,
@@ -2461,6 +2466,8 @@ function StepCashFlowResultados({
   contextoCusto: ContextoCusto;
   resumoPrograma: ReturnType<typeof calcResumoPrograma>;
   vgvBruto: number;
+  salesTableResolvida: LinhaSalesTableResolvida[];
+  tipologiasNovas: Typology[];
   identificacao: IdentificacaoEstruturada;
   financiamento: ParametrosFinanciamento;
   estruturaCapital: EstruturaCapitalEstado;
@@ -2480,7 +2487,14 @@ function StepCashFlowResultados({
 
   let resultado: ReturnType<typeof calcularCashFlow> | null = null;
   if (prontoParaCalcular) {
-    const { linhas: recebimentos } = gerarRecebimentosMensais(vgvBruto, planoVendas);
+    // Quando já há unidades na Sales Table, a receita segue a data real ou
+    // projetada de cada unidade (gerarRecebimentosDaSalesTable) — nunca a
+    // aproximação uniforme. Só recorre ao modo agregado quando ainda não
+    // há Sales Table gerada (ex.: início do preenchimento do projeto).
+    const { linhas: recebimentos } =
+      salesTableResolvida.length > 0
+        ? gerarRecebimentosDaSalesTable(salesTableResolvida, tipologiasNovas, planoVendas)
+        : gerarRecebimentosMensais(vgvBruto, planoVendas);
     resultado = calcularCashFlow({
       linhasCusto: custosNovos,
       contextoCusto,

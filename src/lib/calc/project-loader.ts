@@ -11,7 +11,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { calcResumoPrograma, calcAbcTotalProgramado, calcEficiencia, type Typology } from "./areas";
 import { resolverSalesTable, calcVgvBruto } from "./sales-table";
 import { calcularCashFlow, type ResultadoCashFlow } from "./cashflow";
-import { gerarRecebimentosMensais } from "./vendas";
+import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "./vendas";
 import { calcularResultadosComWaterfall, type ResultadosInvestidorPromotor } from "./estrutura-capital";
 import { agregarFees } from "./fees";
 import type { ContextoCusto } from "./custos";
@@ -108,7 +108,10 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   const salesTableResolvida = resolverSalesTable(unidades, tipologias);
   const vgvBruto = calcVgvBruto(salesTableResolvida);
 
-  const { linhas: recebimentos } = gerarRecebimentosMensais(vgvBruto, planoVendas);
+  const { linhas: recebimentos } =
+    salesTableResolvida.length > 0
+      ? gerarRecebimentosDaSalesTable(salesTableResolvida, tipologias, planoVendas)
+      : gerarRecebimentosMensais(vgvBruto, planoVendas);
 
   const resultado = calcularCashFlow({
     linhasCusto: custos,

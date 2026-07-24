@@ -5,6 +5,9 @@
 // validado aqui, nunca assumido.
 
 import { distribuirValorPorPerfil } from "./perfil-desembolso";
+import { gerarAgendaAbsorcao, atribuirDatasAbsorcao, type UnidadeParaAgendar } from "./sales-curve";
+import type { LinhaSalesTableResolvida } from "./sales-table";
+import type { Typology } from "./areas";
 
 export type EstruturaRecebimentos = {
   pctReserva: number;
@@ -99,4 +102,93 @@ function calcFimAbsorcao(dataLancamento: string, duracaoMeses: number): string {
   const [ano, mes] = dataLancamento.split("-").map(Number);
   const fim = new Date(Date.UTC(ano, mes - 1 + duracaoMeses - 1, 1));
   return fim.toISOString().slice(0, 10);
+}
+
+/**
+ * Gera o calendário de recebimentos a partir da Sales Table real e da
+ * curva de vendas por tipologia (secções 14/15 do plano de revisão) —
+ * substitui a aproximação uniforme de `gerarRecebimentosMensais` quando já
+ * há tipologias e unidades reais.
+ *
+ * Reserva+CPCV seguem o mês de venda de CADA unidade: real, quando a
+ * unidade já foi vendida (dataVenda); projetado pela curva de absorção da
+ * sua tipologia, quando ainda está disponível. Durante construção,
+ * conclusão e escritura continuam globais — dependem do calendário de
+ * obra/entrega partilhado por todas as unidades, não da data de venda
+ * individual (secção 31, "Entrega e escrituras", ainda por construir).
+ *
+ * Simplificação assumida e documentada: quando uma tipologia já tem
+ * unidades vendidas fora de ordem, as unidades ainda disponíveis recebem
+ * os primeiros meses livres da curva teórica, não necessariamente o mês
+ * "certo" que ocupariam numa absorção perfeitamente sequencial — o total
+ * mensal agregado (o que importa para o cash flow) fica correto, a
+ * atribuição unidade a unidade é uma aproximação.
+ */
+export function gerarRecebimentosDaSalesTable(
+  unidadesResolvidas: LinhaSalesTableResolvida[],
+  tipologias: Typology[],
+  plano: PlanoVendas
+): { linhas: LinhaRecebimentoMensal[]; receitaLiquidaCancelamentos: number } {
+  const fatorCancelamento = 1 - plano.cancelamentosEstimadosPct;
+  const e = plano.estruturaRecebimentos;
+  const pctReservaMaisCpcv = e.pctReserva + e.pctCpcv;
+
+  const reservaCpcvPorMes = new Map<string, number>();
+  let receitaTotal = 0;
+
+  for (const tipologia of tipologias) {
+    const unidadesDaTipologia = unidadesResolvidas.filter((u) => u.tipologiaId === tipologia.id);
+    if (unidadesDaTipologia.length === 0) continue;
+
+    const agenda = gerarAgendaAbsorcao(
+      unidadesDaTipologia.length,
+      tipologia.mesesParaPrimeiraVenda,
+      tipologia.unidadesPorMes,
+      plano.dataLancamentoComercial
+    );
+
+    const paraAgendar: UnidadeParaAgendar[] = unidadesDaTipologia.map((u) => ({
+      id: u.id,
+      ordem: u.ordem,
+      jaTemDataVenda: Boolean(u.dataVenda),
+      disponivel: u.estadoComercial === "disponivel",
+    }));
+    const atribuicoes = atribuirDatasAbsorcao(paraAgendar, agenda);
+    const dataProjetadaPorUnidade = new Map(atribuicoes.map((a) => [a.unidadeId, a.dataVenda]));
+
+    for (const u of unidadesDaTipologia) {
+      const precoLiquido = u.precoFinal * fatorCancelamento;
+      receitaTotal += precoLiquido;
+
+      const dataVendaEfetiva = u.dataVenda ?? dataProjetadaPorUnidade.get(u.id) ?? null;
+      if (!dataVendaEfetiva) continue; // sem data real nem projetável (tipologia sem curva configurada) — não agenda, nunca inventa mês
+
+      const mes = dataVendaEfetiva.slice(0, 7);
+      reservaCpcvPorMes.set(mes, (reservaCpcvPorMes.get(mes) ?? 0) + precoLiquido * pctReservaMaisCpcv);
+    }
+  }
+
+  const construcaoPorMes = distribuirValorPorPerfil(
+    receitaTotal * e.pctDuranteConstrucao,
+    plano.dataInicioConstrucao,
+    plano.dataFimConstrucao,
+    "linear"
+  );
+  const conclusaoPorMes = new Map([[plano.dataFimConstrucao.slice(0, 7), receitaTotal * e.pctConclusao]]);
+  const escrituraPorMes = new Map([[plano.dataEscritura.slice(0, 7), receitaTotal * e.pctEscritura]]);
+
+  const todosMeses = new Set<string>([...reservaCpcvPorMes.keys(), ...construcaoPorMes.keys(), ...conclusaoPorMes.keys(), ...escrituraPorMes.keys()]);
+
+  const linhas: LinhaRecebimentoMensal[] = [...todosMeses]
+    .sort()
+    .map((mes) => {
+      const reservaCpcv = reservaCpcvPorMes.get(mes) ?? 0;
+      const duranteConstrucao = construcaoPorMes.get(mes) ?? 0;
+      const conclusao = conclusaoPorMes.get(mes) ?? 0;
+      const escritura = escrituraPorMes.get(mes) ?? 0;
+      // reserva e cpcv reportados juntos na mesma linha (ambos seguem a data de venda da unidade) — reserva leva o total, cpcv fica a 0, para não duplicar a soma.
+      return { mes, reserva: reservaCpcv, cpcv: 0, duranteConstrucao, conclusao, escritura, total: reservaCpcv + duranteConstrucao + conclusao + escritura };
+    });
+
+  return { linhas, receitaLiquidaCancelamentos: receitaTotal };
 }
