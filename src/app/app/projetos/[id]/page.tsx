@@ -1,13 +1,17 @@
 import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
-import type { ProjectResults } from "@/lib/calc/viabilidade";
+import { carregarResultadoProjeto } from "@/lib/calc/project-loader";
+import { extrairIndicador } from "@/lib/calc/sensibilidades";
 
 function fmtEUR(v: number) {
   return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 0 }).format(v) + " €";
 }
 function fmtPct(v: number) {
   return (v * 100).toFixed(1) + "%";
+}
+function fmtIndicador(v: number | null, formatador: (v: number) => string) {
+  return v !== null ? formatador(v) : "Não calculável";
 }
 
 export default async function ProjetoResultadosPage({ params }: { params: Promise<{ id: string }> }) {
@@ -18,154 +22,160 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  const { data: projeto } = await supabase.from("projects").select("*").eq("id", id).single();
-  if (!projeto) notFound();
+  const { data: projetoExiste } = await supabase.from("projects").select("id").eq("id", id).single();
+  if (!projetoExiste) notFound();
 
-  if (projeto.status !== "calculado" || !projeto.results || Object.keys(projeto.results).length === 0) {
-    redirect(`/app/projetos/${id}/dados`);
-  }
+  const r = await carregarResultadoProjeto(supabase, id);
 
-  const r = projeto.results as ProjectResults;
-
-  const confiancaColor =
-    r.nivelConfianca === "Alto" ? "#4E7A5C" : r.nivelConfianca === "Médio" ? "#B8863F" : "#A13D2E";
-
-  // Waterfall: receita (positivo) -> custos (negativos) -> lucro (resultado)
-  const waterfall = [
-    { label: "VGV líquido", valor: r.vgvLiquido, tipo: "receita" as const },
-    { label: "Terreno", valor: -r.custoTerreno, tipo: "custo" as const },
-    { label: "Construção", valor: -r.custoConstrucao, tipo: "custo" as const },
-    { label: "Custos indiretos", valor: -(r.custosAquisicao + r.softCosts + r.marketing + r.contingencia), tipo: "custo" as const },
-    { label: "Financiamento (juros)", valor: -r.juros, tipo: "custo" as const },
-    { label: "Lucro líquido", valor: r.lucroLiquido, tipo: "resultado" as const },
-  ];
-  const maxAbs = Math.max(...waterfall.map((w) => Math.abs(w.valor)));
-
-  return (
-    <div className="p-8 max-w-6xl mx-auto">
-      {projeto.is_demo && (
-        <div className="bg-[#B96343]/10 border border-[#B96343]/30 rounded-lg px-4 py-2.5 mb-6 text-sm text-[#B96343] font-medium">
-          Projeto demonstrativo — dados ilustrativos, não correspondem a um ativo real.
-        </div>
-      )}
-
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-bold text-[#142B3A]">{projeto.nome}</h1>
-          <p className="text-sm text-[#59636A] mt-1">
-            {projeto.localizacao || "Sem localização"} · {projeto.tipo_projeto}
+  if (!r.dadosSuficientes || !r.resultado) {
+    return (
+      <div className="p-8 max-w-2xl mx-auto">
+        <div className="bg-white border border-[#E3DACB] rounded-xl p-8 text-center">
+          <h1 className="text-lg font-bold text-[#142B3A] mb-2">{r.projeto.nome}</h1>
+          <p className="text-sm text-[#59636A] mb-6">
+            {r.motivoInsuficiente ?? "Ainda não há dados suficientes para calcular os resultados deste projeto."}
           </p>
-        </div>
-        <div className="flex gap-2">
-          <Link
-            href={`/app/projetos/${id}/dados`}
-            className="px-4 py-2.5 rounded-lg border border-[#E3DACB] text-[#142B3A] text-sm font-semibold"
-          >
-            Editar premissas
+          <Link href={`/app/projetos/${id}/dados`} className="px-5 py-2.5 rounded-lg bg-[#142B3A] text-white text-sm font-semibold">
+            Continuar a preencher
           </Link>
         </div>
       </div>
+    );
+  }
 
-      {/* 1. Recomendação, confiança e estado */}
+  const { resultado } = r;
+  const irr = extrairIndicador(resultado, "irr_levered");
+  const moic = extrairIndicador(resultado, "moic");
+
+  return (
+    <div className="p-8 max-w-6xl mx-auto">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h1 className="text-xl font-bold text-[#142B3A]">{r.projeto.nome}</h1>
+          <p className="text-sm text-[#59636A] mt-1">
+            {r.projeto.localizacao || "Sem localização"} · {r.projeto.tipoProjeto}
+          </p>
+        </div>
+        <Link
+          href={`/app/projetos/${id}/dados`}
+          className="px-4 py-2.5 rounded-lg border border-[#E3DACB] text-[#142B3A] text-sm font-semibold"
+        >
+          Editar premissas
+        </Link>
+      </div>
+
       <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-5 flex items-center justify-between">
         <div>
           <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Recomendação</div>
           <div className="text-lg font-bold text-[#142B3A]">
-            {r.lucroLiquido > 0 ? "Avançar com condições" : "Não avançar sem rever premissas"}
+            {resultado.lucroLevered > 0 ? "Avançar com condições" : "Não avançar sem rever premissas"}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Nível de confiança</div>
-          <div className="text-lg font-bold" style={{ color: confiancaColor }}>
-            {r.nivelConfianca}
+          <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Margem</div>
+          <div className="text-lg font-bold" style={{ color: resultado.margem > 0 ? "#4E7A5C" : "#A13D2E" }}>
+            {fmtPct(resultado.margem)}
           </div>
         </div>
       </div>
 
-      {/* 2. Receita, investimento, lucro, margem, TIR, equity multiple */}
       <SectionLabel>Indicadores de retorno</SectionLabel>
       <div className="grid grid-cols-4 gap-4 mb-5">
-        <Kpi label="VGV (receita)" value={fmtEUR(r.vgvBruto)} color="#3E6E8E" />
-        <Kpi label="Investimento (CAPEX)" value={fmtEUR(r.capexTotal)} color="#B96343" />
-        <Kpi label="Lucro líquido" value={fmtEUR(r.lucroLiquido)} color="#4E7A5C" />
-        <Kpi label="Margem" value={fmtPct(r.margem)} color="#4E7A5C" />
+        <Kpi label="VGV Bruto" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
+        <Kpi label="Custo total" value={fmtEUR(resultado.custoTotal)} color="#B96343" />
+        <Kpi label="Lucro (levered)" value={fmtEUR(resultado.lucroLevered)} color="#4E7A5C" />
+        <Kpi label="Margem" value={fmtPct(resultado.margem)} color="#4E7A5C" />
       </div>
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <Kpi label="TIR" value={fmtPct(r.tir)} color="#4E7A5C" />
-        <Kpi label="Equity multiple" value={r.equityMultiple.toFixed(2) + "x"} color="#4E7A5C" />
-        <Kpi label="ROI" value={fmtPct(r.roi)} color="#4E7A5C" />
+        <Kpi label="IRR (levered)" value={fmtIndicador(irr, fmtPct)} color="#4E7A5C" />
+        <Kpi label="MOIC" value={fmtIndicador(moic, (v) => v.toFixed(2) + "x")} color="#4E7A5C" />
+        <Kpi label="Lucro unlevered" value={fmtEUR(resultado.lucroUnlevered)} color="#4E7A5C" />
       </div>
 
-      {/* 3. Preço de aquisição, venda/m², custo/m² */}
-      <SectionLabel>Preços de referência</SectionLabel>
+      <SectionLabel>Áreas e programa</SectionLabel>
+      <div className="grid grid-cols-3 gap-4 mb-8">
+        <Kpi label="ABC Total" value={`${Math.round(r.abcTotal ?? 0)} m²`} color="#3E6E8E" />
+        <Kpi
+          label="Eficiência"
+          value={r.eficiencia !== null ? fmtPct(r.eficiencia) : "—"}
+          sub={`${r.resumoPrograma?.totalUnidades ?? 0} unidades`}
+          color="#3E6E8E"
+        />
+        <Kpi label="Área vendável equivalente" value={`${Math.round(r.resumoPrograma?.areaVendavelEquivalenteTotal ?? 0)} m²`} color="#3E6E8E" />
+      </div>
+
+      <SectionLabel>Financiamento e exposição de capital</SectionLabel>
       <div className="grid grid-cols-3 gap-4 mb-8">
         <Kpi
-          label="Custo do terreno"
-          value={fmtEUR(r.custoTerreno)}
-          sub={`${fmtPct(r.terrenoSobreVgv)} do VGV`}
-          color="#B96343"
+          label="Peak cash exposure"
+          value={fmtEUR(resultado.equity.peakCashExposure)}
+          sub={resultado.equity.mesPico ? `Mês ${resultado.equity.mesPico}` : undefined}
+          color="#C08A3E"
         />
-        <Kpi label="Área de venda total" value={`${r.areaVendaTotal.toFixed(0)} m²`} sub={`${r.unidadesTotal} unidades`} color="#3E6E8E" />
-        <Kpi label="Custo de construção" value={fmtEUR(r.custoConstrucao)} color="#B96343" />
+        <Kpi
+          label="Peak debt"
+          value={fmtEUR(resultado.financiamento.peakDebt)}
+          sub={resultado.financiamento.ltv !== null ? `LTV ${fmtPct(resultado.financiamento.ltv)}` : undefined}
+          color="#C08A3E"
+        />
+        <Kpi
+          label="Recuperação integral do capital"
+          value={resultado.equity.dataRecuperacaoIntegral ?? "Não recupera no prazo do projeto"}
+          color="#C08A3E"
+        />
       </div>
 
-      {/* 4. Cronograma e pico de capital */}
-      <SectionLabel>Calendário e exposição de capital</SectionLabel>
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <Kpi label="Pico de capital investido" value={fmtEUR(Math.abs(r.picoCapital))} sub={`Mês ${r.mesPico}`} color="#C08A3E" />
-        <Kpi label="Payback" value={r.mesPayback ? `Mês ${r.mesPayback}` : "Não recupera no prazo"} color="#C08A3E" />
-        <Kpi label="Equity investido" value={fmtEUR(r.equity)} color="#B96343" />
-      </div>
-
-      {/* 5. Decomposição do resultado (waterfall) */}
-      <SectionLabel>Decomposição do resultado</SectionLabel>
-      <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-8">
-        <div className="flex items-end gap-3 h-48">
-          {waterfall.map((w) => {
-            const h = Math.max(4, (Math.abs(w.valor) / maxAbs) * 160);
-            const color = w.tipo === "receita" ? "#3E6E8E" : w.tipo === "resultado" ? "#4E7A5C" : "#B96343";
-            return (
-              <div key={w.label} className="flex-1 flex flex-col items-center justify-end h-full">
-                <div className="text-xs font-semibold text-[#142B3A] mb-1">{fmtEUR(w.valor)}</div>
-                <div style={{ height: h, background: color }} className="w-full rounded-t" />
-                <div className="text-[0.68rem] text-[#59636A] mt-2 text-center">{w.label}</div>
+      {r.temInvestidorExterno && r.investidorPromotor && (
+        <>
+          <SectionLabel>Investidor e promotor</SectionLabel>
+          <div className="grid grid-cols-2 gap-4 mb-8">
+            <div className="bg-white border border-[#E3DACB] rounded-xl p-5">
+              <p className="text-xs font-bold uppercase text-[#59636A] mb-3">Investidor externo</p>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <Kpi label="Equity contributed" value={fmtEUR(r.investidorPromotor.investidor.equityContributed)} color="#3E6E8E" />
+                <Kpi label="MOIC" value={r.investidorPromotor.investidor.moic.toFixed(2) + "x"} color="#4E7A5C" />
+                <Kpi label="IRR" value={fmtIndicador(r.investidorPromotor.investidor.irr, fmtPct)} color="#4E7A5C" />
+                <Kpi label="Lucro" value={fmtEUR(r.investidorPromotor.investidor.lucro)} color="#4E7A5C" />
               </div>
-            );
-          })}
-        </div>
-      </div>
+            </div>
+            <div className="bg-white border border-[#E3DACB] rounded-xl p-5">
+              <p className="text-xs font-bold uppercase text-[#59636A] mb-3">Promotor</p>
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <Kpi label="Co-investimento" value={fmtEUR(r.investidorPromotor.promotor.coInvestimentoContribuido)} color="#3E6E8E" />
+                <Kpi label="Fees" value={fmtEUR(r.investidorPromotor.promotor.fees)} color="#B96343" />
+                <Kpi label="Promote" value={fmtEUR(r.investidorPromotor.promotor.promote)} color="#4E7A5C" />
+                <Kpi label="Lucro total" value={fmtEUR(r.investidorPromotor.promotor.lucroTotal)} color="#4E7A5C" />
+              </div>
+            </div>
+          </div>
+        </>
+      )}
 
-      {/* 6. Riscos e próximos passos */}
-      <SectionLabel>Riscos e próximos passos</SectionLabel>
-      <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-8">
-        <ul className="space-y-2 text-sm">
-          {r.nivelConfianca !== "Alto" && (
-            <li className="flex items-start gap-2">
-              <span className="text-[#A13D2E] font-bold">⚠</span>
-              <span className="text-[#59636A]">
-                Nível de confiança {r.nivelConfianca.toLowerCase()} — há dados essenciais estimados, não confirmados.
-              </span>
-            </li>
-          )}
-          {r.mesPayback === null && (
-            <li className="flex items-start gap-2">
-              <span className="text-[#A13D2E] font-bold">⚠</span>
-              <span className="text-[#59636A]">A receita está concentrada perto da entrega — o payback só ocorre no final do projeto.</span>
-            </li>
-          )}
-          <li className="flex items-start gap-2">
-            <span className="text-[#C08A3E] font-bold">–</span>
-            <span className="text-[#59636A]">Validar o enquadramento urbanístico e o potencial construtivo assumido junto da Câmara.</span>
-          </li>
-        </ul>
+      <SectionLabel>Cash flow mensal</SectionLabel>
+      <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-8 overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-[#59636A] uppercase">
+              <th className="pb-2 pr-4">Mês</th>
+              <th className="pb-2 pr-4">Receita</th>
+              <th className="pb-2 pr-4">CF unlevered</th>
+              <th className="pb-2 pr-4">CF levered</th>
+              <th className="pb-2 pr-4">Saldo acumulado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {resultado.linhas.map((l) => (
+              <tr key={l.mes} className="border-t border-[#E3DACB]">
+                <td className="py-1.5 pr-4">{l.mes}</td>
+                <td className="py-1.5 pr-4">{fmtEUR(l.receitaVendas)}</td>
+                <td className="py-1.5 pr-4">{fmtEUR(l.cashFlowUnlevered)}</td>
+                <td className="py-1.5 pr-4">{fmtEUR(l.cashFlowLevered)}</td>
+                <td className="py-1.5 pr-4 font-semibold text-[#142B3A]">{fmtEUR(l.saldoCaixaAcumulado)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-
-      <details className="bg-white border border-[#E3DACB] rounded-xl p-6">
-        <summary className="cursor-pointer text-sm font-semibold text-[#142B3A]">Ver premissas e cálculos</summary>
-        <pre className="text-xs text-[#59636A] mt-4 overflow-x-auto whitespace-pre-wrap">
-          {JSON.stringify(projeto.inputs, null, 2)}
-        </pre>
-      </details>
     </div>
   );
 }
