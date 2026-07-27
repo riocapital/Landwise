@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { gerarAgendaAbsorcao, atribuirDatasAbsorcao, calcResumoAbsorcao, type UnidadeParaAgendar } from "./sales-curve";
+import { gerarAgendaAbsorcao, atribuirDatasAbsorcao, calcResumoAbsorcao, calcularDatasEfetivas, type UnidadeParaAgendar } from "./sales-curve";
 
 describe("gerarAgendaAbsorcao — nunca fraciona unidades, nunca excede o stock", () => {
   it("velocidade inteira: distribui exatamente 2/mês até esgotar o stock", () => {
@@ -73,5 +73,33 @@ describe("calcResumoAbsorcao", () => {
     expect(resumo[1].acumulado).toBe(5);
     expect(resumo[1].pctVendido).toBeCloseTo(0.5, 6);
     expect(resumo[1].stockRestante).toBe(5);
+  });
+});
+
+describe("calcularDatasEfetivas — combina data real com projeção da curva", () => {
+  it("usa a data real quando existe, projeta pela curva quando não existe", () => {
+    const unidades = [
+      { id: "u1", tipologiaId: "t1", ordem: 0, dataVenda: "2026-03-15", estadoComercial: "vendido" },
+      { id: "u2", tipologiaId: "t1", ordem: 1, dataVenda: null, estadoComercial: "disponivel" },
+    ];
+    const tipologias = [{ id: "t1", quantidade: 2, mesesParaPrimeiraVenda: 2, unidadesPorMes: 1 }];
+    const datas = calcularDatasEfetivas(unidades, tipologias, "2026-01-01");
+
+    expect(datas.get("u1")).toBe("2026-03-15"); // real, nunca substituída
+    expect(datas.get("u2")).toBe("2026-03-01"); // projetada: lançamento + 2 meses
+  });
+
+  it("nunca mistura unidades de tipologias diferentes na mesma agenda", () => {
+    const unidades = [
+      { id: "u1", tipologiaId: "t1", ordem: 0, dataVenda: null, estadoComercial: "disponivel" },
+      { id: "u2", tipologiaId: "t2", ordem: 0, dataVenda: null, estadoComercial: "disponivel" },
+    ];
+    const tipologias = [
+      { id: "t1", quantidade: 1, mesesParaPrimeiraVenda: 1, unidadesPorMes: 1 },
+      { id: "t2", quantidade: 1, mesesParaPrimeiraVenda: 5, unidadesPorMes: 1 },
+    ];
+    const datas = calcularDatasEfetivas(unidades, tipologias, "2026-01-01");
+    expect(datas.get("u1")).toBe("2026-02-01");
+    expect(datas.get("u2")).toBe("2026-06-01");
   });
 });

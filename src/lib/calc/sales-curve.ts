@@ -97,3 +97,57 @@ export function calcResumoAbsorcao(agenda: MesAbsorcao[], totalUnidades: number)
     };
   });
 }
+
+export type UnidadeComTipologia = { id: string; tipologiaId: string; ordem: number; dataVenda: string | null; estadoComercial: string };
+export type TipologiaComCurva = { id: string; quantidade: number; mesesParaPrimeiraVenda: number; unidadesPorMes: number };
+
+/**
+ * Calcula a data de venda EFETIVA de cada unidade de todas as tipologias
+ * — real quando já foi vendida, projetada pela curva de absorção da sua
+ * tipologia quando ainda está disponível. Fonte única desta combinação
+ * (real + projetado), partilhada pelo motor de recebimentos
+ * (vendas.ts) e pelo motor de evolução de preços (price-escalation.ts) —
+ * nunca calculada de duas maneiras diferentes.
+ */
+export function calcularDatasEfetivas(
+  unidades: UnidadeComTipologia[],
+  tipologias: TipologiaComCurva[],
+  dataLancamentoComercial: string
+): Map<string, string> {
+  const resultado = new Map<string, string>();
+  const tipologiasPorId = new Map(tipologias.map((t) => [t.id, t]));
+
+  const porTipologia = new Map<string, UnidadeComTipologia[]>();
+  for (const u of unidades) {
+    const lista = porTipologia.get(u.tipologiaId) ?? [];
+    lista.push(u);
+    porTipologia.set(u.tipologiaId, lista);
+  }
+
+  for (const [tipologiaId, unidadesDaTipologia] of porTipologia) {
+    const tipologia = tipologiasPorId.get(tipologiaId);
+    if (!tipologia) continue;
+
+    // 1) Datas reais primeiro — nunca substituídas.
+    for (const u of unidadesDaTipologia) {
+      if (u.dataVenda) resultado.set(u.id, u.dataVenda);
+    }
+
+    // 2) Projeta a curva para o total da tipologia e atribui às unidades
+    //    ainda sem data própria, pela ordem (ver nota de aproximação em
+    //    vendas.ts sobre unidades vendidas fora de ordem).
+    const agenda = gerarAgendaAbsorcao(unidadesDaTipologia.length, tipologia.mesesParaPrimeiraVenda, tipologia.unidadesPorMes, dataLancamentoComercial);
+    const paraAgendar: UnidadeParaAgendar[] = unidadesDaTipologia.map((u) => ({
+      id: u.id,
+      ordem: u.ordem,
+      jaTemDataVenda: Boolean(u.dataVenda),
+      disponivel: u.estadoComercial === "disponivel",
+    }));
+    const atribuicoes = atribuirDatasAbsorcao(paraAgendar, agenda);
+    for (const a of atribuicoes) {
+      resultado.set(a.unidadeId, a.dataVenda);
+    }
+  }
+
+  return resultado;
+}

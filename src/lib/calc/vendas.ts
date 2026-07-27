@@ -5,7 +5,7 @@
 // validado aqui, nunca assumido.
 
 import { distribuirValorPorPerfil } from "./perfil-desembolso";
-import { gerarAgendaAbsorcao, atribuirDatasAbsorcao, type UnidadeParaAgendar } from "./sales-curve";
+import { calcularDatasEfetivas } from "./sales-curve";
 import type { LinhaSalesTableResolvida } from "./sales-table";
 import type { Typology } from "./areas";
 
@@ -136,36 +136,21 @@ export function gerarRecebimentosDaSalesTable(
   const reservaCpcvPorMes = new Map<string, number>();
   let receitaTotal = 0;
 
-  for (const tipologia of tipologias) {
-    const unidadesDaTipologia = unidadesResolvidas.filter((u) => u.tipologiaId === tipologia.id);
-    if (unidadesDaTipologia.length === 0) continue;
+  const datasEfetivas = calcularDatasEfetivas(
+    unidadesResolvidas.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+    tipologias.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+    plano.dataLancamentoComercial
+  );
 
-    const agenda = gerarAgendaAbsorcao(
-      unidadesDaTipologia.length,
-      tipologia.mesesParaPrimeiraVenda,
-      tipologia.unidadesPorMes,
-      plano.dataLancamentoComercial
-    );
+  for (const u of unidadesResolvidas) {
+    const precoLiquido = u.precoFinal * fatorCancelamento;
+    receitaTotal += precoLiquido;
 
-    const paraAgendar: UnidadeParaAgendar[] = unidadesDaTipologia.map((u) => ({
-      id: u.id,
-      ordem: u.ordem,
-      jaTemDataVenda: Boolean(u.dataVenda),
-      disponivel: u.estadoComercial === "disponivel",
-    }));
-    const atribuicoes = atribuirDatasAbsorcao(paraAgendar, agenda);
-    const dataProjetadaPorUnidade = new Map(atribuicoes.map((a) => [a.unidadeId, a.dataVenda]));
+    const dataVendaEfetiva = datasEfetivas.get(u.id) ?? null;
+    if (!dataVendaEfetiva) continue; // sem data real nem projetável (tipologia sem curva configurada) — não agenda, nunca inventa mês
 
-    for (const u of unidadesDaTipologia) {
-      const precoLiquido = u.precoFinal * fatorCancelamento;
-      receitaTotal += precoLiquido;
-
-      const dataVendaEfetiva = u.dataVenda ?? dataProjetadaPorUnidade.get(u.id) ?? null;
-      if (!dataVendaEfetiva) continue; // sem data real nem projetável (tipologia sem curva configurada) — não agenda, nunca inventa mês
-
-      const mes = dataVendaEfetiva.slice(0, 7);
-      reservaCpcvPorMes.set(mes, (reservaCpcvPorMes.get(mes) ?? 0) + precoLiquido * pctReservaMaisCpcv);
-    }
+    const mes = dataVendaEfetiva.slice(0, 7);
+    reservaCpcvPorMes.set(mes, (reservaCpcvPorMes.get(mes) ?? 0) + precoLiquido * pctReservaMaisCpcv);
   }
 
   const construcaoPorMes = distribuirValorPorPerfil(

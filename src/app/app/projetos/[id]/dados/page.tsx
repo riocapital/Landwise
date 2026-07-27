@@ -50,7 +50,14 @@ import {
   type LinhaSalesTableResolvida,
 } from "@/lib/calc/sales-table";
 import { listarUnidades, criarUnidades, atualizarUnidade, apagarUnidades } from "@/lib/supabase/project-units";
-import { gerarAgendaAbsorcao, calcResumoAbsorcao } from "@/lib/calc/sales-curve";
+import { gerarAgendaAbsorcao, calcResumoAbsorcao, calcularDatasEfetivas } from "@/lib/calc/sales-curve";
+import { calcularAjustesParaSalesTable, type RegraEvolucaoPreco, type TipoGatilhoPreco } from "@/lib/calc/price-escalation";
+import {
+  listarRegrasPreco,
+  criarRegraPreco,
+  atualizarRegraPreco,
+  apagarRegraPreco,
+} from "@/lib/supabase/project-price-rules";
 import {
   calcSeguro,
   calcIMI,
@@ -164,6 +171,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
   const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
   const [unidades, setUnidades] = useState<UnidadeVenda[]>([]);
+  const [regrasPreco, setRegrasPreco] = useState<RegraEvolucaoPreco[]>([]);
   const [custosNovos, setCustosNovos] = useState<LinhaCusto[]>([]);
   const [financiamento, setFinanciamento] = useState<ParametrosFinanciamento>(FINANCIAMENTO_VAZIO);
   const [estruturaCapital, setEstruturaCapital] = useState<EstruturaCapitalEstado>(ESTRUTURA_CAPITAL_VAZIA);
@@ -214,6 +222,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setTipologiasNovas(tipologias);
     const unidadesCarregadas = await listarUnidades(supabase, id);
     setUnidades(unidadesCarregadas);
+    const regrasPrecoCarregadas = await listarRegrasPreco(supabase, id);
+    setRegrasPreco(regrasPrecoCarregadas);
     const custos = await listarCustosProjeto(supabase, id);
     setCustosNovos(custos);
     const parametrosFinanciamento = await carregarFinanciamento(supabase, id);
@@ -285,6 +295,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       // clicar "+ Adicionar"), por isso aqui é sempre update, nunca insert.
       await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
       await Promise.all(unidades.map((u) => atualizarUnidade(supabase, u.id, u)));
+      await Promise.all(regrasPreco.map((r) => atualizarRegraPreco(supabase, r.id, r)));
       await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
       await guardarFinanciamento(supabase, id, financiamento);
       await guardarEstruturaCapital(supabase, id, estruturaCapital);
@@ -305,6 +316,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       identificacao,
       tipologiasNovas,
       unidades,
+      regrasPreco,
       custosNovos,
       financiamento,
       estruturaCapital,
@@ -330,6 +342,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     identificacao,
     tipologiasNovas,
     unidades,
+    regrasPreco,
     custosNovos,
     financiamento,
     estruturaCapital,
@@ -450,6 +463,47 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       return;
     }
     setUnidades((prev) => prev.map((u) => (u.id === unidadeId ? { ...u, estadoComercial: "vendido", dataVenda } : u)));
+  }
+
+  async function adicionarRegraPreco() {
+    const nova = await criarRegraPreco(supabase, id, regrasPreco.length);
+    if (nova) setRegrasPreco((prev) => [...prev, nova]);
+  }
+
+  function atualizarRegraPrecoLocal(regraId: string, patch: Partial<RegraEvolucaoPreco>) {
+    setRegrasPreco((prev) => prev.map((r) => (r.id === regraId ? { ...r, ...patch } : r)));
+  }
+
+  async function removerRegraPreco(regraId: string) {
+    await apagarRegraPreco(supabase, regraId);
+    setRegrasPreco((prev) => prev.filter((r) => r.id !== regraId));
+  }
+
+  /**
+   * Aplica as regras de evolução de preços a todas as unidades elegíveis
+   * (disponíveis, sem override manual, sem preço bloqueado) — nunca às
+   * unidades já vendidas ou personalizadas.
+   */
+  function aplicarEvolucaoPrecos(dataLancamentoComercial: string) {
+    if (!dataLancamentoComercial) {
+      window.alert("Preenche primeiro a data de lançamento comercial no Plano de Vendas.");
+      return;
+    }
+    const datasEfetivas = calcularDatasEfetivas(
+      unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+      tipologiasNovas.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+      dataLancamentoComercial
+    );
+    const unidadesParaAjuste = unidades.map((u) => ({
+      id: u.id,
+      tipologiaId: u.tipologiaId,
+      dataVendaEfetiva: datasEfetivas.get(u.id) ?? null,
+      disponivel: u.estadoComercial === "disponivel",
+      precoBloqueado: u.precoBloqueado,
+      overrideManualValor: u.overrideManualValor,
+    }));
+    const ajustes = calcularAjustesParaSalesTable(unidadesParaAjuste, regrasPreco, dataLancamentoComercial);
+    setUnidades((prev) => prev.map((u) => (ajustes.has(u.id) ? { ...u, ajusteFaseComercialPct: ajustes.get(u.id)! } : u)));
   }
 
   async function adicionarCustoNovo(grupo: GrupoCusto, nome: string) {
@@ -779,6 +833,11 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           onAtualizarUnidade={atualizarUnidadeLocal}
           onVenderUnidade={venderUnidade}
           dataLancamentoComercial={planoVendas.dataLancamentoComercial}
+          regrasPreco={regrasPreco}
+          onAdicionarRegraPreco={adicionarRegraPreco}
+          onAtualizarRegraPreco={atualizarRegraPrecoLocal}
+          onRemoverRegraPreco={removerRegraPreco}
+          onAplicarEvolucaoPrecos={() => aplicarEvolucaoPrecos(planoVendas.dataLancamentoComercial)}
         />
       )}
       {step === 2 && (
@@ -1125,6 +1184,11 @@ function StepPrograma({
   onAtualizarUnidade,
   onVenderUnidade,
   dataLancamentoComercial,
+  regrasPreco,
+  onAdicionarRegraPreco,
+  onAtualizarRegraPreco,
+  onRemoverRegraPreco,
+  onAplicarEvolucaoPrecos,
 }: {
   tipologiasNovas: Typology[];
   identificacao: IdentificacaoEstruturada;
@@ -1139,6 +1203,11 @@ function StepPrograma({
   onAtualizarUnidade: (id: string, patch: Partial<UnidadeVenda>) => void;
   onVenderUnidade: (id: string, dataVenda: string) => void;
   dataLancamentoComercial: string;
+  regrasPreco: RegraEvolucaoPreco[];
+  onAdicionarRegraPreco: () => void;
+  onAtualizarRegraPreco: (id: string, patch: Partial<RegraEvolucaoPreco>) => void;
+  onRemoverRegraPreco: (id: string) => void;
+  onAplicarEvolucaoPrecos: () => void;
 }) {
   const resumo = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const semLocalizacao = !identificacao.freguesia && !identificacao.concelho;
@@ -1342,6 +1411,101 @@ function StepPrograma({
             </div>
           );
         })}
+      </Card>
+
+      <Card
+        title="Evolução de preços"
+        subtitle="Desconto no lançamento, aumentos por tempo ou por % vendido — geral ou por tipologia. Nunca altera unidades já vendidas, bloqueadas ou com override manual."
+      >
+        {regrasPreco.map((r) => (
+          <div key={r.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+            <Row>
+              <Field label="Âmbito">
+                <select
+                  className="input-dark"
+                  value={r.escopo.tipo === "tipologia" ? r.escopo.tipologiaId : "geral"}
+                  onChange={(e) =>
+                    onAtualizarRegraPreco(r.id, {
+                      escopo: e.target.value === "geral" ? { tipo: "geral" } : { tipo: "tipologia", tipologiaId: e.target.value },
+                    })
+                  }
+                >
+                  <option value="geral">Geral (todas as tipologias)</option>
+                  {tipologiasNovas.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nome}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Gatilho">
+                <select
+                  className="input-dark"
+                  value={r.gatilho}
+                  onChange={(e) => onAtualizarRegraPreco(r.id, { gatilho: e.target.value as TipoGatilhoPreco })}
+                >
+                  <option value="meses_apos_lancamento">Meses após o lançamento</option>
+                  <option value="data">Data específica</option>
+                  <option value="pct_vendido_projeto">% do projeto vendido</option>
+                  <option value="pct_vendido_tipologia">% da tipologia vendido</option>
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              {r.gatilho === "data" ? (
+                <Field label="Data do gatilho">
+                  <input
+                    type="date"
+                    className="input-dark"
+                    value={r.valorGatilhoData ?? ""}
+                    onChange={(e) => onAtualizarRegraPreco(r.id, { valorGatilhoData: e.target.value })}
+                  />
+                </Field>
+              ) : r.gatilho === "meses_apos_lancamento" ? (
+                <Field label="Meses após o lançamento">
+                  <input
+                    type="number"
+                    className="input-dark"
+                    value={r.valorGatilhoNumero ?? 0}
+                    onChange={(e) => onAtualizarRegraPreco(r.id, { valorGatilhoNumero: Number(e.target.value) })}
+                  />
+                </Field>
+              ) : (
+                <Field label="% vendido (gatilho)">
+                  <PercentInput value={r.valorGatilhoNumero ?? 0} onChange={(v) => onAtualizarRegraPreco(r.id, { valorGatilhoNumero: v })} />
+                </Field>
+              )}
+              <Field label="Ajuste de preço (%)">
+                <PercentInput value={r.ajustePct} onChange={(v) => onAtualizarRegraPreco(r.id, { ajustePct: v })} />
+              </Field>
+              <Field label="Modo">
+                <select
+                  className="input-dark"
+                  value={r.modo}
+                  onChange={(e) => onAtualizarRegraPreco(r.id, { modo: e.target.value as "cumulativo" | "substituicao" })}
+                >
+                  <option value="cumulativo">Cumulativo (soma-se às anteriores)</option>
+                  <option value="substituicao">Substituição (ignora as anteriores)</option>
+                </select>
+              </Field>
+            </Row>
+            <div className="flex justify-end">
+              <button onClick={() => onRemoverRegraPreco(r.id)} className="text-[#A13D2E] text-xs">
+                Remover regra
+              </button>
+            </div>
+          </div>
+        ))}
+        <div className="flex gap-3 items-center">
+          <button onClick={onAdicionarRegraPreco} className="text-[#B96343] text-sm font-semibold">
+            + Adicionar regra
+          </button>
+          {regrasPreco.length > 0 && (
+            <button onClick={onAplicarEvolucaoPrecos} className="text-xs px-3 py-1.5 rounded-lg bg-[#142B3A] text-white font-semibold">
+              Aplicar evolução de preços à Sales Table
+            </button>
+          )}
+        </div>
       </Card>
 
       <Card
