@@ -12,6 +12,7 @@ import { calcResumoPrograma, calcAbcTotalProgramado, calcEficiencia, type Typolo
 import { resolverSalesTable, calcVgvBruto } from "./sales-table";
 import { calcularCashFlow, type ResultadoCashFlow } from "./cashflow";
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "./vendas";
+import { gerarComissaoMensal } from "./sales-commission";
 import { calcularResultadosComWaterfall, type ResultadosInvestidorPromotor } from "./estrutura-capital";
 import { agregarFees } from "./fees";
 import type { ContextoCusto } from "./custos";
@@ -113,10 +114,23 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       ? gerarRecebimentosDaSalesTable(salesTableResolvida, tipologias, planoVendas)
       : gerarRecebimentosMensais(vgvBruto, planoVendas);
 
+  let comissaoPorMes: Map<string, number> | undefined;
+  if (salesTableResolvida.length > 0) {
+    const { linhas: linhasComissao } = gerarComissaoMensal(salesTableResolvida, tipologias, planoVendas.dataLancamentoComercial, planoVendas.dataEscritura, {
+      percentagemComissao: planoVendas.comissaoMediacaoPct,
+      taxaIva: planoVendas.comissaoTaxaIva,
+      pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+      pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+      ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+    });
+    comissaoPorMes = new Map(linhasComissao.map((l) => [l.mes, l.total]));
+  }
+
   const resultado = calcularCashFlow({
     linhasCusto: custos,
     contextoCusto,
     recebimentos,
+    comissaoPorMes,
     parametrosFinanciamento: financiamento,
     saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
   });

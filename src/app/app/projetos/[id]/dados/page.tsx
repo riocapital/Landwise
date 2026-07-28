@@ -90,6 +90,7 @@ import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/venda
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
 import { calcularCashFlow } from "@/lib/calc/cashflow";
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "@/lib/calc/vendas";
+import { gerarComissaoMensal } from "@/lib/calc/sales-commission";
 import {
   calcularMatrizSensibilidade,
   extrairIndicador,
@@ -2659,10 +2660,33 @@ function StepCashFlowResultados({
       salesTableResolvida.length > 0
         ? gerarRecebimentosDaSalesTable(salesTableResolvida, tipologiasNovas, planoVendas)
         : gerarRecebimentosMensais(vgvBruto, planoVendas);
+
+    // Comissão comercial: sempre uma saída separada do cash flow, nunca
+    // descontada da receita de vendas (secção 18 do plano) — só calculável
+    // quando já há Sales Table (precisa da data de venda de cada unidade).
+    let comissaoPorMes: Map<string, number> | undefined;
+    if (salesTableResolvida.length > 0) {
+      const { linhas: linhasComissao } = gerarComissaoMensal(
+        salesTableResolvida,
+        tipologiasNovas,
+        planoVendas.dataLancamentoComercial,
+        planoVendas.dataEscritura,
+        {
+          percentagemComissao: planoVendas.comissaoMediacaoPct,
+          taxaIva: planoVendas.comissaoTaxaIva,
+          pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+          pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+          ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+        }
+      );
+      comissaoPorMes = new Map(linhasComissao.map((l) => [l.mes, l.total]));
+    }
+
     resultado = calcularCashFlow({
       linhasCusto: custosNovos,
       contextoCusto,
       recebimentos,
+      comissaoPorMes,
       parametrosFinanciamento: financiamento,
       saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
     });
@@ -2743,11 +2767,27 @@ function StepCashFlowResultados({
             </Field>
           </Row>
           <Row>
-            <Field label="Comissão de mediação (%)">
+            <Field label="Comissão de mediação (% sobre o preço total da unidade)">
               <PercentInput value={planoVendas.comissaoMediacaoPct} onChange={(v) => updatePlanoVendas("comissaoMediacaoPct", v)} />
             </Field>
             <Field label="Cancelamentos estimados (%)">
               <PercentInput value={planoVendas.cancelamentosEstimadosPct} onChange={(v) => updatePlanoVendas("cancelamentosEstimadosPct", v)} />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="IVA da comissão">
+              <PercentInput value={planoVendas.comissaoTaxaIva} onChange={(v) => updatePlanoVendas("comissaoTaxaIva", v)} />
+            </Field>
+            <Field label="% da comissão paga no sinal">
+              <PercentInput value={planoVendas.comissaoPctPagoSinal} onChange={(v) => updatePlanoVendas("comissaoPctPagoSinal", v)} />
+            </Field>
+            <Field label="% da comissão paga na escritura">
+              <PercentInput value={planoVendas.comissaoPctPagoEscritura} onChange={(v) => updatePlanoVendas("comissaoPctPagoEscritura", v)} />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="% de IVA da comissão recuperável">
+              <PercentInput value={planoVendas.comissaoIvaRecuperavelPct} onChange={(v) => updatePlanoVendas("comissaoIvaRecuperavelPct", v)} />
             </Field>
           </Row>
 
@@ -2816,6 +2856,7 @@ function StepCashFlowResultados({
                   <th className="pb-2 pr-2">Mês</th>
                   <th className="pb-2 pr-2">Receita</th>
                   <th className="pb-2 pr-2">Custos</th>
+                  <th className="pb-2 pr-2">Comissão</th>
                   <th className="pb-2 pr-2">CF unlevered</th>
                   <th className="pb-2 pr-2">Drawdown</th>
                   <th className="pb-2 pr-2">Juros+fees</th>
@@ -2831,6 +2872,7 @@ function StepCashFlowResultados({
                     <td className="py-1 pr-2">{l.mes}</td>
                     <td className="py-1 pr-2">€{Math.round(l.receitaVendas).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.comissaoComercial).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.cashFlowUnlevered).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.drawdown).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.jurosEFees).toLocaleString("pt-PT")}</td>

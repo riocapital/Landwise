@@ -29,7 +29,11 @@ export type PlanoVendas = {
   dataFimConstrucao: string;
   dataEscritura: string; // normalmente perto ou depois da conclusão
   estruturaRecebimentos: EstruturaRecebimentos;
-  comissaoMediacaoPct: number; // % da receita, saída de caixa (não uma redução do GDV bruto)
+  comissaoMediacaoPct: number; // % da receita, saída de caixa (não uma redução do GDV bruto) — secção 18 do plano
+  comissaoTaxaIva: number;
+  comissaoPctPagoSinal: number;
+  comissaoPctPagoEscritura: number;
+  comissaoIvaRecuperavelPct: number;
   cancelamentosEstimadosPct: number; // % da receita que se assume não se concretizar
 };
 

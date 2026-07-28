@@ -17,6 +17,10 @@ const planoBase: PlanoVendas = {
     pctEscritura: 0.2,
   },
   comissaoMediacaoPct: 0.03,
+  comissaoTaxaIva: 0.23,
+  comissaoPctPagoSinal: 0.5,
+  comissaoPctPagoEscritura: 0.5,
+  comissaoIvaRecuperavelPct: 0,
   cancelamentosEstimadosPct: 0,
 };
 
@@ -129,6 +133,10 @@ describe("gerarRecebimentosDaSalesTable — reserva/CPCV seguem a data real ou p
     dataEscritura: "2028-01-01",
     estruturaRecebimentos: { pctReserva: 0.1, pctCpcv: 0.1, pctDuranteConstrucao: 0.5, pctConclusao: 0.1, pctEscritura: 0.2 },
     comissaoMediacaoPct: 0.03,
+    comissaoTaxaIva: 0.23,
+    comissaoPctPagoSinal: 0.5,
+    comissaoPctPagoEscritura: 0.5,
+    comissaoIvaRecuperavelPct: 0,
     cancelamentosEstimadosPct: 0,
   };
 
