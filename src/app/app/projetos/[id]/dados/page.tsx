@@ -47,7 +47,6 @@ import {
   calcVgvBruto,
   validarVenda,
   type UnidadeVenda,
-  type LinhaSalesTableResolvida,
 } from "@/lib/calc/sales-table";
 import { listarUnidades, criarUnidades, atualizarUnidade, apagarUnidades } from "@/lib/supabase/project-units";
 import { gerarAgendaAbsorcao, calcResumoAbsorcao, calcularDatasEfetivas } from "@/lib/calc/sales-curve";
@@ -70,21 +69,11 @@ import {
   TAXA_IMI_SUGERIDA,
 } from "@/lib/calc/impostos";
 import { carregarImpostos, guardarImpostos, type ImpostosEstado, IMPOSTOS_VAZIO } from "@/lib/supabase/project-taxes";
-import {
-  resolverAtividadesEncadeadas,
-  gerarDadosGantt,
-  aoEditarDataFinal,
-  aoEditarDuracao,
-  aoEditarDataInicial,
-  ATIVIDADES_INICIAIS_SUGERIDAS,
-  type Atividade,
-} from "@/lib/calc/calendario";
+import { type Atividade } from "@/lib/calc/calendario";
+import { montarCalendarioAutomatico, type EventoTipologiaVendas, type EventoFinanciamentoMensal } from "@/lib/calc/calendario-automatico";
 import {
   listarAtividades,
-  criarAtividade,
   atualizarAtividade,
-  apagarAtividade,
-  duplicarAtividade,
 } from "@/lib/supabase/project-timeline";
 import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
@@ -633,73 +622,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     return criarLeadConsultoria(supabase, lead);
   }
 
-  async function adicionarAtividade(nome: string) {
-    const nova = await criarAtividade(supabase, id, nome, atividades.length);
-    if (nova) setAtividades((prev) => [...prev, nova]);
-  }
-
-  function atualizarAtividadeLocal(atividadeId: string, patch: Partial<Atividade>) {
-    setAtividades((prev) => prev.map((a) => (a.id === atividadeId ? { ...a, ...patch } : a)));
-  }
-
-  function handleDataInicialAtividade(atividadeId: string, novaData: string) {
-    const atividade = atividades.find((a) => a.id === atividadeId);
-    if (!atividade) return;
-    if (novaData && atividade.duracaoMeses) {
-      const r = aoEditarDataInicial(novaData, atividade.duracaoMeses);
-      atualizarAtividadeLocal(atividadeId, { dataInicial: r.dataInicial, dataFinal: r.dataFinal });
-    } else {
-      atualizarAtividadeLocal(atividadeId, { dataInicial: novaData || null });
-    }
-  }
-
-  function handleDuracaoAtividade(atividadeId: string, novaDuracao: number) {
-    const atividade = atividades.find((a) => a.id === atividadeId);
-    if (!atividade) return;
-    if (atividade.dataInicial && novaDuracao > 0) {
-      const r = aoEditarDuracao(atividade.dataInicial, novaDuracao);
-      atualizarAtividadeLocal(atividadeId, { duracaoMeses: r.duracaoMeses, dataFinal: r.dataFinal });
-    } else {
-      atualizarAtividadeLocal(atividadeId, { duracaoMeses: novaDuracao || null });
-    }
-  }
-
-  function handleDataFinalAtividade(atividadeId: string, novaDataFinal: string) {
-    const atividade = atividades.find((a) => a.id === atividadeId);
-    if (!atividade || !atividade.dataInicial || !novaDataFinal) {
-      atualizarAtividadeLocal(atividadeId, { dataFinal: novaDataFinal || null });
-      return;
-    }
-    const r = aoEditarDataFinal(atividade.dataInicial, novaDataFinal);
-    atualizarAtividadeLocal(atividadeId, { duracaoMeses: r.duracaoMeses, dataFinal: r.dataFinal });
-  }
-
-  async function removerAtividade(atividadeId: string) {
-    await apagarAtividade(supabase, atividadeId);
-    setAtividades((prev) => prev.filter((a) => a.id !== atividadeId));
-  }
-
-  async function duplicarAtividadeHandler(atividade: Atividade) {
-    const nova = await duplicarAtividade(supabase, id, atividade, atividades.length);
-    if (nova) setAtividades((prev) => [...prev, nova]);
-  }
-
-  function reordenarAtividade(atividadeId: string, direcao: -1 | 1) {
-    setAtividades((prev) => {
-      const ordenadas = [...prev].sort((a, b) => a.ordem - b.ordem);
-      const idx = ordenadas.findIndex((a) => a.id === atividadeId);
-      const novoIdx = idx + direcao;
-      if (idx === -1 || novoIdx < 0 || novoIdx >= ordenadas.length) return prev;
-      const ordemA = ordenadas[idx].ordem;
-      const ordemB = ordenadas[novoIdx].ordem;
-      return prev.map((a) => {
-        if (a.id === ordenadas[idx].id) return { ...a, ordem: ordemB };
-        if (a.id === ordenadas[novoIdx].id) return { ...a, ordem: ordemA };
-        return a;
-      });
-    });
-  }
-
   function updatePlanoVendas<K extends keyof PlanoVendas>(key: K, value: PlanoVendas[K]) {
     setPlanoVendas((prev) => ({ ...prev, [key]: value }));
   }
@@ -782,6 +704,51 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     abcTotal: abcTotalAtual,
     numeroUnidades: contextoCustoAtual.numeroUnidades,
   };
+
+  // Cash flow calculado uma única vez aqui — partilhado pela etapa final
+  // (Cash flow e resultados) e pelo Calendário (para mostrar drawdowns e
+  // liquidação sem recalcular o mesmo motor de maneira diferente, secção
+  // 19 do plano).
+  const recebimentosValidosAtual = validarEstruturaRecebimentos(planoVendas.estruturaRecebimentos);
+  const datasPreenchidasAtual = Boolean(
+    planoVendas.dataLancamentoComercial && planoVendas.dataInicioConstrucao && planoVendas.dataFimConstrucao && planoVendas.dataEscritura
+  );
+  const prontoParaCalcularAtual = recebimentosValidosAtual && datasPreenchidasAtual && custosNovos.length > 0;
+
+  let resultadoAtual: ReturnType<typeof calcularCashFlow> | null = null;
+  if (prontoParaCalcularAtual) {
+    const { linhas: recebimentosCalculados } =
+      salesTableResolvida.length > 0
+        ? gerarRecebimentosDaSalesTable(salesTableResolvida, tipologiasNovas, planoVendas)
+        : gerarRecebimentosMensais(vgvBrutoAtual, planoVendas);
+
+    let comissaoPorMesCalculada: Map<string, number> | undefined;
+    if (salesTableResolvida.length > 0) {
+      const { linhas: linhasComissaoCalculadas } = gerarComissaoMensal(
+        salesTableResolvida,
+        tipologiasNovas,
+        planoVendas.dataLancamentoComercial,
+        planoVendas.dataEscritura,
+        {
+          percentagemComissao: planoVendas.comissaoMediacaoPct,
+          taxaIva: planoVendas.comissaoTaxaIva,
+          pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+          pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+          ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+        }
+      );
+      comissaoPorMesCalculada = new Map(linhasComissaoCalculadas.map((l) => [l.mes, l.total]));
+    }
+
+    resultadoAtual = calcularCashFlow({
+      linhasCusto: custosNovos,
+      contextoCusto: contextoCustoAtual,
+      recebimentos: recebimentosCalculados,
+      comissaoPorMes: comissaoPorMesCalculada,
+      parametrosFinanciamento: financiamento,
+      saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
+    });
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-8">
@@ -894,15 +861,11 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       )}
       {step === 6 && (
         <StepCalendario
-          atividades={atividades}
-          onAdicionarAtividade={adicionarAtividade}
-          onAtualizarAtividade={atualizarAtividadeLocal}
-          onHandleDataInicial={handleDataInicialAtividade}
-          onHandleDuracao={handleDuracaoAtividade}
-          onHandleDataFinal={handleDataFinalAtividade}
-          onRemoverAtividade={removerAtividade}
-          onDuplicarAtividade={duplicarAtividadeHandler}
-          onReordenarAtividade={reordenarAtividade}
+          custosNovos={custosNovos}
+          planoVendas={planoVendas}
+          unidades={unidades}
+          tipologiasNovas={tipologiasNovas}
+          resultado={resultadoAtual}
         />
       )}
       {step === 7 && (
@@ -915,14 +878,14 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           contextoCusto={contextoCustoAtual}
           resumoPrograma={resumoProgramaAtual}
           vgvBruto={vgvBrutoAtual}
-          salesTableResolvida={salesTableResolvida}
-          tipologiasNovas={tipologiasNovas}
           identificacao={identificacao}
           financiamento={financiamento}
           estruturaCapital={estruturaCapital}
           hurdles={hurdles}
           feesNovos={feesNovos}
           contextoFees={contextoFeesAtual}
+          resultado={resultadoAtual}
+          prontoParaCalcular={prontoParaCalcularAtual}
         />
       )}
 
@@ -2461,159 +2424,122 @@ function ConsultoriaModal({
 }
 
 function StepCalendario({
-  atividades,
-  onAdicionarAtividade,
-  onAtualizarAtividade,
-  onHandleDataInicial,
-  onHandleDuracao,
-  onHandleDataFinal,
-  onRemoverAtividade,
-  onDuplicarAtividade,
-  onReordenarAtividade,
+  custosNovos,
+  planoVendas,
+  unidades,
+  tipologiasNovas,
+  resultado,
 }: {
-  atividades: Atividade[];
-  onAdicionarAtividade: (nome: string) => void;
-  onAtualizarAtividade: (id: string, patch: Partial<Atividade>) => void;
-  onHandleDataInicial: (id: string, data: string) => void;
-  onHandleDuracao: (id: string, duracao: number) => void;
-  onHandleDataFinal: (id: string, data: string) => void;
-  onRemoverAtividade: (id: string) => void;
-  onDuplicarAtividade: (atividade: Atividade) => void;
-  onReordenarAtividade: (id: string, direcao: -1 | 1) => void;
+  custosNovos: LinhaCusto[];
+  planoVendas: PlanoVendas;
+  unidades: UnidadeVenda[];
+  tipologiasNovas: Typology[];
+  resultado: ReturnType<typeof calcularCashFlow> | null;
 }) {
-  const { atividades: resolvidas, alertas } = resolverAtividadesEncadeadas(atividades);
-  const ordenadas = [...resolvidas].sort((a, b) => a.ordem - b.ordem);
-  const gantt = gerarDadosGantt(resolvidas);
+  const datasEfetivas = calcularDatasEfetivas(
+    unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+    tipologiasNovas.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+    planoVendas.dataLancamentoComercial
+  );
 
-  const datasValidas = gantt.flatMap((g) => [new Date(g.inicio).getTime(), new Date(g.fim).getTime()]);
+  const porTipologia: EventoTipologiaVendas[] = tipologiasNovas.map((t) => {
+    const datasDaTipologia = unidades
+      .filter((u) => u.tipologiaId === t.id)
+      .map((u) => datasEfetivas.get(u.id))
+      .filter((d): d is string => Boolean(d))
+      .sort();
+    return {
+      tipologiaId: t.id,
+      nome: t.nome,
+      primeiraData: datasDaTipologia[0] ?? null,
+      ultimaData: datasDaTipologia[datasDaTipologia.length - 1] ?? null,
+    };
+  });
+
+  const eventosFinanciamento: EventoFinanciamentoMensal[] =
+    resultado?.linhas.map((l) => ({ mes: l.mes, drawdown: l.drawdown, amortizacao: l.amortizacao, saldoDivida: l.saldoDivida })) ?? [];
+
+  const { grupos, dataInicial, dataFinal } = montarCalendarioAutomatico(
+    custosNovos,
+    { dataLancamentoComercial: planoVendas.dataLancamentoComercial || null, dataEscritura: planoVendas.dataEscritura || null, porTipologia },
+    eventosFinanciamento
+  );
+
+  const todasAsLinhas = grupos.flatMap((g) => g.linhas);
+  const datasValidas = todasAsLinhas.flatMap((l) => [new Date(l.inicio).getTime(), new Date(l.fim).getTime()]);
   const dataMinMs = datasValidas.length > 0 ? Math.min(...datasValidas) : 0;
   const dataMaxMs = datasValidas.length > 0 ? Math.max(...datasValidas) : 1;
   const totalMs = dataMaxMs - dataMinMs || 1;
 
   return (
     <>
-      <Card title="Calendário de atividades" subtitle="Início + duração = fim, calculado automaticamente. Editar qualquer um dos três recalcula os outros dois.">
-        {alertas.length > 0 && (
-          <div className="mb-3">
-            {alertas.map((al, i) => (
-              <p key={i} className={`text-xs ${al.tipo === "erro" ? "text-[#A13D2E]" : "text-[#B96343]"}`}>
-                {al.mensagem}
-              </p>
-            ))}
-          </div>
+      <Card
+        title="Calendário do projeto"
+        subtitle="Gerado automaticamente a partir da Aquisição, Custos, Plano de Vendas e Financiamento — para mudar uma data, edita-a na etapa de origem. Este ecrã nunca guarda datas próprias."
+      >
+        {grupos.length === 0 && (
+          <p className="text-xs text-[#8FA6AF]">
+            Ainda não há datas suficientes preenchidas em Aquisição, Custos, Plano de Vendas ou Financiamento para gerar o calendário.
+          </p>
         )}
-
-        {ordenadas.map((a) => (
-          <div key={a.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
-            <Row>
-              <Field label="Atividade">
-                <input className="input-dark" value={a.nome} onChange={(e) => onAtualizarAtividade(a.id, { nome: e.target.value })} />
-              </Field>
-              <Field label="Dependência (início = fim da anterior + 1 dia)">
-                <select
-                  className="input-dark"
-                  value={a.dependenciaId ?? ""}
-                  onChange={(e) => onAtualizarAtividade(a.id, { dependenciaId: e.target.value || null })}
-                >
-                  <option value="">Sem dependência</option>
-                  {atividades
-                    .filter((outra) => outra.id !== a.id)
-                    .map((outra) => (
-                      <option key={outra.id} value={outra.id}>
-                        {outra.nome}
-                      </option>
-                    ))}
-                </select>
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Data inicial">
-                <input
-                  type="date"
-                  className="input-dark"
-                  value={a.dataInicial ?? ""}
-                  onChange={(e) => onHandleDataInicial(a.id, e.target.value)}
-                  disabled={!!a.dependenciaId}
-                />
-              </Field>
-              <Field label="Duração (meses)">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={a.duracaoMeses ?? ""}
-                  onChange={(e) => onHandleDuracao(a.id, Number(e.target.value))}
-                />
-              </Field>
-              <Field label="Data final">
-                <input type="date" className="input-dark" value={a.dataFinal ?? ""} onChange={(e) => onHandleDataFinal(a.id, e.target.value)} />
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Perfil de desembolso">
-                <select
-                  className="input-dark"
-                  value={a.perfilDesembolso}
-                  onChange={(e) => onAtualizarAtividade(a.id, { perfilDesembolso: e.target.value as Atividade["perfilDesembolso"] })}
-                >
-                  {PERFIS_DESEMBOLSO.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </Row>
-            <div className="flex justify-between items-center mt-1">
-              <div className="flex gap-2">
-                <button onClick={() => onReordenarAtividade(a.id, -1)} className="text-xs text-[#59636A]">
-                  ↑ Subir
-                </button>
-                <button onClick={() => onReordenarAtividade(a.id, 1)} className="text-xs text-[#59636A]">
-                  ↓ Descer
-                </button>
-                <button onClick={() => onDuplicarAtividade(a)} className="text-xs text-[#142B3A] underline">
-                  Duplicar
-                </button>
-              </div>
-              <button onClick={() => onRemoverAtividade(a.id)} className="text-[#A13D2E] text-xs">
-                Remover
-              </button>
+        {(dataInicial || dataFinal) && (
+          <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+            <div>
+              <span className="text-xs text-[#59636A] block">Data inicial (primeiro fluxo financeiro)</span>
+              <span className="font-semibold text-[#142B3A]">{dataInicial ?? "—"}</span>
+            </div>
+            <div>
+              <span className="text-xs text-[#59636A] block">Data final (último evento ativo)</span>
+              <span className="font-semibold text-[#142B3A]">{dataFinal ?? "—"}</span>
             </div>
           </div>
-        ))}
-
-        <div className="flex flex-wrap gap-2 mt-2">
-          {ATIVIDADES_INICIAIS_SUGERIDAS.map((nome) => (
-            <button
-              key={nome}
-              onClick={() => onAdicionarAtividade(nome)}
-              className="text-xs px-2.5 py-1 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]"
-            >
-              + {nome}
-            </button>
-          ))}
-        </div>
+        )}
       </Card>
 
-      {gantt.length > 0 && (
-        <Card title="Gantt simples">
+      {grupos.map((grupo) => (
+        <Card key={grupo.grupo} title={grupo.titulo}>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[#59636A] uppercase">
+                <th className="pb-2 pr-2">Evento</th>
+                <th className="pb-2 pr-2">Início</th>
+                <th className="pb-2 pr-2">Fim</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grupo.linhas.map((l) => (
+                <tr key={l.id} className="border-t border-[#E3DACB]">
+                  <td className="py-1.5 pr-2 text-[#142B3A]">{l.nome}</td>
+                  <td className="py-1.5 pr-2">{l.inicio}</td>
+                  <td className="py-1.5 pr-2">{l.fim}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      ))}
+
+      {todasAsLinhas.length > 0 && (
+        <Card title="Gantt do projeto">
           <div className="space-y-2">
-            {gantt.map((g) => {
-              const offsetPct = ((new Date(g.inicio).getTime() - dataMinMs) / totalMs) * 100;
-              const larguraPct = Math.max(1, ((new Date(g.fim).getTime() - new Date(g.inicio).getTime()) / totalMs) * 100);
-              return (
-                <div key={g.id} className="flex items-center gap-3 text-xs">
-                  <span className="w-40 truncate text-[#142B3A]">{g.nome}</span>
-                  <div className="flex-1 h-4 bg-[#F4EFE6] rounded relative">
-                    <div
-                      className="absolute h-4 rounded bg-[#B96343]"
-                      style={{ left: `${offsetPct}%`, width: `${larguraPct}%` }}
-                      title={`${g.inicio} → ${g.fim}`}
-                    />
+            {grupos.map((grupo) =>
+              grupo.linhas.map((g) => {
+                const offsetPct = ((new Date(g.inicio).getTime() - dataMinMs) / totalMs) * 100;
+                const larguraPct = Math.max(1, ((new Date(g.fim).getTime() - new Date(g.inicio).getTime()) / totalMs) * 100);
+                return (
+                  <div key={`${grupo.grupo}-${g.id}`} className="flex items-center gap-3 text-xs">
+                    <span className="w-48 truncate text-[#142B3A]">{g.nome}</span>
+                    <div className="flex-1 h-4 bg-[#F4EFE6] rounded relative">
+                      <div
+                        className="absolute h-4 rounded bg-[#B96343]"
+                        style={{ left: `${offsetPct}%`, width: `${larguraPct}%` }}
+                        title={`${g.inicio} → ${g.fim}`}
+                      />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </Card>
       )}
@@ -2635,14 +2561,14 @@ function StepCashFlowResultados({
   contextoCusto,
   resumoPrograma,
   vgvBruto,
-  salesTableResolvida,
-  tipologiasNovas,
   identificacao,
   financiamento,
   estruturaCapital,
   hurdles,
   feesNovos,
   contextoFees,
+  resultado,
+  prontoParaCalcular,
 }: {
   onVerResultados: () => void;
   planoVendas: PlanoVendas;
@@ -2652,14 +2578,14 @@ function StepCashFlowResultados({
   contextoCusto: ContextoCusto;
   resumoPrograma: ReturnType<typeof calcResumoPrograma>;
   vgvBruto: number;
-  salesTableResolvida: LinhaSalesTableResolvida[];
-  tipologiasNovas: Typology[];
   identificacao: IdentificacaoEstruturada;
   financiamento: ParametrosFinanciamento;
   estruturaCapital: EstruturaCapitalEstado;
   hurdles: (NivelHurdle & { id: string })[];
   feesNovos: Fee[];
   contextoFees: ContextoFees;
+  resultado: ReturnType<typeof calcularCashFlow> | null;
+  prontoParaCalcular: boolean;
 }) {
   const [subtab, setSubtab] = useState<(typeof SUBTABS_RESULTADOS)[number]>("Resumo");
   const [sensMatriz, setSensMatriz] = useState<MatrizSensibilidade>("aquisicao_vs_custo_construcao");
@@ -2669,49 +2595,6 @@ function StepCashFlowResultados({
   const datasPreenchidas = Boolean(
     planoVendas.dataLancamentoComercial && planoVendas.dataInicioConstrucao && planoVendas.dataFimConstrucao && planoVendas.dataEscritura
   );
-  const prontoParaCalcular = recebimentosValidos && datasPreenchidas && custosNovos.length > 0;
-
-  let resultado: ReturnType<typeof calcularCashFlow> | null = null;
-  if (prontoParaCalcular) {
-    // Quando já há unidades na Sales Table, a receita segue a data real ou
-    // projetada de cada unidade (gerarRecebimentosDaSalesTable) — nunca a
-    // aproximação uniforme. Só recorre ao modo agregado quando ainda não
-    // há Sales Table gerada (ex.: início do preenchimento do projeto).
-    const { linhas: recebimentos } =
-      salesTableResolvida.length > 0
-        ? gerarRecebimentosDaSalesTable(salesTableResolvida, tipologiasNovas, planoVendas)
-        : gerarRecebimentosMensais(vgvBruto, planoVendas);
-
-    // Comissão comercial: sempre uma saída separada do cash flow, nunca
-    // descontada da receita de vendas (secção 18 do plano) — só calculável
-    // quando já há Sales Table (precisa da data de venda de cada unidade).
-    let comissaoPorMes: Map<string, number> | undefined;
-    if (salesTableResolvida.length > 0) {
-      const { linhas: linhasComissao } = gerarComissaoMensal(
-        salesTableResolvida,
-        tipologiasNovas,
-        planoVendas.dataLancamentoComercial,
-        planoVendas.dataEscritura,
-        {
-          percentagemComissao: planoVendas.comissaoMediacaoPct,
-          taxaIva: planoVendas.comissaoTaxaIva,
-          pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
-          pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
-          ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
-        }
-      );
-      comissaoPorMes = new Map(linhasComissao.map((l) => [l.mes, l.total]));
-    }
-
-    resultado = calcularCashFlow({
-      linhasCusto: custosNovos,
-      contextoCusto,
-      recebimentos,
-      comissaoPorMes,
-      parametrosFinanciamento: financiamento,
-      saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
-    });
-  }
 
   const somaRecebimentos =
     planoVendas.estruturaRecebimentos.pctReserva +
