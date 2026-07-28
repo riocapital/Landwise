@@ -151,6 +151,83 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         </>
       )}
 
+      {r.estruturaSobreVgv && (
+        <>
+          <SectionLabel>Estrutura sobre VGV</SectionLabel>
+          <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-3 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[#59636A] uppercase">
+                  <th className="pb-2 pr-4">Categoria</th>
+                  <th className="pb-2 pr-4">€</th>
+                  <th className="pb-2 pr-4">% VGV</th>
+                  <th className="pb-2 pr-4">€/ABC</th>
+                  <th className="pb-2 pr-4">€/ABP</th>
+                  <th className="pb-2 pr-4">€/unidade</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.estruturaSobreVgv.linhas.map((l) => (
+                  <tr key={l.categoria} className="border-t border-[#E3DACB]">
+                    <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{l.categoria}</td>
+                    <td className="py-1.5 pr-4">{fmtEUR(l.euros)}</td>
+                    <td className="py-1.5 pr-4">{l.pctVgv !== null ? fmtPct(l.pctVgv) : "—"}</td>
+                    <td className="py-1.5 pr-4">{l.eurPorAbc !== null ? fmtEUR(l.eurPorAbc) : "—"}</td>
+                    <td className="py-1.5 pr-4">{l.eurPorAbp !== null ? fmtEUR(l.eurPorAbp) : "—"}</td>
+                    <td className="py-1.5 pr-4">{l.eurPorUnidade !== null ? fmtEUR(l.eurPorUnidade) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex items-center gap-2 mb-8 text-xs">
+            <span
+              className="inline-block w-3 h-3 rounded-full"
+              style={{
+                background:
+                  r.estruturaSobreVgv.semaforoAquisicaoVgv === "verde"
+                    ? "#4E7A5C"
+                    : r.estruturaSobreVgv.semaforoAquisicaoVgv === "amarelo"
+                      ? "#C08A3E"
+                      : "#A13D2E",
+              }}
+            />
+            <span className="text-[#59636A]">
+              Rácio Aquisição/VGV: <strong className="text-[#142B3A]">{fmtPct(r.estruturaSobreVgv.racioAquisicaoVgv)}</strong> — régua de
+              referência Landwise (verde &lt;35%, amarelo 35-45%, vermelho &gt;45%), não uma regra universal.
+            </span>
+          </div>
+        </>
+      )}
+
+      {r.metricasPorM2 && (
+        <>
+          <SectionLabel>Métricas por m²</SectionLabel>
+          <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-8 overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[#59636A] uppercase">
+                  <th className="pb-2 pr-4">Categoria</th>
+                  <th className="pb-2 pr-4">€</th>
+                  <th className="pb-2 pr-4">€/ABC</th>
+                  <th className="pb-2 pr-4">€/ABP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {r.metricasPorM2.linhas.map((l) => (
+                  <tr key={l.categoria} className="border-t border-[#E3DACB]">
+                    <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{l.categoria}</td>
+                    <td className="py-1.5 pr-4">{fmtEUR(l.euros)}</td>
+                    <td className="py-1.5 pr-4">{l.eurPorAbc !== null ? fmtEUR(l.eurPorAbc) : "—"}</td>
+                    <td className="py-1.5 pr-4">{l.eurPorAbp !== null ? fmtEUR(l.eurPorAbp) : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
       <SectionLabel>Cash flow mensal</SectionLabel>
       <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-8 overflow-x-auto">
         <table className="w-full text-xs">

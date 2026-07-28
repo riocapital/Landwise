@@ -23,6 +23,14 @@ export type ParametrosFinanciamento = {
   limiteCredito: number | null; // null = sem limite explícito
   saldoMinimoCaixa: number;
   metodoTaxaMensal: "nominal_anual_div_12" | "mensal_equivalente";
+
+  // Cash sweep (secção 24 do plano)
+  cashSweepAtivo: boolean;
+  cashSweepPctCaixaLivre: number; // 0-1 — % do caixa livre usado para amortizar
+  cashSweepMesesCustosFuturos: number; // reserva: quantos meses de custos futuros nunca tocar
+  cashSweepInicioTipo: "primeira_escritura" | "pct_vendido" | "pct_vgv_recebido" | "data";
+  cashSweepInicioValorPct: number | null; // decimal, quando início = pct_vendido ou pct_vgv_recebido
+  cashSweepInicioData: string | null; // "YYYY-MM-DD", quando início = data
 };
 
 export type NecessidadeMensal = {
@@ -44,6 +52,37 @@ export type LinhaFinanciamentoMensal = {
   saldoFinal: number;
 };
 
+export type EventoMensalCashSweep = {
+  mes: string;
+  temEscritura: boolean;
+  pctVendidoAcumulado: number; // 0-1, no fim deste mês
+  pctVgvRecebidoAcumulado: number; // 0-1, no fim deste mês
+};
+
+/**
+ * Resolve em que mês o cash sweep começa a atuar, consoante o gatilho
+ * escolhido (secção 24 do plano). Devolve null quando o gatilho nunca é
+ * atingido nos eventos fornecidos — nunca assume um mês por omissão.
+ */
+export function resolverMesInicioCashSweep(parametros: ParametrosFinanciamento, eventos: EventoMensalCashSweep[]): string | null {
+  if (!parametros.cashSweepAtivo) return null;
+
+  switch (parametros.cashSweepInicioTipo) {
+    case "primeira_escritura":
+      return eventos.find((e) => e.temEscritura)?.mes ?? null;
+    case "pct_vendido":
+      if (parametros.cashSweepInicioValorPct === null) return null;
+      return eventos.find((e) => e.pctVendidoAcumulado >= parametros.cashSweepInicioValorPct!)?.mes ?? null;
+    case "pct_vgv_recebido":
+      if (parametros.cashSweepInicioValorPct === null) return null;
+      return eventos.find((e) => e.pctVgvRecebidoAcumulado >= parametros.cashSweepInicioValorPct!)?.mes ?? null;
+    case "data":
+      return parametros.cashSweepInicioData ? parametros.cashSweepInicioData.slice(0, 7) : null;
+    default:
+      return null;
+  }
+}
+
 export function taxaAnual(p: ParametrosFinanciamento): number {
   return p.euribor + p.spread;
 }
@@ -58,7 +97,20 @@ export function taxaMensal(p: ParametrosFinanciamento): number {
 
 const PARAMETROS_ZERO: Pick<
   ParametrosFinanciamento,
-  "percentagemHardCostsFinanciada" | "percentagemAquisicaoFinanciada" | "euribor" | "euriborOrigem" | "euriborDataReferencia" | "euriborFonte" | "spread" | "structuringFeePct" | "setupCosts" | "impostoSeloEmprestimoPct" | "impostoSeloJurosPct"
+  | "percentagemHardCostsFinanciada"
+  | "percentagemAquisicaoFinanciada"
+  | "euribor"
+  | "euriborOrigem"
+  | "euriborDataReferencia"
+  | "euriborFonte"
+  | "spread"
+  | "structuringFeePct"
+  | "setupCosts"
+  | "impostoSeloEmprestimoPct"
+  | "impostoSeloJurosPct"
+  | "cashSweepAtivo"
+  | "cashSweepPctCaixaLivre"
+  | "cashSweepMesesCustosFuturos"
 > = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
@@ -71,6 +123,9 @@ const PARAMETROS_ZERO: Pick<
   setupCosts: 0,
   impostoSeloEmprestimoPct: 0,
   impostoSeloJurosPct: 0,
+  cashSweepAtivo: false,
+  cashSweepPctCaixaLivre: 0,
+  cashSweepMesesCustosFuturos: 0,
 };
 
 /** Aplica a regra "financiamento bancário = Não zera e desativa todos os campos bancários" (secção 7). */
@@ -90,7 +145,8 @@ export function normalizarParametrosSemFinanciamento(p: ParametrosFinanciamento)
  */
 export function simularFinanciamento(
   necessidades: NecessidadeMensal[],
-  parametrosInput: ParametrosFinanciamento
+  parametrosInput: ParametrosFinanciamento,
+  mesInicioCashSweep: string | null = null
 ): LinhaFinanciamentoMensal[] {
   const parametros = normalizarParametrosSemFinanciamento(parametrosInput);
 
@@ -113,7 +169,8 @@ export function simularFinanciamento(
   let saldo = 0;
   let feesSetupLancados = false;
 
-  for (const n of necessidades) {
+  for (let i = 0; i < necessidades.length; i++) {
+    const n = necessidades[i];
     const saldoInicial = saldo;
     const juros = saldoInicial * taxaMes;
     const impostoSeloJuros = juros * parametros.impostoSeloJurosPct;
@@ -140,7 +197,23 @@ export function simularFinanciamento(
       feesSetupLancados = true;
     }
 
-    const saldoFinal = saldoInicial + juros + drawdown;
+    let saldoFinal = saldoInicial + juros + drawdown;
+
+    // Cash sweep (secção 24): a partir do mês de início, usa o caixa livre
+    // para amortizar dívida — nunca abaixo do saldo mínimo, nunca sem
+    // reservar os próximos N meses de custos, nunca mais do que a dívida
+    // restante (nunca deixa o projeto sem caixa).
+    let amortizacao = 0;
+    const sweepAtivoNesteMes = parametros.cashSweepAtivo && mesInicioCashSweep !== null && n.mes >= mesInicioCashSweep;
+    if (sweepAtivoNesteMes && saldoFinal > 0) {
+      const caixaDisponivel = n.saldoCaixaAntesFinanciamento + drawdown;
+      const reservaFutura = necessidades
+        .slice(i + 1, i + 1 + parametros.cashSweepMesesCustosFuturos)
+        .reduce((s, futuro) => s + futuro.custosElegiveisAquisicao + futuro.custosElegiveisHardCosts, 0);
+      const caixaLivre = Math.max(0, caixaDisponivel - parametros.saldoMinimoCaixa - reservaFutura);
+      amortizacao = Math.min(saldoFinal, caixaLivre * parametros.cashSweepPctCaixaLivre);
+      saldoFinal -= amortizacao;
+    }
 
     linhas.push({
       mes: n.mes,
@@ -150,7 +223,7 @@ export function simularFinanciamento(
       jurosCapitalizados: juros, // por agora, juros sempre capitalizados (sem pagamento corrente) — simplificação da Fase 5
       fees,
       impostoSelo: impostoSeloEmprestimo + impostoSeloJuros,
-      amortizacao: 0, // amortização (a partir de "início de amortização") fica para o wiring ao calendário
+      amortizacao,
       saldoFinal,
     });
 

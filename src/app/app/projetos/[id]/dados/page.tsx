@@ -19,7 +19,7 @@ import type { SugestaoPreco, SujeitoComparacao } from "@/lib/calc/comparaveis";
 import { resolverCustos, agregarCustos, type LinhaCusto, type GrupoCusto, type ContextoCusto } from "@/lib/calc/custos";
 import { listarCustosProjeto, criarCusto, atualizarCusto, apagarCusto } from "@/lib/supabase/project-costs";
 import { calcDataFinal } from "@/lib/calc/calendario";
-import { taxaAnual, taxaMensal, type ParametrosFinanciamento } from "@/lib/calc/financiamento";
+import { taxaAnual, taxaMensal, resolverMesInicioCashSweep, type ParametrosFinanciamento } from "@/lib/calc/financiamento";
 import { carregarFinanciamento, guardarFinanciamento, FINANCIAMENTO_VAZIO } from "@/lib/supabase/project-financing";
 import { obterModeloPreset, type ModeloCapital } from "@/lib/calc/estrutura-capital";
 import type { NivelHurdle } from "@/lib/calc/waterfall";
@@ -742,12 +742,44 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       comissaoPorMesCalculada = new Map(linhasComissaoCalculadas.map((l) => [l.mes, l.total]));
     }
 
+    // Cash sweep (secção 24): resolve em que mês o gatilho é atingido a
+    // partir dos dados reais da Sales Table e dos recebimentos —
+    // financiamento.ts não conhece a Sales Table, só recebe o mês já
+    // resolvido.
+    let mesInicioCashSweepCalculado: string | null = null;
+    if (financiamento.cashSweepAtivo) {
+      const totalUnidadesAtual = unidades.length;
+      const vgvTotalAtual = vgvBrutoAtual;
+      const datasEfetivasAtual =
+        salesTableResolvida.length > 0
+          ? calcularDatasEfetivas(
+              unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+              tipologiasNovas.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+              planoVendas.dataLancamentoComercial
+            )
+          : new Map<string, string>();
+      const mesesUnicos = [...new Set(recebimentosCalculados.map((l) => l.mes))].sort();
+      let vgvAcumulado = 0;
+      const eventosCashSweep = mesesUnicos.map((mes) => {
+        vgvAcumulado += recebimentosCalculados.filter((l) => l.mes === mes).reduce((s, l) => s + l.total, 0);
+        const unidadesVendidasAteMes = [...datasEfetivasAtual.values()].filter((d) => d <= mes).length;
+        return {
+          mes,
+          temEscritura: planoVendas.dataEscritura ? mes >= planoVendas.dataEscritura.slice(0, 7) : false,
+          pctVendidoAcumulado: totalUnidadesAtual > 0 ? unidadesVendidasAteMes / totalUnidadesAtual : 0,
+          pctVgvRecebidoAcumulado: vgvTotalAtual > 0 ? vgvAcumulado / vgvTotalAtual : 0,
+        };
+      });
+      mesInicioCashSweepCalculado = resolverMesInicioCashSweep(financiamento, eventosCashSweep);
+    }
+
     resultadoAtual = calcularCashFlow({
       linhasCusto: custosNovos,
       contextoCusto: contextoCustoAtual,
       recebimentos: recebimentosCalculados,
       comissaoPorMes: comissaoPorMesCalculada,
       parametrosFinanciamento: financiamento,
+      mesInicioCashSweep: mesInicioCashSweepCalculado,
       saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
     });
   }
@@ -2008,6 +2040,83 @@ function StepFinanciamento({
             />
           </Field>
         </Row>
+      </Card>
+
+      <Card
+        title="Cash sweep"
+        subtitle="A partir de um gatilho, usa o caixa livre para amortizar dívida antecipadamente — nunca abaixo do saldo mínimo, nunca sem reservar os próximos meses de custos."
+      >
+        <Row>
+          <Field label="Ativar cash sweep?">
+            <select
+              className="input-dark"
+              value={financiamento.cashSweepAtivo ? "sim" : "nao"}
+              onChange={(e) => updateFinanciamento("cashSweepAtivo", e.target.value === "sim")}
+              disabled={desativado}
+            >
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
+          </Field>
+          <Field label="% do caixa livre usado para amortizar">
+            <PercentInput
+              value={financiamento.cashSweepPctCaixaLivre}
+              onChange={(v) => updateFinanciamento("cashSweepPctCaixaLivre", v)}
+              disabled={desativado || !financiamento.cashSweepAtivo}
+            />
+          </Field>
+        </Row>
+        {financiamento.cashSweepAtivo && (
+          <>
+            <Row>
+              <Field label="Meses de custos futuros a reservar">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={financiamento.cashSweepMesesCustosFuturos}
+                  onChange={(e) => updateFinanciamento("cashSweepMesesCustosFuturos", Number(e.target.value))}
+                  disabled={desativado}
+                />
+              </Field>
+              <Field label="Início do cash sweep">
+                <select
+                  className="input-dark"
+                  value={financiamento.cashSweepInicioTipo}
+                  onChange={(e) => updateFinanciamento("cashSweepInicioTipo", e.target.value as ParametrosFinanciamento["cashSweepInicioTipo"])}
+                  disabled={desativado}
+                >
+                  <option value="primeira_escritura">Primeira escritura</option>
+                  <option value="pct_vendido">% do projeto vendido</option>
+                  <option value="pct_vgv_recebido">% do VGV recebido</option>
+                  <option value="data">Data específica</option>
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              {financiamento.cashSweepInicioTipo === "data" ? (
+                <Field label="Data de início">
+                  <input
+                    type="date"
+                    className="input-dark"
+                    value={financiamento.cashSweepInicioData ?? ""}
+                    onChange={(e) => updateFinanciamento("cashSweepInicioData", e.target.value)}
+                    disabled={desativado}
+                  />
+                </Field>
+              ) : (
+                financiamento.cashSweepInicioTipo !== "primeira_escritura" && (
+                  <Field label="% gatilho">
+                    <PercentInput
+                      value={financiamento.cashSweepInicioValorPct ?? 0}
+                      onChange={(v) => updateFinanciamento("cashSweepInicioValorPct", v)}
+                      disabled={desativado}
+                    />
+                  </Field>
+                )
+              )}
+            </Row>
+          </>
+        )}
       </Card>
     </>
   );

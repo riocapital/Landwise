@@ -29,6 +29,11 @@ export type ProjectFinancingRow = {
   fim_amortizacao: string | null;
   metodo_amortizacao: string;
   cash_sweep: boolean;
+  cash_sweep_pct_caixa_livre: number;
+  cash_sweep_meses_custos_futuros: number;
+  cash_sweep_inicio_tipo: ParametrosFinanciamento["cashSweepInicioTipo"];
+  cash_sweep_inicio_valor_pct: number | null;
+  cash_sweep_inicio_data: string | null;
   capitalizacao_juros: boolean;
   saldo_minimo_caixa: number;
 };
@@ -49,6 +54,12 @@ export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
   limiteCredito: null,
   saldoMinimoCaixa: 0,
   metodoTaxaMensal: "nominal_anual_div_12",
+  cashSweepAtivo: false,
+  cashSweepPctCaixaLivre: 0,
+  cashSweepMesesCustosFuturos: 0,
+  cashSweepInicioTipo: "primeira_escritura",
+  cashSweepInicioValorPct: null,
+  cashSweepInicioData: null,
 };
 
 export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanciamento {
@@ -68,6 +79,12 @@ export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanci
     limiteCredito: row.limite_credito,
     saldoMinimoCaixa: row.saldo_minimo_caixa,
     metodoTaxaMensal: row.metodo_taxa_mensal,
+    cashSweepAtivo: row.cash_sweep,
+    cashSweepPctCaixaLivre: row.cash_sweep_pct_caixa_livre,
+    cashSweepMesesCustosFuturos: row.cash_sweep_meses_custos_futuros,
+    cashSweepInicioTipo: row.cash_sweep_inicio_tipo,
+    cashSweepInicioValorPct: row.cash_sweep_inicio_valor_pct,
+    cashSweepInicioData: row.cash_sweep_inicio_data,
   };
 }
 
@@ -97,6 +114,12 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
       imposto_selo_juros_pct: parametros.impostoSeloJurosPct,
       limite_credito: parametros.limiteCredito,
       saldo_minimo_caixa: parametros.saldoMinimoCaixa,
+      cash_sweep: parametros.cashSweepAtivo,
+      cash_sweep_pct_caixa_livre: parametros.cashSweepPctCaixaLivre,
+      cash_sweep_meses_custos_futuros: parametros.cashSweepMesesCustosFuturos,
+      cash_sweep_inicio_tipo: parametros.cashSweepInicioTipo,
+      cash_sweep_inicio_valor_pct: parametros.cashSweepInicioValorPct,
+      cash_sweep_inicio_data: parametros.cashSweepInicioData,
     },
     { onConflict: "project_id" }
   );

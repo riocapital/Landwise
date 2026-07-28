@@ -13,9 +13,20 @@ import { resolverSalesTable, calcVgvBruto } from "./sales-table";
 import { calcularCashFlow, type ResultadoCashFlow } from "./cashflow";
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "./vendas";
 import { gerarComissaoMensal } from "./sales-commission";
+import { calcularDatasEfetivas } from "./sales-curve";
+import { resolverMesInicioCashSweep } from "./financiamento";
 import { calcularResultadosComWaterfall, type ResultadosInvestidorPromotor } from "./estrutura-capital";
 import { agregarFees } from "./fees";
 import type { ContextoCusto } from "./custos";
+import {
+  calcLucroTributavelEstimado,
+  calcLucroTributavel,
+  calcIRC,
+  calcDerramaMunicipal,
+  calcDerramaEstadual,
+  resolverTaxaIRC,
+} from "./impostos";
+import { calcMetricasPorM2, calcEstruturaSobreVgv, type MetricasPorM2, type EstruturaSobreVgv } from "./metricas";
 
 import { listarTipologiasProjeto } from "./../supabase/project-typologies";
 import { listarUnidades } from "./../supabase/project-units";
@@ -23,6 +34,7 @@ import { listarCustosProjeto } from "./../supabase/project-costs";
 import { carregarFinanciamento } from "./../supabase/project-financing";
 import { carregarPlanoVendas } from "./../supabase/project-sales";
 import { carregarEstruturaCapital, listarHurdles, listarFees } from "./../supabase/project-capital";
+import { carregarImpostos } from "./../supabase/project-taxes";
 
 export type ResultadoProjetoCompleto = {
   projeto: {
@@ -38,6 +50,8 @@ export type ResultadoProjetoCompleto = {
   resultado: ResultadoCashFlow | null;
   temInvestidorExterno: boolean;
   investidorPromotor: ResultadosInvestidorPromotor | null;
+  metricasPorM2: MetricasPorM2 | null;
+  estruturaSobreVgv: EstruturaSobreVgv | null;
 };
 
 export async function carregarResultadoProjeto(supabase: SupabaseClient, projectId: string): Promise<ResultadoProjetoCompleto> {
@@ -49,7 +63,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     localizacao: [projetoRow?.freguesia, projetoRow?.concelho].filter(Boolean).join(", ") || projetoRow?.localizacao || null,
   };
 
-  const [tipologias, unidades, custos, financiamento, planoVendas, estruturaCapital, hurdles, fees] = await Promise.all([
+  const [tipologias, unidades, custos, financiamento, planoVendas, estruturaCapital, hurdles, fees, impostos] = await Promise.all([
     listarTipologiasProjeto(supabase, projectId),
     listarUnidades(supabase, projectId),
     listarCustosProjeto(supabase, projectId),
@@ -58,6 +72,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     carregarEstruturaCapital(supabase, projectId),
     listarHurdles(supabase, projectId),
     listarFees(supabase, projectId),
+    carregarImpostos(supabase, projectId),
   ]);
 
   const abcAcimaSolo = projetoRow?.abc_acima_solo ?? null;
@@ -82,6 +97,8 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       resultado: null,
       temInvestidorExterno: estruturaCapital.temInvestidorExterno,
       investidorPromotor: null,
+      metricasPorM2: null,
+      estruturaSobreVgv: null,
     };
   }
 
@@ -96,6 +113,8 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       resultado: null,
       temInvestidorExterno: estruturaCapital.temInvestidorExterno,
       investidorPromotor: null,
+      metricasPorM2: null,
+      estruturaSobreVgv: null,
     };
   }
 
@@ -127,28 +146,101 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     comissaoPorMes = new Map(linhasComissao.map((l) => [l.mes, l.total]));
   }
 
+  let mesInicioCashSweep: string | null = null;
+  if (financiamento.cashSweepAtivo) {
+    const datasEfetivas =
+      salesTableResolvida.length > 0
+        ? calcularDatasEfetivas(
+            unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+            tipologias.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+            planoVendas.dataLancamentoComercial
+          )
+        : new Map<string, string>();
+    const mesesUnicos = [...new Set(recebimentos.map((l) => l.mes))].sort();
+    let vgvAcumulado = 0;
+    const eventosCashSweep = mesesUnicos.map((mes) => {
+      vgvAcumulado += recebimentos.filter((l) => l.mes === mes).reduce((s, l) => s + l.total, 0);
+      const unidadesVendidasAteMes = [...datasEfetivas.values()].filter((d) => d <= mes).length;
+      return {
+        mes,
+        temEscritura: planoVendas.dataEscritura ? mes >= planoVendas.dataEscritura.slice(0, 7) : false,
+        pctVendidoAcumulado: unidades.length > 0 ? unidadesVendidasAteMes / unidades.length : 0,
+        pctVgvRecebidoAcumulado: vgvBruto > 0 ? vgvAcumulado / vgvBruto : 0,
+      };
+    });
+    mesInicioCashSweep = resolverMesInicioCashSweep(financiamento, eventosCashSweep);
+  }
+
   const resultado = calcularCashFlow({
     linhasCusto: custos,
     contextoCusto,
     recebimentos,
     comissaoPorMes,
     parametrosFinanciamento: financiamento,
+    mesInicioCashSweep,
     saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
   });
 
+  const contextoFees = {
+    valorAquisicao: contextoCusto.valorAquisicao,
+    hardCostsTotal: resultado.custoTotal, // aproximação: refinar quando o breakdown por grupo for exposto aqui
+    capexTotal: resultado.custoTotal,
+    custoTotal: resultado.custoTotal,
+    abcTotal,
+    numeroUnidades: contextoCusto.numeroUnidades,
+  };
+  const feesTotais = agregarFees(fees, contextoFees).total;
+
   let investidorPromotor: ResultadosInvestidorPromotor | null = null;
   if (estruturaCapital.temInvestidorExterno) {
-    const contextoFees = {
-      valorAquisicao: contextoCusto.valorAquisicao,
-      hardCostsTotal: resultado.custoTotal, // aproximação: refinar quando o breakdown por grupo for exposto aqui
-      capexTotal: resultado.custoTotal,
-      custoTotal: resultado.custoTotal,
-      abcTotal,
-      numeroUnidades: contextoCusto.numeroUnidades,
-    };
-    const feesTotais = agregarFees(fees, contextoFees).total;
     investidorPromotor = calcularResultadosComWaterfall(resultado.linhas, hurdles, estruturaCapital.percentagemInvestidor, feesTotais);
   }
+
+  // Imposto estimado — mesma lógica da etapa de Impostos do wizard (secção
+  // 29): só Empresa/SPV calcula IRC a partir do motor; os outros casos só
+  // usam a simulação manual, nunca aplicam IRC automaticamente.
+  let impostoEstimadoTotal = 0;
+  if (impostos.estruturaFiscalAssumida === "empresa_spv") {
+    const lucroTributavelAntesDeAjustes = calcLucroTributavelEstimado({
+      receitasReconhecidas: resultado.gdv,
+      custosFiscalmenteConsiderados: resultado.custoTotal - resultado.comissaoComercialTotal,
+      comissaoDedutivel: resultado.comissaoComercialTotal,
+      feesDedutiveis: 0,
+      custosFinanceirosDedutiveis: resultado.financiamento.jurosTotais,
+      ajustesFiscais: impostos.ircAjustesFiscais,
+    });
+    const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostos.ircPrejuizosFiscaisAcumulados);
+    const { taxa: taxaIrc } = resolverTaxaIRC(impostos.ircAnoFiscalReferencia, impostos.ircTaxaManual);
+    const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
+    const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa);
+    const derramaEstadual = calcDerramaEstadual(lucroTributavel);
+    impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual;
+  } else {
+    impostoEstimadoTotal = impostos.simulacaoImpostoEstimadoManual ?? 0;
+  }
+
+  const custosFinanceiros = resultado.financiamento.jurosTotais + resultado.financiamento.feesBancarios + resultado.financiamento.impostoSeloTotal;
+  const custosAquisicaoAuxiliares = resultado.linhas.reduce((s, l) => s + l.custosAquisicao, 0);
+  const hardCostsTotal = resultado.linhas.reduce((s, l) => s + l.hardCosts, 0);
+  const softCostsTotal = resultado.linhas.reduce((s, l) => s + l.softCosts + l.outrosCustos, 0);
+
+  const parametrosMetricas = {
+    vgvBruto: resultado.gdv,
+    vgvLiquido: resultado.gdv - resultado.comissaoComercialTotal,
+    aquisicao: contextoCusto.valorAquisicao,
+    custosAquisicao: custosAquisicaoAuxiliares,
+    hardCosts: hardCostsTotal,
+    softCosts: softCostsTotal,
+    comissao: resultado.comissaoComercialTotal,
+    fees: feesTotais,
+    custosFinanceiros,
+    impostoEstimado: impostoEstimadoTotal,
+    abcTotal: abcTotal ?? 0,
+    abpTotal: resumoPrograma.abpTotal,
+    numeroUnidades: contextoCusto.numeroUnidades,
+  };
+  const metricasPorM2 = calcMetricasPorM2(parametrosMetricas);
+  const estruturaSobreVgv = calcEstruturaSobreVgv(parametrosMetricas);
 
   return {
     projeto,
@@ -160,6 +252,8 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     resultado,
     temInvestidorExterno: estruturaCapital.temInvestidorExterno,
     investidorPromotor,
+    metricasPorM2,
+    estruturaSobreVgv,
   };
 }
 

@@ -71,6 +71,7 @@ export type PremissasCashFlow = {
   recebimentos: LinhaRecebimentoMensal[];
   comissaoPorMes?: Map<string, number>; // mês -> valor total da comissão nesse mês (opcional — retrocompatível)
   parametrosFinanciamento: ParametrosFinanciamento;
+  mesInicioCashSweep?: string | null; // já resolvido por resolverMesInicioCashSweep (secção 24) — cashflow.ts não conhece a Sales Table
   saldoMinimoCaixa: number;
 };
 
@@ -152,7 +153,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       saldoCaixaAntesFinanciamento: acumuladoUnlevered,
     };
   });
-  const linhasFinanciamento = simularFinanciamento(necessidadesFinanciamento, premissas.parametrosFinanciamento);
+  const linhasFinanciamento = simularFinanciamento(necessidadesFinanciamento, premissas.parametrosFinanciamento, premissas.mesInicioCashSweep ?? null);
 
   // 3) Equity: cobre o que sobrar depois do financiamento, mês a mês.
   //    IMPORTANTE: passa o valor MENSAL (delta), não acumulado — o motor de

@@ -45,6 +45,12 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   limiteCredito: null,
   saldoMinimoCaixa: 0,
   metodoTaxaMensal: "nominal_anual_div_12",
+  cashSweepAtivo: false,
+  cashSweepPctCaixaLivre: 0,
+  cashSweepMesesCustosFuturos: 0,
+  cashSweepInicioTipo: "primeira_escritura",
+  cashSweepInicioValorPct: null,
+  cashSweepInicioData: null,
 };
 
 const planoVendas: PlanoVendas = {
