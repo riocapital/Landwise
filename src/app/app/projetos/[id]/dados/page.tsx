@@ -1827,6 +1827,29 @@ function StepFinanciamento({
   updateFinanciamento: <K extends keyof ParametrosFinanciamento>(k: K, v: ParametrosFinanciamento[K]) => void;
 }) {
   const desativado = !financiamento.comFinanciamento;
+  const [euriborCarregando, setEuriborCarregando] = useState(false);
+  const [euriborErro, setEuriborErro] = useState<string | null>(null);
+
+  async function atualizarEuribor(tenor: "6m" | "12m") {
+    setEuriborCarregando(true);
+    setEuriborErro(null);
+    try {
+      const resp = await fetch(`/api/financiamento/euribor?tenor=${tenor}`);
+      const dados = await resp.json();
+      if (dados.sucesso) {
+        updateFinanciamento("euribor", dados.taxa);
+        updateFinanciamento("euriborOrigem", tenor);
+        updateFinanciamento("euriborDataReferencia", dados.dataReferencia);
+        updateFinanciamento("euriborFonte", dados.fonte);
+      } else {
+        setEuriborErro(dados.erro);
+      }
+    } catch {
+      setEuriborErro("Não foi possível ligar ao BCE. Preenche a taxa manualmente.");
+    } finally {
+      setEuriborCarregando(false);
+    }
+  }
 
   return (
     <>
@@ -1867,7 +1890,16 @@ function StepFinanciamento({
         </Row>
         <Row>
           <Field label="Euribor">
-            <PercentInput value={financiamento.euribor} onChange={(v) => updateFinanciamento("euribor", v)} disabled={desativado} />
+            <PercentInput
+              value={financiamento.euribor}
+              onChange={(v) => {
+                updateFinanciamento("euribor", v);
+                updateFinanciamento("euriborOrigem", "manual");
+                updateFinanciamento("euriborDataReferencia", null);
+                updateFinanciamento("euriborFonte", null);
+              }}
+              disabled={desativado}
+            />
           </Field>
           <Field label="Spread">
             <PercentInput value={financiamento.spread} onChange={(v) => updateFinanciamento("spread", v)} disabled={desativado} />
@@ -1876,6 +1908,37 @@ function StepFinanciamento({
             <input className="input-dark" value={`${(taxaAnual(financiamento) * 100).toFixed(2)}%`} disabled />
           </Field>
         </Row>
+        {!desativado && (
+          <Row>
+            <div>
+              <div className="flex gap-2 mb-2">
+                <button
+                  onClick={() => atualizarEuribor("6m")}
+                  disabled={euriborCarregando}
+                  className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343] disabled:opacity-50"
+                >
+                  {euriborCarregando ? "A obter…" : "Atualizar Euribor 6M (BCE)"}
+                </button>
+                <button
+                  onClick={() => atualizarEuribor("12m")}
+                  disabled={euriborCarregando}
+                  className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343] disabled:opacity-50"
+                >
+                  {euriborCarregando ? "A obter…" : "Atualizar Euribor 12M (BCE)"}
+                </button>
+              </div>
+              {euriborErro && <p className="text-xs text-[#A13D2E] mb-1">{euriborErro}</p>}
+              {financiamento.euriborOrigem !== "manual" && financiamento.euriborFonte && (
+                <p className="text-xs text-[#59636A]">
+                  Origem: Euribor {financiamento.euriborOrigem === "6m" ? "6M" : "12M"} · Referência: {financiamento.euriborDataReferencia} · Fonte:{" "}
+                  {financiamento.euriborFonte}. Média mensal do BCE — não é a taxa exata de hoje; podes sobrepor o valor manualmente acima a
+                  qualquer momento.
+                </p>
+              )}
+              {financiamento.euriborOrigem === "manual" && <p className="text-xs text-[#8FA6AF]">Taxa preenchida manualmente.</p>}
+            </div>
+          </Row>
+        )}
         <Row>
           <Field label="Metodologia da taxa mensal">
             <select

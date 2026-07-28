@@ -12,6 +12,9 @@ export type ParametrosFinanciamento = {
   percentagemHardCostsFinanciada: number; // 0-1
   percentagemAquisicaoFinanciada: number; // 0-1
   euribor: number; // decimal, ex. 0.03
+  euriborOrigem: "6m" | "12m" | "manual"; // secção 23 do plano: rastreabilidade da premissa
+  euriborDataReferencia: string | null; // "YYYY-MM" quando vem do BCE, null quando manual
+  euriborFonte: string | null; // nome da fonte, null quando manual
   spread: number; // decimal, ex. 0.02
   structuringFeePct: number; // % do limite, decimal
   setupCosts: number; // valor fixo €
@@ -55,11 +58,14 @@ export function taxaMensal(p: ParametrosFinanciamento): number {
 
 const PARAMETROS_ZERO: Pick<
   ParametrosFinanciamento,
-  "percentagemHardCostsFinanciada" | "percentagemAquisicaoFinanciada" | "euribor" | "spread" | "structuringFeePct" | "setupCosts" | "impostoSeloEmprestimoPct" | "impostoSeloJurosPct"
+  "percentagemHardCostsFinanciada" | "percentagemAquisicaoFinanciada" | "euribor" | "euriborOrigem" | "euriborDataReferencia" | "euriborFonte" | "spread" | "structuringFeePct" | "setupCosts" | "impostoSeloEmprestimoPct" | "impostoSeloJurosPct"
 > = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
   euribor: 0,
+  euriborOrigem: "manual",
+  euriborDataReferencia: null,
+  euriborFonte: null,
   spread: 0,
   structuringFeePct: 0,
   setupCosts: 0,

@@ -31,6 +31,9 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
   euribor: 0,
+  euriborOrigem: "manual",
+  euriborDataReferencia: null,
+  euriborFonte: null,
   spread: 0,
   structuringFeePct: 0,
   setupCosts: 0,
@@ -85,6 +88,9 @@ describe("calcularCashFlow — com financiamento bancário", () => {
     percentagemAquisicaoFinanciada: 0.5,
     percentagemHardCostsFinanciada: 0.6,
     euribor: 0.03,
+    euriborOrigem: "manual",
+    euriborDataReferencia: null,
+    euriborFonte: null,
     spread: 0.02,
   };
 

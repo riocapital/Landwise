@@ -13,6 +13,9 @@ export type ProjectFinancingRow = {
   percentagem_hard_costs_financiada: number;
   percentagem_aquisicao_financiada: number;
   euribor: number;
+  euribor_origem: ParametrosFinanciamento["euriborOrigem"];
+  euribor_data_referencia: string | null;
+  euribor_fonte: string | null;
   spread: number;
   metodo_taxa_mensal: ParametrosFinanciamento["metodoTaxaMensal"];
   structuring_fee_pct: number;
@@ -35,6 +38,9 @@ export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
   euribor: 0,
+  euriborOrigem: "manual",
+  euriborDataReferencia: null,
+  euriborFonte: null,
   spread: 0,
   structuringFeePct: 0,
   setupCosts: 0,
@@ -51,6 +57,9 @@ export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanci
     percentagemHardCostsFinanciada: row.percentagem_hard_costs_financiada,
     percentagemAquisicaoFinanciada: row.percentagem_aquisicao_financiada,
     euribor: row.euribor,
+    euriborOrigem: row.euribor_origem,
+    euriborDataReferencia: row.euribor_data_referencia,
+    euriborFonte: row.euribor_fonte,
     spread: row.spread,
     structuringFeePct: row.structuring_fee_pct,
     setupCosts: row.setup_costs,
@@ -77,6 +86,9 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
       percentagem_hard_costs_financiada: parametros.percentagemHardCostsFinanciada,
       percentagem_aquisicao_financiada: parametros.percentagemAquisicaoFinanciada,
       euribor: parametros.euribor,
+      euribor_origem: parametros.euriborOrigem,
+      euribor_data_referencia: parametros.euriborDataReferencia,
+      euribor_fonte: parametros.euriborFonte,
       spread: parametros.spread,
       metodo_taxa_mensal: parametros.metodoTaxaMensal,
       structuring_fee_pct: parametros.structuringFeePct,
