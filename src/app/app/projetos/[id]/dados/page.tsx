@@ -509,7 +509,14 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
   async function adicionarCustoNovo(grupo: GrupoCusto, nome: string) {
     const novo = await criarCusto(supabase, id, grupo, nome, custosNovos.length);
-    if (novo) setCustosNovos((prev) => [...prev, novo]);
+    if (!novo) return;
+    const baseAutomatica = BASE_AUTOMATICA_POR_NOME[nome];
+    if (baseAutomatica) {
+      await atualizarCusto(supabase, novo.id, { tipoCalculo: baseAutomatica });
+      setCustosNovos((prev) => [...prev, { ...novo, tipoCalculo: baseAutomatica }]);
+    } else {
+      setCustosNovos((prev) => [...prev, novo]);
+    }
   }
 
   function atualizarCustoNovoLocal(custoId: string, patch: Partial<LinhaCusto>) {
@@ -755,14 +762,16 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
   if (loading) return <div className="p-8 text-sm text-[#8FA6AF]">A carregar…</div>;
 
+  const resumoProgramaAtual = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const contextoCustoAtual: ContextoCusto = {
     valorAquisicao: inputs.custoTerreno || 0,
-    abcPrincipal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
-    abcTotal: calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    abcAcimaSolo: identificacao.abcAcimaSolo ?? 0,
+    abcAbaixoSolo: identificacao.abcAbaixoSolo ?? 0,
+    abdTotal: resumoProgramaAtual.areaDependenteTotal,
     numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
   };
   const resumoCustosAtual = agregarCustos(resolverCustos(custosNovos, contextoCustoAtual));
-  const resumoProgramaAtual = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
+  const abcTotalAtual = calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas);
   const salesTableResolvida = resolverSalesTable(unidades, tipologiasNovas);
   const vgvBrutoAtual = calcVgvBruto(salesTableResolvida);
   const contextoFeesAtual: ContextoFees = {
@@ -770,7 +779,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     hardCostsTotal: resumoCustosAtual.totalHardCosts,
     capexTotal: resumoCustosAtual.custoTotal,
     custoTotal: resumoCustosAtual.custoTotal,
-    abcTotal: contextoCustoAtual.abcTotal,
+    abcTotal: abcTotalAtual,
     numeroUnidades: contextoCustoAtual.numeroUnidades,
   };
 
@@ -1622,7 +1631,7 @@ function salesTableDaTipologia(unidades: UnidadeVenda[], tipologias: Typology[],
 // ============================================================
 const GRUPOS_CUSTO: { grupo: GrupoCusto; titulo: string; sugestoes: string[] }[] = [
   { grupo: "aquisicao", titulo: "Aquisição", sugestoes: ["Sinal", "Due diligence técnica", "Due diligence legal", "Comissão de aquisição", "Notário", "Registos"] },
-  { grupo: "hard_cost", titulo: "Hard costs", sugestoes: ["Obra acima do solo", "Obra abaixo do solo", "Jardinagem e exteriores", "Demolição", "Infraestruturas", "Contingência"] },
+  { grupo: "hard_cost", titulo: "Hard costs", sugestoes: ["Construção acima do solo", "Construção abaixo do solo", "Construção dependente", "Jardinagem e exteriores", "Demolição", "Infraestruturas", "Contingência"] },
   { grupo: "soft_cost", titulo: "Soft costs", sugestoes: ["Arquitetura", "Engenharia", "Especialidades", "Licenciamento", "Fiscalização de obra", "Seguros"] },
   { grupo: "outro", titulo: "Outros custos", sugestoes: ["Branding", "Marketing", "Comercialização", "Outro"] },
 ];
@@ -1633,10 +1642,20 @@ const TIPOS_CALCULO_CUSTO: { value: LinhaCusto["tipoCalculo"]; label: string }[]
   { value: "percentagem_hard_costs", label: "% dos hard costs" },
   { value: "percentagem_capex", label: "% do capex" },
   { value: "percentagem_custo_total", label: "% do custo total" },
+  { value: "eur_m2_abc_acima", label: "€/m² de ABC acima do solo" },
+  { value: "eur_m2_abc_abaixo", label: "€/m² de ABC abaixo do solo" },
+  { value: "eur_m2_abd", label: "€/m² de ABD (área dependente)" },
   { value: "eur_m2_abc_principal", label: "€/m² de ABC (sem ABD)" },
   { value: "eur_m2_abc_total", label: "€/m² de ABC Total (com ABD)" },
   { value: "eur_unidade", label: "€/unidade" },
 ];
+
+/** Base automática por nome (secção 21 do plano) — nunca obriga o utilizador a escolher manualmente para as 3 linhas de construção principais. */
+const BASE_AUTOMATICA_POR_NOME: Record<string, LinhaCusto["tipoCalculo"]> = {
+  "Construção acima do solo": "eur_m2_abc_acima",
+  "Construção abaixo do solo": "eur_m2_abc_abaixo",
+  "Construção dependente": "eur_m2_abd",
+};
 
 const PERFIS_DESEMBOLSO: { value: LinhaCusto["perfilDesembolso"]; label: string }[] = [
   { value: "unico_inicio", label: "Único no início" },
@@ -1664,10 +1683,12 @@ function StepAquisicaoCustos({
   onAtualizarCusto: (id: string, patch: Partial<LinhaCusto>) => void;
   onRemoverCusto: (id: string) => void;
 }) {
+  const resumoProgramaLocal = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const contexto: ContextoCusto = {
     valorAquisicao: inputs.custoTerreno || 0,
-    abcPrincipal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
-    abcTotal: calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    abcAcimaSolo: identificacao.abcAcimaSolo ?? 0,
+    abcAbaixoSolo: identificacao.abcAbaixoSolo ?? 0,
+    abdTotal: resumoProgramaLocal.areaDependenteTotal,
     numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
   };
 

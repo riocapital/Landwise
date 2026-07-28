@@ -14,6 +14,9 @@ export type TipoCalculoCusto =
   | "percentagem_hard_costs"
   | "percentagem_capex"
   | "percentagem_custo_total"
+  | "eur_m2_abc_acima"
+  | "eur_m2_abc_abaixo"
+  | "eur_m2_abd"
   | "eur_m2_abc_principal"
   | "eur_m2_abc_total"
   | "eur_unidade"
@@ -38,10 +41,21 @@ export type LinhaCusto = {
 
 export type ContextoCusto = {
   valorAquisicao: number;
-  abcPrincipal: number; // ABC acima + ABC abaixo, SEM a ABD
-  abcTotal: number; // ABC acima + ABC abaixo + ABD (secção 8 da revisão estrutural)
+  abcAcimaSolo: number; // secção 21 da revisão estrutural: base automática de "Construção acima do solo"
+  abcAbaixoSolo: number; // base automática de "Construção abaixo do solo"
+  abdTotal: number; // Área Bruta Dependente total — base automática de "Construção dependente"
   numeroUnidades: number;
 };
+
+/** ABC principal (acima+abaixo, sem ABD) — derivado, nunca guardado em duplicado no contexto. */
+function calcAbcPrincipalContexto(contexto: ContextoCusto): number {
+  return contexto.abcAcimaSolo + contexto.abcAbaixoSolo;
+}
+
+/** ABC Total (acima+abaixo+ABD) — derivado, nunca guardado em duplicado no contexto. */
+function calcAbcTotalContexto(contexto: ContextoCusto): number {
+  return calcAbcPrincipalContexto(contexto) + contexto.abdTotal;
+}
 
 export type LinhaCustoResolvida = LinhaCusto & {
   valorResolvido: number; // € absoluto, já calculado
@@ -57,10 +71,16 @@ function valorDireto(linha: LinhaCusto, contexto: ContextoCusto): number | null 
       return linha.valorInput;
     case "percentagem_aquisicao":
       return linha.valorInput * contexto.valorAquisicao;
+    case "eur_m2_abc_acima":
+      return linha.valorInput * contexto.abcAcimaSolo;
+    case "eur_m2_abc_abaixo":
+      return linha.valorInput * contexto.abcAbaixoSolo;
+    case "eur_m2_abd":
+      return linha.valorInput * contexto.abdTotal;
     case "eur_m2_abc_principal":
-      return linha.valorInput * contexto.abcPrincipal;
+      return linha.valorInput * calcAbcPrincipalContexto(contexto);
     case "eur_m2_abc_total":
-      return linha.valorInput * contexto.abcTotal;
+      return linha.valorInput * calcAbcTotalContexto(contexto);
     case "eur_unidade":
       return linha.valorInput * contexto.numeroUnidades;
     default:
@@ -71,7 +91,7 @@ function valorDireto(linha: LinhaCusto, contexto: ContextoCusto): number | null 
 /**
  * Resolve o valor absoluto (€) de cada linha de custo, em estágios:
  *
- * A) Bases diretas: valor_fixo, percentagem_aquisicao, eur_m2_abc_principal, eur_m2_abc_total, eur_unidade.
+ * A) Bases diretas: valor_fixo, percentagem_aquisicao, eur_m2_abc_acima, eur_m2_abc_abaixo, eur_m2_abd, eur_m2_abc_principal, eur_m2_abc_total, eur_unidade.
  * B) percentagem_hard_costs: soma dos hard costs já resolvidos no estágio A (nunca inclui a própria linha).
  * C) percentagem_capex / percentagem_custo_total: soma de aquisição + hard costs (A+B) + soft costs
  *    já resolvidos nos estágios A/B (exclui a própria linha e outras ainda não resolvidas nesta fase).

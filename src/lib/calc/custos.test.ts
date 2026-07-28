@@ -12,8 +12,9 @@ import {
 
 const contexto: ContextoCusto = {
   valorAquisicao: 1_000_000,
-  abcPrincipal: 1000,
-  abcTotal: 1200,
+  abcAcimaSolo: 600,
+  abcAbaixoSolo: 400,
+  abdTotal: 200,
   numeroUnidades: 10,
 };
 
@@ -46,6 +47,21 @@ describe("Bases diretas (estágio A)", () => {
   it("percentagem_aquisicao multiplica pelo valor de aquisição", () => {
     const l = linha({ tipoCalculo: "percentagem_aquisicao", valorInput: 0.02 });
     expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(20_000);
+  });
+
+  it("eur_m2_abc_acima multiplica pelo ABC acima do solo — base automática de 'Construção acima do solo' (secção 21)", () => {
+    const l = linha({ tipoCalculo: "eur_m2_abc_acima", valorInput: 700 });
+    expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(700 * 600);
+  });
+
+  it("eur_m2_abc_abaixo multiplica pelo ABC abaixo do solo — base automática de 'Construção abaixo do solo'", () => {
+    const l = linha({ tipoCalculo: "eur_m2_abc_abaixo", valorInput: 1200 });
+    expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(1200 * 400);
+  });
+
+  it("eur_m2_abd multiplica pela ABD total — base automática de 'Construção dependente'", () => {
+    const l = linha({ tipoCalculo: "eur_m2_abd", valorInput: 300 });
+    expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(300 * 200);
   });
 
   it("eur_m2_abc_principal multiplica pelo ABC principal (sem ABD)", () => {

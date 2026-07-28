@@ -101,8 +101,9 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
 
   const contextoCusto: ContextoCusto = {
     valorAquisicao: custos.filter((c) => c.grupo === "aquisicao").reduce((s, c) => s + c.valorInput, 0),
-    abcPrincipal: (abcAcimaSolo ?? 0) + (abcAbaixoSolo ?? 0),
-    abcTotal,
+    abcAcimaSolo: abcAcimaSolo ?? 0,
+    abcAbaixoSolo: abcAbaixoSolo ?? 0,
+    abdTotal: resumoPrograma.areaDependenteTotal,
     numeroUnidades: resumoPrograma.totalUnidades,
   };
 
@@ -142,7 +143,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       hardCostsTotal: resultado.custoTotal, // aproximação: refinar quando o breakdown por grupo for exposto aqui
       capexTotal: resultado.custoTotal,
       custoTotal: resultado.custoTotal,
-      abcTotal: contextoCusto.abcTotal,
+      abcTotal,
       numeroUnidades: contextoCusto.numeroUnidades,
     };
     const feesTotais = agregarFees(fees, contextoFees).total;

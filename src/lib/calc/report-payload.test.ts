@@ -44,7 +44,7 @@ describe("montarReportPayload", () => {
   it("monta o objeto completo a partir de resultados já calculados, sem inventar valores", () => {
     const cashFlow = calcularCashFlow({
       linhasCusto: [custo({ grupo: "aquisicao", tipoCalculo: "valor_fixo", valorInput: 500_000, duracaoMeses: 1, dataFinal: "2026-01-31" })],
-      contextoCusto: { valorAquisicao: 500_000, abcPrincipal: 500, abcTotal: 600, numeroUnidades: 5 },
+      contextoCusto: { valorAquisicao: 500_000, abcAcimaSolo: 300, abcAbaixoSolo: 200, abdTotal: 100, numeroUnidades: 5 },
       recebimentos: [{ mes: "2027-01", reserva: 0, cpcv: 0, duranteConstrucao: 0, conclusao: 1_500_000, escritura: 0, total: 1_500_000 }],
       parametrosFinanciamento: parametrosSemFinanciamento,
       saldoMinimoCaixa: 0,
