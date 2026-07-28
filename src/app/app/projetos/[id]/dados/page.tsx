@@ -58,6 +58,15 @@ import {
   apagarRegraPreco,
 } from "@/lib/supabase/project-price-rules";
 import {
+  criarCenarioConservador,
+  criarCenarioOtimista,
+  duplicarCenario,
+  podeApagarCenario,
+  compararCenarios,
+  type Cenario,
+} from "@/lib/calc/cenarios";
+import { listarCenarios, criarCenario, atualizarCenario, apagarCenario } from "@/lib/supabase/project-scenarios";
+import {
   calcSeguro,
   calcIMI,
   resolverTaxaIRC,
@@ -164,6 +173,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
   const [unidades, setUnidades] = useState<UnidadeVenda[]>([]);
   const [regrasPreco, setRegrasPreco] = useState<RegraEvolucaoPreco[]>([]);
+  const [cenarios, setCenarios] = useState<Cenario[]>([]);
   const [custosNovos, setCustosNovos] = useState<LinhaCusto[]>([]);
   const [financiamento, setFinanciamento] = useState<ParametrosFinanciamento>(FINANCIAMENTO_VAZIO);
   const [estruturaCapital, setEstruturaCapital] = useState<EstruturaCapitalEstado>(ESTRUTURA_CAPITAL_VAZIA);
@@ -216,6 +226,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setUnidades(unidadesCarregadas);
     const regrasPrecoCarregadas = await listarRegrasPreco(supabase, id);
     setRegrasPreco(regrasPrecoCarregadas);
+    const cenariosCarregados = await listarCenarios(supabase, id);
+    setCenarios(cenariosCarregados);
     const custos = await listarCustosProjeto(supabase, id);
     setCustosNovos(custos);
     const parametrosFinanciamento = await carregarFinanciamento(supabase, id);
@@ -288,6 +300,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
       await Promise.all(unidades.map((u) => atualizarUnidade(supabase, u.id, u)));
       await Promise.all(regrasPreco.map((r) => atualizarRegraPreco(supabase, r.id, r)));
+      await Promise.all(cenarios.filter((c) => !c.ehBase).map((c) => atualizarCenario(supabase, c.id, c)));
       await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
       await guardarFinanciamento(supabase, id, financiamento);
       await guardarEstruturaCapital(supabase, id, estruturaCapital);
@@ -309,6 +322,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       tipologiasNovas,
       unidades,
       regrasPreco,
+      cenarios,
       custosNovos,
       financiamento,
       estruturaCapital,
@@ -335,6 +349,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     tipologiasNovas,
     unidades,
     regrasPreco,
+    cenarios,
     custosNovos,
     financiamento,
     estruturaCapital,
@@ -496,6 +511,35 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     }));
     const ajustes = calcularAjustesParaSalesTable(unidadesParaAjuste, regrasPreco, dataLancamentoComercial);
     setUnidades((prev) => prev.map((u) => (ajustes.has(u.id) ? { ...u, ajusteFaseComercialPct: ajustes.get(u.id)! } : u)));
+  }
+
+  async function adicionarCenarioConservador() {
+    const novo = await criarCenario(supabase, id, criarCenarioConservador(null));
+    if (novo) setCenarios((prev) => [...prev, novo]);
+  }
+
+  async function adicionarCenarioOtimista() {
+    const novo = await criarCenario(supabase, id, criarCenarioOtimista(null));
+    if (novo) setCenarios((prev) => [...prev, novo]);
+  }
+
+  async function duplicarCenarioHandler(original: Cenario) {
+    const copia = duplicarCenario(original, `${original.nome} (cópia)`, null);
+    const novo = await criarCenario(supabase, id, copia);
+    if (novo) setCenarios((prev) => [...prev, novo]);
+  }
+
+  function atualizarCenarioLocal(cenarioId: string, patch: Partial<Cenario>) {
+    setCenarios((prev) => prev.map((c) => (c.id === cenarioId ? { ...c, ...patch } : c)));
+  }
+
+  async function removerCenario(cenario: Cenario) {
+    if (!podeApagarCenario(cenario)) {
+      window.alert("O cenário-base nunca pode ser apagado.");
+      return;
+    }
+    const apagou = await apagarCenario(supabase, cenario);
+    if (apagou) setCenarios((prev) => prev.filter((c) => c.id !== cenario.id));
   }
 
   async function adicionarCustoNovo(grupo: GrupoCusto, nome: string) {
@@ -921,6 +965,12 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           contextoFees={contextoFeesAtual}
           resultado={resultadoAtual}
           prontoParaCalcular={prontoParaCalcularAtual}
+          cenarios={cenarios}
+          onAdicionarCenarioConservador={adicionarCenarioConservador}
+          onAdicionarCenarioOtimista={adicionarCenarioOtimista}
+          onDuplicarCenario={duplicarCenarioHandler}
+          onAtualizarCenario={atualizarCenarioLocal}
+          onRemoverCenario={removerCenario}
         />
       )}
 
@@ -2799,7 +2849,17 @@ function StepCalendario({
 // ============================================================
 // Etapa final — Cash flow e resultados
 // ============================================================
-const SUBTABS_RESULTADOS = ["Plano de vendas", "Resumo", "Cash flow", "Capex", "Funding", "Financiamento", "Investidor e promotor", "Sensibilidades"] as const;
+const SUBTABS_RESULTADOS = [
+  "Plano de vendas",
+  "Resumo",
+  "Cash flow",
+  "Capex",
+  "Funding",
+  "Financiamento",
+  "Investidor e promotor",
+  "Sensibilidades",
+  "Cenários",
+] as const;
 
 function StepCashFlowResultados({
   onVerResultados,
@@ -2818,6 +2878,12 @@ function StepCashFlowResultados({
   contextoFees,
   resultado,
   prontoParaCalcular,
+  cenarios,
+  onAdicionarCenarioConservador,
+  onAdicionarCenarioOtimista,
+  onDuplicarCenario,
+  onAtualizarCenario,
+  onRemoverCenario,
 }: {
   onVerResultados: () => void;
   planoVendas: PlanoVendas;
@@ -2835,6 +2901,12 @@ function StepCashFlowResultados({
   contextoFees: ContextoFees;
   resultado: ReturnType<typeof calcularCashFlow> | null;
   prontoParaCalcular: boolean;
+  cenarios: Cenario[];
+  onAdicionarCenarioConservador: () => void;
+  onAdicionarCenarioOtimista: () => void;
+  onDuplicarCenario: (cenario: Cenario) => void;
+  onAtualizarCenario: (id: string, patch: Partial<Cenario>) => void;
+  onRemoverCenario: (cenario: Cenario) => void;
 }) {
   const [subtab, setSubtab] = useState<(typeof SUBTABS_RESULTADOS)[number]>("Resumo");
   const [sensMatriz, setSensMatriz] = useState<MatrizSensibilidade>("aquisicao_vs_custo_construcao");
@@ -3198,6 +3270,90 @@ function StepCashFlowResultados({
             matriz={sensMatriz}
             indicador={sensIndicador}
           />
+        </Card>
+      )}
+
+      {subtab === "Cenários" && prontoParaCalcular && (
+        <Card
+          title="Cenários"
+          subtitle="Cada cenário recalcula o modelo completo com as suas próprias variações — o cenário-base nunca pode ser apagado ou duplicado por cima."
+        >
+          <div className="flex gap-2 mb-4">
+            <button onClick={onAdicionarCenarioConservador} className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]">
+              + Conservador
+            </button>
+            <button onClick={onAdicionarCenarioOtimista} className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]">
+              + Otimista
+            </button>
+          </div>
+
+          {cenarios.map((c) => (
+            <div key={c.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+              <Row>
+                <Field label="Nome">
+                  <input
+                    className="input-dark"
+                    value={c.nome}
+                    onChange={(e) => onAtualizarCenario(c.id, { nome: e.target.value })}
+                    disabled={c.ehBase}
+                  />
+                </Field>
+                <Field label="Δ Aquisição (%)">
+                  <PercentInput value={c.deltaAquisicao} onChange={(v) => onAtualizarCenario(c.id, { deltaAquisicao: v })} disabled={c.ehBase} />
+                </Field>
+                <Field label="Δ Construção (%)">
+                  <PercentInput value={c.deltaConstrucao} onChange={(v) => onAtualizarCenario(c.id, { deltaConstrucao: v })} disabled={c.ehBase} />
+                </Field>
+                <Field label="Δ Preço de venda (%)">
+                  <PercentInput value={c.deltaPreco} onChange={(v) => onAtualizarCenario(c.id, { deltaPreco: v })} disabled={c.ehBase} />
+                </Field>
+              </Row>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => onDuplicarCenario(c)} className="text-xs text-[#142B3A] underline">
+                  Duplicar
+                </button>
+                {!c.ehBase && (
+                  <button onClick={() => onRemoverCenario(c)} className="text-[#A13D2E] text-xs">
+                    Remover
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+
+          <div className="overflow-x-auto mt-4">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[#59636A] uppercase">
+                  <th className="pb-2 pr-4">Cenário</th>
+                  <th className="pb-2 pr-4">GDV</th>
+                  <th className="pb-2 pr-4">Custo total</th>
+                  <th className="pb-2 pr-4">Lucro</th>
+                  <th className="pb-2 pr-4">Margem</th>
+                  <th className="pb-2 pr-4">IRR</th>
+                  <th className="pb-2 pr-4">MOIC</th>
+                  <th className="pb-2 pr-4">Peak exposure</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compararCenarios(
+                  { linhasCusto: custosNovos, contextoCusto, receitaTotalGdvBase: vgvBruto, planoVendas, parametrosFinanciamento: financiamento },
+                  cenarios
+                ).map((linha) => (
+                  <tr key={linha.cenario.id} className="border-t border-[#E3DACB]">
+                    <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{linha.cenario.nome}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.gdv).toLocaleString("pt-PT")}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.custoTotal).toLocaleString("pt-PT")}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.lucro).toLocaleString("pt-PT")}</td>
+                    <td className="py-1.5 pr-4">{(linha.margem * 100).toFixed(1)}%</td>
+                    <td className="py-1.5 pr-4">{linha.irr !== null ? `${(linha.irr * 100).toFixed(1)}%` : "Não calculável"}</td>
+                    <td className="py-1.5 pr-4">{linha.moic !== null ? `${linha.moic.toFixed(2)}x` : "Não calculável"}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.peakExposure).toLocaleString("pt-PT")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
 
