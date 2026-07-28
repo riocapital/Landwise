@@ -62,6 +62,8 @@ import {
   calcIMI,
   resolverTaxaIRC,
   calcLucroTributavel,
+  calcLucroEconomico,
+  calcLucroTributavelEstimado,
   calcIRC,
   calcDerramaMunicipal,
   calcDerramaEstadual,
@@ -856,6 +858,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           impostos={impostos}
           updateImpostos={updateImpostos}
           valorAquisicao={inputs.custoTerreno || 0}
+          resultado={resultadoAtual}
           onSolicitarConsultoria={handleSolicitarConsultoria}
         />
       )}
@@ -2219,11 +2222,13 @@ function StepImpostos({
   impostos,
   updateImpostos,
   valorAquisicao,
+  resultado,
   onSolicitarConsultoria,
 }: {
   impostos: ImpostosEstado;
   updateImpostos: <K extends keyof ImpostosEstado>(k: K, v: ImpostosEstado[K]) => void;
   valorAquisicao: number;
+  resultado: ReturnType<typeof calcularCashFlow> | null;
   onSolicitarConsultoria: (
     dados: { name: string; company: string; email: string; phone: string; message: string; preferenciaContacto: "email" | "telefone" },
     impostoEstimado: number
@@ -2232,13 +2237,30 @@ function StepImpostos({
   const seguro = calcSeguro(impostos.seguroTaxa, "valor_aquisicao", valorAquisicao, impostos.seguroDuracaoAnos);
   const imi = calcIMI(impostos.imiVpt ?? 0, impostos.imiTaxa, impostos.imiNumAnos);
   const { taxa: taxaIrc, taxaManualAplicada } = resolverTaxaIRC(impostos.ircAnoFiscalReferencia, impostos.ircTaxaManual);
-  const lucroTributavel = calcLucroTributavel(impostos.ircLucroTributavel ?? 0, impostos.ircPrejuizosFiscaisAcumulados);
-  const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
-  const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa);
-  const derramaEstadual = calcDerramaEstadual(lucroTributavel);
+
+  // Lucro económico vem sempre do motor de cash flow real — nunca de um
+  // campo manual solto (secção 29: "Não implementar lucro tributável
+  // manual sem ligação ao motor"). Sem resultado calculado ainda, fica a 0.
+  const lucroEconomico = resultado ? calcLucroEconomico(resultado.gdv, resultado.comissaoComercialTotal, resultado.custoTotal - resultado.comissaoComercialTotal) : 0;
+  const lucroTributavelAntesDeAjustes = resultado
+    ? calcLucroTributavelEstimado({
+        receitasReconhecidas: resultado.gdv,
+        custosFiscalmenteConsiderados: resultado.custoTotal - resultado.comissaoComercialTotal,
+        comissaoDedutivel: resultado.comissaoComercialTotal,
+        feesDedutiveis: 0,
+        custosFinanceirosDedutiveis: resultado.financiamento.jurosTotais,
+        ajustesFiscais: impostos.ircAjustesFiscais,
+      })
+    : 0;
+  const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostos.ircPrejuizosFiscaisAcumulados);
+  const ircEstimado = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcIRC(lucroTributavel, taxaIrc) : 0;
+  const derramaMunicipal = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa) : 0;
+  const derramaEstadual = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcDerramaEstadual(lucroTributavel) : 0;
   const impostoAquisicao = valorAquisicao * impostos.imtValor;
   const seloAquisicao = valorAquisicao * impostos.impostoSeloAquisicaoTaxa;
-  const impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual + impostoAquisicao + seloAquisicao;
+  const impostoSimulacaoManual =
+    impostos.estruturaFiscalAssumida !== "empresa_spv" ? (impostos.simulacaoImpostoEstimadoManual ?? 0) : 0;
+  const impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual + impostoAquisicao + seloAquisicao + impostoSimulacaoManual;
 
   const [modalAberto, setModalAberto] = useState(false);
 
@@ -2288,62 +2310,117 @@ function StepImpostos({
         <p className="text-xs text-[#59636A]">Valor total (calculado): €{Math.round(imi.valorTotal).toLocaleString("pt-PT")}</p>
       </Card>
 
-      <Card title="IRC">
+      <Card
+        title="Impostos — estimativa"
+        subtitle="Esta é uma estimativa simplificada e não substitui análise fiscal, contabilística ou jurídica. Confirme com um especialista."
+      >
         <Row>
-          <Field label="Ano fiscal de referência">
-            <input
-              type="number"
+          <Field label="Estrutura fiscal assumida">
+            <select
               className="input-dark"
-              value={impostos.ircAnoFiscalReferencia}
-              onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Taxa manual (vazio = usa a configuração anual)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.ircTaxaManual ?? ""}
-              onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)}
-              placeholder={`${(taxaIrc * 100).toFixed(0)}%`}
-            />
+              value={impostos.estruturaFiscalAssumida}
+              onChange={(e) => updateImpostos("estruturaFiscalAssumida", e.target.value as ImpostosEstado["estruturaFiscalAssumida"])}
+            >
+              <option value="empresa_spv">Empresa/SPV — IRC</option>
+              <option value="pessoa_singular">Pessoa singular / atividade individual — IRS</option>
+              <option value="nao_definida">Estrutura ainda não definida</option>
+              <option value="outra">Outra</option>
+            </select>
           </Field>
         </Row>
-        {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa manual aplicada.</p>}
-        <Row>
-          <Field label="Lucro tributável estimado (€)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.ircLucroTributavel ?? ""}
-              onChange={(e) => updateImpostos("ircLucroTributavel", e.target.value ? Number(e.target.value) : null)}
-            />
-          </Field>
-          <Field label="Prejuízos fiscais acumulados (€)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.ircPrejuizosFiscaisAcumulados}
-              onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Derrama municipal (%)">
-            <PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} />
-          </Field>
-        </Row>
-        <div className="grid grid-cols-3 gap-4 text-sm mt-2">
-          <div>
-            <span className="text-xs text-[#59636A] block">IRC estimado</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(ircEstimado).toLocaleString("pt-PT")}</span>
-          </div>
-          <div>
-            <span className="text-xs text-[#59636A] block">Derrama municipal</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(derramaMunicipal).toLocaleString("pt-PT")}</span>
-          </div>
-          <div>
-            <span className="text-xs text-[#59636A] block">Derrama estadual (escalões)</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(derramaEstadual).toLocaleString("pt-PT")}</span>
-          </div>
-        </div>
+
+        {impostos.estruturaFiscalAssumida === "empresa_spv" ? (
+          <>
+            <Row>
+              <Field label="Ano fiscal de referência">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircAnoFiscalReferencia}
+                  onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Taxa de IRC de referência">
+                <input className="input-dark" value={`${(taxaIrc * 100).toFixed(0)}%`} disabled />
+              </Field>
+              <Field label="Taxa aplicada (vazio = usa a de referência)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircTaxaManual ?? ""}
+                  onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)}
+                  placeholder={`${(taxaIrc * 100).toFixed(0)}%`}
+                />
+              </Field>
+            </Row>
+            {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa manual aplicada.</p>}
+            <div className="grid grid-cols-2 gap-4 mb-3 text-sm">
+              <div>
+                <span className="text-xs text-[#59636A] block">Lucro económico (do motor: VGV − comissão − custos)</span>
+                <span className="font-semibold text-[#142B3A]">€{Math.round(lucroEconomico).toLocaleString("pt-PT")}</span>
+              </div>
+              <div>
+                <span className="text-xs text-[#59636A] block">Lucro tributável estimado</span>
+                <span className="font-semibold text-[#142B3A]">€{Math.round(lucroTributavel).toLocaleString("pt-PT")}</span>
+              </div>
+            </div>
+            <Row>
+              <Field label="Ajustes fiscais (€, + ou −, sobre o lucro económico)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircAjustesFiscais}
+                  onChange={(e) => updateImpostos("ircAjustesFiscais", Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Prejuízos fiscais acumulados (€)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircPrejuizosFiscaisAcumulados}
+                  onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Derrama municipal (%)">
+                <PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} />
+              </Field>
+            </Row>
+            <p className="text-xs text-[#59636A] mt-2">
+              IRC estimado: €{Math.round(ircEstimado).toLocaleString("pt-PT")} · Derrama municipal: €
+              {Math.round(derramaMunicipal).toLocaleString("pt-PT")}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-[#B96343] mb-3">
+              O tratamento fiscal pode estar sujeito a IRS ou outro enquadramento. É necessária análise individual.
+            </p>
+            <Row>
+              <Field label="Taxa efetiva manual (só simulação)">
+                <PercentInput
+                  value={impostos.simulacaoTaxaEfetivaManual ?? 0}
+                  onChange={(v) => updateImpostos("simulacaoTaxaEfetivaManual", v)}
+                />
+              </Field>
+              <Field label="Imposto estimado manual (€, só simulação)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.simulacaoImpostoEstimadoManual ?? ""}
+                  onChange={(e) => updateImpostos("simulacaoImpostoEstimadoManual", e.target.value ? Number(e.target.value) : null)}
+                />
+              </Field>
+            </Row>
+            <p className="text-xs text-[#A13D2E] font-semibold">Premissa manual não validada.</p>
+          </>
+        )}
+      </Card>
+
+      <Card title="Derrama estadual">
+        <p className="text-xs text-[#59636A] mb-2">
+          Progressiva por escalões sobre o lucro tributável — não aplicada quando a estrutura fiscal não é Empresa/SPV.
+        </p>
+        <p className="text-sm text-[#142B3A]">Derrama estadual estimada: €{Math.round(derramaEstadual).toLocaleString("pt-PT")}</p>
       </Card>
 
       <Card title="IMT e Imposto de Selo da aquisição">

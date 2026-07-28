@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  calcLucroEconomico,
+  calcLucroTributavelEstimado,
   calcSeguro,
   calcIMI,
   obterTaxaIRCReferencia,
@@ -169,5 +171,51 @@ describe("IVA consolidado — sempre calculado a partir dos custos, nunca preenc
     const resumo = agregarIVAConsolidado(linhas, "2026-12-31");
     expect(resumo.ivaRecuperado).toBe(1000);
     expect(resumo.saldoIva).toBe(2000);
+  });
+});
+
+describe("calcLucroEconomico — secção 29 do plano", () => {
+  it("VGV Bruto − comissão comercial − custos económicos", () => {
+    expect(calcLucroEconomico(1_000_000, 30_000, 600_000)).toBe(370_000);
+  });
+});
+
+describe("calcLucroTributavelEstimado — nunca igual ao lucro económico por omissão", () => {
+  it("subtrai cada componente dedutível separadamente, soma os ajustes", () => {
+    const lucroTributavel = calcLucroTributavelEstimado({
+      receitasReconhecidas: 1_000_000,
+      custosFiscalmenteConsiderados: 500_000,
+      comissaoDedutivel: 30_000,
+      feesDedutiveis: 20_000,
+      custosFinanceirosDedutiveis: 15_000,
+      ajustesFiscais: 5_000,
+    });
+    expect(lucroTributavel).toBe(1_000_000 - 500_000 - 30_000 - 20_000 - 15_000 + 5_000);
+  });
+
+  it("pode ser diferente do lucro económico quando os custos fiscalmente aceites divergem dos económicos", () => {
+    const lucroEconomico = calcLucroEconomico(1_000_000, 30_000, 400_000); // 570_000
+    const lucroTributavel = calcLucroTributavelEstimado({
+      receitasReconhecidas: 1_000_000,
+      custosFiscalmenteConsiderados: 350_000, // parte dos custos económicos não é fiscalmente aceite
+      comissaoDedutivel: 30_000,
+      feesDedutiveis: 0,
+      custosFinanceirosDedutiveis: 0,
+      ajustesFiscais: 0,
+    });
+    expect(lucroTributavel).not.toBe(lucroEconomico);
+  });
+
+  it("pode ser negativo antes de calcLucroTributavel aplicar o limite final a zero", () => {
+    const lucroTributavel = calcLucroTributavelEstimado({
+      receitasReconhecidas: 100_000,
+      custosFiscalmenteConsiderados: 200_000,
+      comissaoDedutivel: 0,
+      feesDedutiveis: 0,
+      custosFinanceirosDedutiveis: 0,
+      ajustesFiscais: 0,
+    });
+    expect(lucroTributavel).toBeLessThan(0);
+    expect(calcLucroTributavel(lucroTributavel, 0)).toBe(0); // nunca negativo no valor final
   });
 });
