@@ -79,14 +79,33 @@ describe("montarReportPayload", () => {
         precoMedioUnidade: 0, precoMedioPonderadoM2: 0, receitaTotal: 1_500_000,
       },
       tipologias: [],
+      salesTable: [],
+      regrasEvolucaoPreco: [],
       sugestoesUsadas: {},
       custos: { totalAquisicao: 500_000, totalHardCosts: 0, totalSoftCosts: 0, totalOutros: 0, custoTotal: 500_000, ivaSuportadoTotal: 0, ivaRecuperavelTotal: 0, ivaNaoRecuperavelTotal: 0 },
-      impostos: { seguroTotal: 0, imiTotal: 0, ircEstimado: 0, derramaMunicipal: 0, derramaEstadual: 0, ivaSuportado: 0, ivaRecuperavel: 0, ivaNaoRecuperavel: 0 },
-      alertasCalendario: [],
+      impostos: {
+        estruturaFiscalAssumida: "nao_definida",
+        seguroTotal: 0,
+        imiTotal: 0,
+        lucroEconomico: null,
+        lucroTributavelEstimado: null,
+        ircEstimado: 0,
+        derramaMunicipal: 0,
+        derramaEstadual: 0,
+        simulacaoManual: { taxaEfetivaManual: null, impostoEstimadoManual: null },
+        ivaSuportado: 0,
+        ivaRecuperavel: 0,
+        ivaNaoRecuperavel: 0,
+      },
+      calendarioAutomatico: { grupos: [], dataInicial: null, dataFinal: null },
       cashFlow,
+      cashSweep: { ativo: false, mesInicio: null },
       investidor: null, // sem investidor externo — nunca inventar um
       promotor,
       sensibilidades: [],
+      cenarios: { lista: [], comparacao: [] },
+      metricasPorM2: null,
+      estruturaSobreVgv: null,
       alertas: [],
       premissas: { areaLote: { valor: null, origem: "utilizador" } },
       fontesComparaveis: { totalUsados: 0, fontesUnicas: [] },
@@ -98,6 +117,13 @@ describe("montarReportPayload", () => {
     expect(payload.cashFlow).toBe(cashFlow); // reaproveita o mesmo objeto, não recalcula
     expect(payload.financiamento).toBe(cashFlow.financiamento);
     expect(payload.equity).toBe(cashFlow.equity);
+    expect(payload.receita.comissaoComercialTotal).toBe(cashFlow.comissaoComercialTotal);
+    expect(payload.metricasPorM2).toBeNull(); // nunca inventa métricas quando ainda não foram calculadas
+    expect(payload.estruturaSobreVgv).toBeNull();
+    expect(payload.impostos.lucroEconomico).toBeNull(); // estrutura fiscal "não definida" — nunca calcula IRC
+    expect(payload.impostos.simulacaoManual).toEqual({ taxaEfetivaManual: null, impostoEstimadoManual: null });
+    expect(payload.cenarios.lista).toEqual([]);
+    expect(payload.alertas).toEqual([]);
     expect(new Date(payload.geradoEm).getTime()).toBeGreaterThan(0);
   });
 });
