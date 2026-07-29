@@ -4,7 +4,7 @@ import type { LinhaCusto, ContextoCusto } from "./custos";
 import type { ParametrosFinanciamento } from "./financiamento";
 import type { LinhaRecebimentoMensal } from "./vendas";
 
-const contexto: ContextoCusto = { valorAquisicao: 1_000_000, abcTotal: 1000, gcaTotal: 1200, numeroUnidades: 10 };
+const contexto: ContextoCusto = { valorAquisicao: 1_000_000, abcAcimaSolo: 600, abcAbaixoSolo: 400, abdTotal: 200, numeroUnidades: 10 };
 
 function custo(overrides: Partial<LinhaCusto>): LinhaCusto {
   return {
@@ -31,6 +31,9 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
   euribor: 0,
+  euriborOrigem: "manual",
+  euriborDataReferencia: null,
+  euriborFonte: null,
   spread: 0,
   structuringFeePct: 0,
   setupCosts: 0,
@@ -39,6 +42,12 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   limiteCredito: null,
   saldoMinimoCaixa: 0,
   metodoTaxaMensal: "nominal_anual_div_12",
+  cashSweepAtivo: false,
+  cashSweepPctCaixaLivre: 0,
+  cashSweepMesesCustosFuturos: 0,
+  cashSweepInicioTipo: "primeira_escritura",
+  cashSweepInicioValorPct: null,
+  cashSweepInicioData: null,
 };
 
 function receber(mes: string, total: number): LinhaRecebimentoMensal {
@@ -85,6 +94,9 @@ describe("calcularCashFlow — com financiamento bancário", () => {
     percentagemAquisicaoFinanciada: 0.5,
     percentagemHardCostsFinanciada: 0.6,
     euribor: 0.03,
+    euriborOrigem: "manual",
+    euriborDataReferencia: null,
+    euriborFonte: null,
     spread: 0.02,
   };
 

@@ -34,6 +34,9 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
   euribor: 0,
+  euriborOrigem: "manual",
+  euriborDataReferencia: null,
+  euriborFonte: null,
   spread: 0,
   structuringFeePct: 0,
   setupCosts: 0,
@@ -42,6 +45,12 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   limiteCredito: null,
   saldoMinimoCaixa: 0,
   metodoTaxaMensal: "nominal_anual_div_12",
+  cashSweepAtivo: false,
+  cashSweepPctCaixaLivre: 0,
+  cashSweepMesesCustosFuturos: 0,
+  cashSweepInicioTipo: "primeira_escritura",
+  cashSweepInicioValorPct: null,
+  cashSweepInicioData: null,
 };
 
 const planoVendas: PlanoVendas = {
@@ -52,6 +61,10 @@ const planoVendas: PlanoVendas = {
   dataEscritura: "2027-01-01",
   estruturaRecebimentos: { pctReserva: 0.1, pctCpcv: 0.2, pctDuranteConstrucao: 0.3, pctConclusao: 0.2, pctEscritura: 0.2 },
   comissaoMediacaoPct: 0.03,
+  comissaoTaxaIva: 0.23,
+  comissaoPctPagoSinal: 0.5,
+  comissaoPctPagoEscritura: 0.5,
+  comissaoIvaRecuperavelPct: 0,
   cancelamentosEstimadosPct: 0,
 };
 
@@ -60,7 +73,7 @@ const base: PremissasBaseSensibilidade = {
     custo({ grupo: "aquisicao", tipoCalculo: "valor_fixo", valorInput: 1_000_000, duracaoMeses: 1, dataFinal: "2026-01-31" }),
     custo({ grupo: "hard_cost", tipoCalculo: "valor_fixo", valorInput: 1_000_000 }),
   ],
-  contextoCusto: { valorAquisicao: 1_000_000, abcTotal: 1000, gcaTotal: 1200, numeroUnidades: 10 },
+  contextoCusto: { valorAquisicao: 1_000_000, abcAcimaSolo: 600, abcAbaixoSolo: 400, abdTotal: 200, numeroUnidades: 10 },
   receitaTotalGdvBase: 3_000_000,
   planoVendas,
   parametrosFinanciamento: parametrosSemFinanciamento,

@@ -30,6 +30,7 @@ export type LinhaCashFlowMensal = {
   softCosts: number;
   outrosCustos: number;
   ivaNaoRecuperavel: number;
+  comissaoComercial: number; // sempre saída separada — nunca descontada diretamente da receita de vendas (secção 18 do plano)
 
   // Unlevered
   cashFlowUnlevered: number;
@@ -55,7 +56,8 @@ export type LinhaCashFlowMensal = {
 export type ResultadoCashFlow = {
   linhas: LinhaCashFlowMensal[];
   gdv: number;
-  custoTotal: number;
+  custoTotal: number; // inclui comissão comercial (é um custo real do projeto)
+  comissaoComercialTotal: number;
   lucroUnlevered: number;
   lucroLevered: number;
   margem: number; // lucro do projeto ÷ GDV
@@ -67,7 +69,9 @@ export type PremissasCashFlow = {
   linhasCusto: LinhaCusto[];
   contextoCusto: ContextoCusto;
   recebimentos: LinhaRecebimentoMensal[];
+  comissaoPorMes?: Map<string, number>; // mês -> valor total da comissão nesse mês (opcional — retrocompatível)
   parametrosFinanciamento: ParametrosFinanciamento;
+  mesInicioCashSweep?: string | null; // já resolvido por resolverMesInicioCashSweep (secção 24) — cashflow.ts não conhece a Sales Table
   saldoMinimoCaixa: number;
 };
 
@@ -111,12 +115,15 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   const custosPorMes = distribuirCustosPorMes(linhasResolvidas);
   const recebimentosPorMes = new Map(premissas.recebimentos.map((r) => [r.mes, r.total]));
 
-  const todosMeses = [...new Set([...custosPorMes.keys(), ...recebimentosPorMes.keys()])].sort();
+  const comissaoPorMes = premissas.comissaoPorMes ?? new Map<string, number>();
+
+  const todosMeses = [...new Set([...custosPorMes.keys(), ...recebimentosPorMes.keys(), ...comissaoPorMes.keys()])].sort();
   if (todosMeses.length === 0) {
     return {
       linhas: [],
       gdv: 0,
       custoTotal: 0,
+      comissaoComercialTotal: 0,
       lucroUnlevered: 0,
       lucroLevered: 0,
       margem: 0,
@@ -130,8 +137,9 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   const unleveredPorMes = mesesCompletos.map((mes) => {
     const custos = custosPorMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, ivaNaoRecuperavel: 0 };
     const receita = recebimentosPorMes.get(mes) ?? 0;
-    const saida = custos.aquisicao + custos.hard + custos.soft + custos.outro + custos.ivaNaoRecuperavel;
-    return { mes, receita, custos, cashFlowUnlevered: receita - saida };
+    const comissao = comissaoPorMes.get(mes) ?? 0;
+    const saida = custos.aquisicao + custos.hard + custos.soft + custos.outro + custos.ivaNaoRecuperavel + comissao;
+    return { mes, receita, custos, comissao, cashFlowUnlevered: receita - saida };
   });
 
   // 2) Financiamento: necessidade elegível mês a mês, saldo de caixa unlevered acumulado como referência.
@@ -145,7 +153,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       saldoCaixaAntesFinanciamento: acumuladoUnlevered,
     };
   });
-  const linhasFinanciamento = simularFinanciamento(necessidadesFinanciamento, premissas.parametrosFinanciamento);
+  const linhasFinanciamento = simularFinanciamento(necessidadesFinanciamento, premissas.parametrosFinanciamento, premissas.mesInicioCashSweep ?? null);
 
   // 3) Equity: cobre o que sobrar depois do financiamento, mês a mês.
   //    IMPORTANTE: passa o valor MENSAL (delta), não acumulado — o motor de
@@ -176,6 +184,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       softCosts: l.custos.soft,
       outrosCustos: l.custos.outro,
       ivaNaoRecuperavel: l.custos.ivaNaoRecuperavel,
+      comissaoComercial: l.comissao,
       cashFlowUnlevered: l.cashFlowUnlevered,
       drawdown: fin.drawdown,
       jurosEFees: fin.juros + fin.fees + fin.impostoSelo,
@@ -191,7 +200,8 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   });
 
   const gdv = linhas.reduce((s, l) => s + l.receitaVendas, 0);
-  const custoTotal = linhas.reduce((s, l) => s + l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos + l.ivaNaoRecuperavel, 0);
+  const comissaoComercialTotal = linhas.reduce((s, l) => s + l.comissaoComercial, 0);
+  const custoTotal = linhas.reduce((s, l) => s + l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos + l.ivaNaoRecuperavel + l.comissaoComercial, 0);
   const lucroUnlevered = linhas.reduce((s, l) => s + l.cashFlowUnlevered, 0);
   const lucroLevered = linhas.reduce((s, l) => s + l.cashFlowLevered, 0);
 
@@ -203,6 +213,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
     linhas,
     gdv,
     custoTotal,
+    comissaoComercialTotal,
     lucroUnlevered,
     lucroLevered,
     margem: gdv > 0 ? lucroUnlevered / gdv : 0,

@@ -5,8 +5,10 @@ import {
   taxaAnual,
   taxaMensal,
   normalizarParametrosSemFinanciamento,
+  resolverMesInicioCashSweep,
   type ParametrosFinanciamento,
   type NecessidadeMensal,
+  type EventoMensalCashSweep,
 } from "./financiamento";
 
 const parametrosBase: ParametrosFinanciamento = {
@@ -14,6 +16,9 @@ const parametrosBase: ParametrosFinanciamento = {
   percentagemHardCostsFinanciada: 0.6,
   percentagemAquisicaoFinanciada: 0.5,
   euribor: 0.03,
+  euriborOrigem: "manual",
+  euriborDataReferencia: null,
+  euriborFonte: null,
   spread: 0.02,
   structuringFeePct: 0.01,
   setupCosts: 5000,
@@ -22,6 +27,12 @@ const parametrosBase: ParametrosFinanciamento = {
   limiteCredito: 2_000_000,
   saldoMinimoCaixa: 0,
   metodoTaxaMensal: "nominal_anual_div_12",
+  cashSweepAtivo: false,
+  cashSweepPctCaixaLivre: 0,
+  cashSweepMesesCustosFuturos: 0,
+  cashSweepInicioTipo: "primeira_escritura",
+  cashSweepInicioValorPct: null,
+  cashSweepInicioData: null,
 };
 
 describe("Taxas", () => {
@@ -125,5 +136,109 @@ describe("calcResultadosFinanciamento", () => {
     expect(resultados.peakDebt).toBe(linhas[0].saldoFinal);
     expect(resultados.ltv).toBeCloseTo(resultados.peakDebt / 4_000_000, 6);
     expect(resultados.ltc).toBeCloseTo(resultados.peakDebt / 1_000_000, 6);
+  });
+});
+
+describe("resolverMesInicioCashSweep — nunca assume um mês por omissão", () => {
+  const eventos: EventoMensalCashSweep[] = [
+    { mes: "2026-01", temEscritura: false, pctVendidoAcumulado: 0.1, pctVgvRecebidoAcumulado: 0.05 },
+    { mes: "2026-02", temEscritura: true, pctVendidoAcumulado: 0.4, pctVgvRecebidoAcumulado: 0.3 },
+    { mes: "2026-03", temEscritura: true, pctVendidoAcumulado: 0.7, pctVgvRecebidoAcumulado: 0.6 },
+  ];
+
+  it("cash sweep inativo devolve null sempre", () => {
+    const p = { ...parametrosBase, cashSweepAtivo: false };
+    expect(resolverMesInicioCashSweep(p, eventos)).toBeNull();
+  });
+
+  it("início = primeira escritura", () => {
+    const p = { ...parametrosBase, cashSweepAtivo: true, cashSweepInicioTipo: "primeira_escritura" as const };
+    expect(resolverMesInicioCashSweep(p, eventos)).toBe("2026-02");
+  });
+
+  it("início = % vendido", () => {
+    const p = { ...parametrosBase, cashSweepAtivo: true, cashSweepInicioTipo: "pct_vendido" as const, cashSweepInicioValorPct: 0.5 };
+    expect(resolverMesInicioCashSweep(p, eventos)).toBe("2026-03");
+  });
+
+  it("início = % VGV recebido", () => {
+    const p = { ...parametrosBase, cashSweepAtivo: true, cashSweepInicioTipo: "pct_vgv_recebido" as const, cashSweepInicioValorPct: 0.3 };
+    expect(resolverMesInicioCashSweep(p, eventos)).toBe("2026-02");
+  });
+
+  it("início = data específica", () => {
+    const p = { ...parametrosBase, cashSweepAtivo: true, cashSweepInicioTipo: "data" as const, cashSweepInicioData: "2026-03-15" };
+    expect(resolverMesInicioCashSweep(p, eventos)).toBe("2026-03");
+  });
+
+  it("gatilho nunca atingido devolve null, nunca inventa um mês", () => {
+    const p = { ...parametrosBase, cashSweepAtivo: true, cashSweepInicioTipo: "pct_vendido" as const, cashSweepInicioValorPct: 0.99 };
+    expect(resolverMesInicioCashSweep(p, eventos)).toBeNull();
+  });
+});
+
+describe("simularFinanciamento com cash sweep — nunca deixa o projeto sem caixa", () => {
+  const p = {
+    ...parametrosBase,
+    cashSweepAtivo: true,
+    cashSweepPctCaixaLivre: 1, // 100% do caixa livre, para tornar o teste mais direto
+    cashSweepMesesCustosFuturos: 0,
+    saldoMinimoCaixa: 50_000,
+  };
+
+  it("sem cash sweep ativo (mesInicioCashSweep=null), amortização fica a 0", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -500_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 800_000 },
+    ];
+    const linhas = simularFinanciamento(necessidades, p, null);
+    expect(linhas[1].amortizacao).toBe(0);
+  });
+
+  it("a partir do mês de início, amortiza com o caixa livre acima do saldo mínimo", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -500_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 800_000 },
+    ];
+    const linhas = simularFinanciamento(necessidades, p, "2026-02");
+    // caixa disponível no mês 2 = 800_000 (sem novo drawdown); caixa livre = 800_000 - 50_000 (saldo mínimo) = 750_000
+    expect(linhas[1].amortizacao).toBeCloseTo(Math.min(linhas[1].saldoInicial + linhas[1].juros, 750_000), 2);
+  });
+
+  it("nunca amortiza mais do que a dívida existente (saldo nunca fica negativo)", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 100_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -50_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 10_000_000 }, // caixa muito acima da dívida
+    ];
+    const linhas = simularFinanciamento(necessidades, p, "2026-02");
+    expect(linhas[1].saldoFinal).toBeGreaterThanOrEqual(0);
+    expect(linhas[1].amortizacao).toBeLessThanOrEqual(linhas[1].saldoInicial + linhas[1].juros);
+  });
+
+  it("reserva os meses de custos futuros configurados, nunca os usa para amortizar", () => {
+    const pComReserva = { ...p, cashSweepMesesCustosFuturos: 1 };
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 2_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -1_500_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 800_000 },
+      { mes: "2026-03", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 200_000, saldoCaixaAntesFinanciamento: 800_000 },
+    ];
+    const semReserva = simularFinanciamento(necessidades, p, "2026-02");
+    const comReserva = simularFinanciamento(necessidades, pComReserva, "2026-02");
+    // sem reserva: caixa livre = 800_000 - 50_000 = 750_000 (menor que a dívida, limita a amortização)
+    // com reserva: caixa livre = 800_000 - 50_000 - 200_000 (reserva) = 550_000
+    expect(comReserva[1].amortizacao).toBeLessThan(semReserva[1].amortizacao);
+    expect(comReserva[1].amortizacao).toBeCloseTo(550_000, 2);
+    expect(semReserva[1].amortizacao).toBeCloseTo(750_000, 2);
+  });
+
+  it("nunca amortiza abaixo do saldo mínimo de caixa", () => {
+    const pComSaldoAlto = { ...p, saldoMinimoCaixa: 790_000 };
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -500_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 800_000 },
+    ];
+    const linhas = simularFinanciamento(necessidades, pComSaldoAlto, "2026-02");
+    // caixa livre = 800_000 - 790_000 = 10_000, muito menor que a dívida
+    expect(linhas[1].amortizacao).toBeCloseTo(10_000, 2);
   });
 });

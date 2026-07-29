@@ -13,6 +13,9 @@ export type ProjectFinancingRow = {
   percentagem_hard_costs_financiada: number;
   percentagem_aquisicao_financiada: number;
   euribor: number;
+  euribor_origem: ParametrosFinanciamento["euriborOrigem"];
+  euribor_data_referencia: string | null;
+  euribor_fonte: string | null;
   spread: number;
   metodo_taxa_mensal: ParametrosFinanciamento["metodoTaxaMensal"];
   structuring_fee_pct: number;
@@ -26,6 +29,11 @@ export type ProjectFinancingRow = {
   fim_amortizacao: string | null;
   metodo_amortizacao: string;
   cash_sweep: boolean;
+  cash_sweep_pct_caixa_livre: number;
+  cash_sweep_meses_custos_futuros: number;
+  cash_sweep_inicio_tipo: ParametrosFinanciamento["cashSweepInicioTipo"];
+  cash_sweep_inicio_valor_pct: number | null;
+  cash_sweep_inicio_data: string | null;
   capitalizacao_juros: boolean;
   saldo_minimo_caixa: number;
 };
@@ -35,6 +43,9 @@ export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
   euribor: 0,
+  euriborOrigem: "manual",
+  euriborDataReferencia: null,
+  euriborFonte: null,
   spread: 0,
   structuringFeePct: 0,
   setupCosts: 0,
@@ -43,6 +54,12 @@ export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
   limiteCredito: null,
   saldoMinimoCaixa: 0,
   metodoTaxaMensal: "nominal_anual_div_12",
+  cashSweepAtivo: false,
+  cashSweepPctCaixaLivre: 0,
+  cashSweepMesesCustosFuturos: 0,
+  cashSweepInicioTipo: "primeira_escritura",
+  cashSweepInicioValorPct: null,
+  cashSweepInicioData: null,
 };
 
 export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanciamento {
@@ -51,6 +68,9 @@ export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanci
     percentagemHardCostsFinanciada: row.percentagem_hard_costs_financiada,
     percentagemAquisicaoFinanciada: row.percentagem_aquisicao_financiada,
     euribor: row.euribor,
+    euriborOrigem: row.euribor_origem,
+    euriborDataReferencia: row.euribor_data_referencia,
+    euriborFonte: row.euribor_fonte,
     spread: row.spread,
     structuringFeePct: row.structuring_fee_pct,
     setupCosts: row.setup_costs,
@@ -59,6 +79,12 @@ export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanci
     limiteCredito: row.limite_credito,
     saldoMinimoCaixa: row.saldo_minimo_caixa,
     metodoTaxaMensal: row.metodo_taxa_mensal,
+    cashSweepAtivo: row.cash_sweep,
+    cashSweepPctCaixaLivre: row.cash_sweep_pct_caixa_livre,
+    cashSweepMesesCustosFuturos: row.cash_sweep_meses_custos_futuros,
+    cashSweepInicioTipo: row.cash_sweep_inicio_tipo,
+    cashSweepInicioValorPct: row.cash_sweep_inicio_valor_pct,
+    cashSweepInicioData: row.cash_sweep_inicio_data,
   };
 }
 
@@ -77,6 +103,9 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
       percentagem_hard_costs_financiada: parametros.percentagemHardCostsFinanciada,
       percentagem_aquisicao_financiada: parametros.percentagemAquisicaoFinanciada,
       euribor: parametros.euribor,
+      euribor_origem: parametros.euriborOrigem,
+      euribor_data_referencia: parametros.euriborDataReferencia,
+      euribor_fonte: parametros.euriborFonte,
       spread: parametros.spread,
       metodo_taxa_mensal: parametros.metodoTaxaMensal,
       structuring_fee_pct: parametros.structuringFeePct,
@@ -85,6 +114,12 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
       imposto_selo_juros_pct: parametros.impostoSeloJurosPct,
       limite_credito: parametros.limiteCredito,
       saldo_minimo_caixa: parametros.saldoMinimoCaixa,
+      cash_sweep: parametros.cashSweepAtivo,
+      cash_sweep_pct_caixa_livre: parametros.cashSweepPctCaixaLivre,
+      cash_sweep_meses_custos_futuros: parametros.cashSweepMesesCustosFuturos,
+      cash_sweep_inicio_tipo: parametros.cashSweepInicioTipo,
+      cash_sweep_inicio_valor_pct: parametros.cashSweepInicioValorPct,
+      cash_sweep_inicio_data: parametros.cashSweepInicioData,
     },
     { onConflict: "project_id" }
   );

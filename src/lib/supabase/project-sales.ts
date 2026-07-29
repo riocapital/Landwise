@@ -10,7 +10,11 @@ export const PLANO_VENDAS_VAZIO: PlanoVendas = {
   dataFimConstrucao: "",
   dataEscritura: "",
   estruturaRecebimentos: { pctReserva: 0.1, pctCpcv: 0.2, pctDuranteConstrucao: 0.4, pctConclusao: 0.1, pctEscritura: 0.2 },
-  comissaoMediacaoPct: 0.03,
+  comissaoMediacaoPct: 0,
+  comissaoTaxaIva: 0.23,
+  comissaoPctPagoSinal: 0.5,
+  comissaoPctPagoEscritura: 0.5,
+  comissaoIvaRecuperavelPct: 0,
   cancelamentosEstimadosPct: 0,
 };
 
@@ -30,7 +34,11 @@ export async function carregarPlanoVendas(supabase: SupabaseClient, projectId: s
       pctConclusao: data.pct_conclusao ?? 0.1,
       pctEscritura: data.pct_escritura ?? 0.2,
     },
-    comissaoMediacaoPct: data.comissao_mediacao_pct ?? 0.03,
+    comissaoMediacaoPct: data.comissao_mediacao_pct ?? 0,
+    comissaoTaxaIva: data.comissao_taxa_iva ?? 0.23,
+    comissaoPctPagoSinal: data.comissao_pct_pago_sinal ?? 0.5,
+    comissaoPctPagoEscritura: data.comissao_pct_pago_escritura ?? 0.5,
+    comissaoIvaRecuperavelPct: data.comissao_iva_recuperavel_pct ?? 0,
     cancelamentosEstimadosPct: data.cancelamentos_estimados_pct ?? 0,
   };
 }
@@ -50,6 +58,10 @@ export async function guardarPlanoVendas(supabase: SupabaseClient, projectId: st
       pct_conclusao: plano.estruturaRecebimentos.pctConclusao,
       pct_escritura: plano.estruturaRecebimentos.pctEscritura,
       comissao_mediacao_pct: plano.comissaoMediacaoPct,
+      comissao_taxa_iva: plano.comissaoTaxaIva,
+      comissao_pct_pago_sinal: plano.comissaoPctPagoSinal,
+      comissao_pct_pago_escritura: plano.comissaoPctPagoEscritura,
+      comissao_iva_recuperavel_pct: plano.comissaoIvaRecuperavelPct,
       cancelamentos_estimados_pct: plano.cancelamentosEstimadosPct,
     },
     { onConflict: "project_id" }

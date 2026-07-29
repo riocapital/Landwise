@@ -27,6 +27,8 @@ export type ProjectTypologyRow = {
   preco_sugerido_m2: number | null;
   metodo_precificacao: Typology["metodoPrecificacao"];
   preco_manual_unidade: number | null;
+  meses_para_primeira_venda: number;
+  unidades_por_mes: number;
   ordem: number;
 };
 
@@ -50,6 +52,8 @@ export function linhaParaTypology(row: ProjectTypologyRow): Typology {
     precoBaseM2: row.preco_base_m2,
     metodoPrecificacao: row.metodo_precificacao,
     precoManualUnidade: row.preco_manual_unidade,
+    mesesParaPrimeiraVenda: row.meses_para_primeira_venda,
+    unidadesPorMes: row.unidades_por_mes,
   };
 }
 
@@ -114,6 +118,8 @@ export async function atualizarTipologia(
   if (patch.precoBaseM2 !== undefined) dbPatch.preco_base_m2 = patch.precoBaseM2;
   if (patch.metodoPrecificacao !== undefined) dbPatch.metodo_precificacao = patch.metodoPrecificacao;
   if (patch.precoManualUnidade !== undefined) dbPatch.preco_manual_unidade = patch.precoManualUnidade;
+  if (patch.mesesParaPrimeiraVenda !== undefined) dbPatch.meses_para_primeira_venda = patch.mesesParaPrimeiraVenda;
+  if (patch.unidadesPorMes !== undefined) dbPatch.unidades_por_mes = patch.unidadesPorMes;
 
   await supabase.from("project_typologies").update(dbPatch).eq("id", id);
 }

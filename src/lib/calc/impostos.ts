@@ -75,6 +75,45 @@ export function resolverTaxaIRC(ano: number, taxaManual?: number | null, configu
   return { taxa: referencia, taxaManualAplicada: false };
 }
 
+// --- Estrutura fiscal assumida (secção 29 do plano) ---
+//
+// Nunca aplicar IRC automaticamente a uma pessoa singular ou a uma
+// estrutura ainda não definida — o IRC só é calculado quando a estrutura
+// assumida é "empresa_spv". Nos outros casos, só é permitida uma
+// simulação manual, claramente marcada como premissa não validada.
+
+export type EstruturaFiscalAssumida = "empresa_spv" | "pessoa_singular" | "nao_definida" | "outra";
+
+/** Lucro económico = VGV Bruto − comissão comercial − custos económicos (secção 29). */
+export function calcLucroEconomico(vgvBruto: number, comissaoComercial: number, custosEconomicos: number): number {
+  return vgvBruto - comissaoComercial - custosEconomicos;
+}
+
+export type ComponentesLucroTributavel = {
+  receitasReconhecidas: number;
+  custosFiscalmenteConsiderados: number;
+  comissaoDedutivel: number;
+  feesDedutiveis: number;
+  custosFinanceirosDedutiveis: number;
+  ajustesFiscais: number; // soma líquida de ajustes (+/-), ex. reintegrações, provisões não aceites
+};
+
+/**
+ * Lucro tributável estimado — nunca assumido igual ao lucro económico
+ * (secção 29: "Não assumir que lucro económico e tributável são sempre
+ * iguais"). Pode ser negativo antes de aplicar `calcLucroTributavel`
+ * (que trata prejuízos fiscais acumulados e nunca deixa o resultado
+ * final negativo).
+ */
+export function calcLucroTributavelEstimado(c: ComponentesLucroTributavel): number {
+  return c.receitasReconhecidas - c.custosFiscalmenteConsiderados - c.comissaoDedutivel - c.feesDedutiveis - c.custosFinanceirosDedutiveis + c.ajustesFiscais;
+}
+
+export type SimulacaoManualImposto = {
+  taxaEfetivaManual: number | null; // decimal — só simulação, nunca aplicado automaticamente
+  impostoEstimadoManual: number | null;
+};
+
 export function calcLucroTributavel(lucroContabilistico: number, prejuizosFiscaisAcumulados: number): number {
   return Math.max(0, lucroContabilistico - Math.max(0, prejuizosFiscaisAcumulados));
 }

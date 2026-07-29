@@ -7,9 +7,12 @@
 // (secção 19: um único motor, partilhado por tudo).
 
 import { calcularCashFlow, type PremissasCashFlow, type ResultadoCashFlow } from "./cashflow";
-import { gerarRecebimentosMensais, type PlanoVendas } from "./vendas";
+import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable, type PlanoVendas } from "./vendas";
+import { gerarComissaoMensal, type ParametrosComissao } from "./sales-commission";
 import { calcXIRR, type FluxoDatado } from "./xirr";
 import type { LinhaCusto, GrupoCusto } from "./custos";
+import type { LinhaSalesTableResolvida } from "./sales-table";
+import type { Typology } from "./areas";
 
 export const VARIACOES_SENSIBILIDADE = [-0.1, -0.05, 0, 0.05, 0.1] as const;
 
@@ -40,6 +43,14 @@ export type PremissasBaseSensibilidade = {
   receitaTotalGdvBase: number;
   planoVendas: PlanoVendas;
   parametrosFinanciamento: PremissasCashFlow["parametrosFinanciamento"];
+  // Quando presentes, a receita (e a comissão) seguem a Sales Table real —
+  // nunca a aproximação agregada — exatamente como o cash flow principal
+  // (secção 19: um único motor, nunca dois cálculos divergentes para o
+  // mesmo indicador). Sem estes dados, mantém o modo agregado por
+  // compatibilidade com projetos ainda sem Sales Table gerada.
+  salesTableResolvida?: LinhaSalesTableResolvida[];
+  tipologias?: Typology[];
+  comissaoParametros?: ParametrosComissao;
 };
 
 function aplicarVariacaoAoGrupo(linhasCusto: LinhaCusto[], grupo: GrupoCusto, delta: number): LinhaCusto[] {
@@ -61,15 +72,43 @@ export function calcularCenarioComVariacoes(
   let linhas = aplicarVariacaoAoGrupo(base.linhasCusto, "aquisicao", deltaAquisicao);
   linhas = aplicarVariacaoAoGrupo(linhas, "hard_cost", deltaConstrucao);
 
-  const receitaAjustada = base.receitaTotalGdvBase * (1 + deltaPreco);
-  const { linhas: recebimentos } = gerarRecebimentosMensais(receitaAjustada, base.planoVendas);
+  let recebimentos;
+  let comissaoPorMes: Map<string, number> | undefined;
+
+  if (base.salesTableResolvida && base.salesTableResolvida.length > 0 && base.tipologias) {
+    // Preço ajustado por unidade — nunca uma média escalada; cada unidade
+    // mantém a sua própria data (real ou projetada), só o valor muda.
+    const unidadesAjustadas: LinhaSalesTableResolvida[] = base.salesTableResolvida.map((u) => ({
+      ...u,
+      precoFinal: u.precoFinal * (1 + deltaPreco),
+    }));
+    ({ linhas: recebimentos } = gerarRecebimentosDaSalesTable(unidadesAjustadas, base.tipologias, base.planoVendas));
+    if (base.comissaoParametros) {
+      const { linhas: linhasComissao } = gerarComissaoMensal(
+        unidadesAjustadas,
+        base.tipologias,
+        base.planoVendas.dataLancamentoComercial,
+        base.planoVendas.dataEscritura,
+        base.comissaoParametros
+      );
+      comissaoPorMes = new Map(linhasComissao.map((l) => [l.mes, l.total]));
+    }
+  } else {
+    // Sem Sales Table ainda (ex.: início do preenchimento do projeto) —
+    // aproximação agregada, a mesma usada pelo cash flow principal nesse
+    // mesmo cenário (cashflow.ts também recorre a isto quando não há
+    // unidades geradas).
+    const receitaAjustada = base.receitaTotalGdvBase * (1 + deltaPreco);
+    ({ linhas: recebimentos } = gerarRecebimentosMensais(receitaAjustada, base.planoVendas));
+  }
 
   return calcularCashFlow({
     linhasCusto: linhas,
     contextoCusto: base.contextoCusto,
     recebimentos,
+    comissaoPorMes,
     parametrosFinanciamento: base.parametrosFinanciamento,
-    saldoMinimoCaixa: 0,
+    saldoMinimoCaixa: base.parametrosFinanciamento.saldoMinimoCaixa,
   });
 }
 

@@ -5,12 +5,9 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
   DEFAULT_INPUTS,
-  calcularViabilidade,
   type ProjectInputs,
-  type Tipologia,
-  type LinhaVendas,
 } from "@/lib/calc/viabilidade";
-import { calcResumoPrograma, calcGcaProgramado, calcEficiencia, calcDivergenciaAbp, type Typology } from "@/lib/calc/areas";
+import { calcResumoPrograma, calcAbcTotalProgramado, calcEficiencia, calcDivergenciaAbp, type Typology } from "@/lib/calc/areas";
 import {
   listarTipologiasProjeto,
   criarTipologia,
@@ -22,7 +19,7 @@ import type { SugestaoPreco, SujeitoComparacao } from "@/lib/calc/comparaveis";
 import { resolverCustos, agregarCustos, type LinhaCusto, type GrupoCusto, type ContextoCusto } from "@/lib/calc/custos";
 import { listarCustosProjeto, criarCusto, atualizarCusto, apagarCusto } from "@/lib/supabase/project-costs";
 import { calcDataFinal } from "@/lib/calc/calendario";
-import { taxaAnual, taxaMensal, type ParametrosFinanciamento } from "@/lib/calc/financiamento";
+import { taxaAnual, taxaMensal, resolverMesInicioCashSweep, type ParametrosFinanciamento } from "@/lib/calc/financiamento";
 import { carregarFinanciamento, guardarFinanciamento, FINANCIAMENTO_VAZIO } from "@/lib/supabase/project-financing";
 import { obterModeloPreset, type ModeloCapital } from "@/lib/calc/estrutura-capital";
 import type { NivelHurdle } from "@/lib/calc/waterfall";
@@ -44,10 +41,39 @@ import {
 import { calcularResultadosComWaterfall } from "@/lib/calc/estrutura-capital";
 import { criarLeadConsultoria, type NovoLeadConsultoria } from "@/lib/supabase/consulting-leads";
 import {
+  gerarUnidadesDeTipologia,
+  calcularSincronizacao,
+  resolverSalesTable,
+  calcVgvBruto,
+  validarVenda,
+  type UnidadeVenda,
+  type LinhaSalesTableResolvida,
+} from "@/lib/calc/sales-table";
+import { listarUnidades, criarUnidades, atualizarUnidade, apagarUnidades } from "@/lib/supabase/project-units";
+import { gerarAgendaAbsorcao, calcResumoAbsorcao, calcularDatasEfetivas } from "@/lib/calc/sales-curve";
+import { calcularAjustesParaSalesTable, type RegraEvolucaoPreco, type TipoGatilhoPreco } from "@/lib/calc/price-escalation";
+import {
+  listarRegrasPreco,
+  criarRegraPreco,
+  atualizarRegraPreco,
+  apagarRegraPreco,
+} from "@/lib/supabase/project-price-rules";
+import {
+  criarCenarioConservador,
+  criarCenarioOtimista,
+  duplicarCenario,
+  podeApagarCenario,
+  compararCenarios,
+  type Cenario,
+} from "@/lib/calc/cenarios";
+import { listarCenarios, criarCenario, atualizarCenario, apagarCenario } from "@/lib/supabase/project-scenarios";
+import {
   calcSeguro,
   calcIMI,
   resolverTaxaIRC,
   calcLucroTributavel,
+  calcLucroEconomico,
+  calcLucroTributavelEstimado,
   calcIRC,
   calcDerramaMunicipal,
   calcDerramaEstadual,
@@ -55,26 +81,17 @@ import {
   TAXA_IMI_SUGERIDA,
 } from "@/lib/calc/impostos";
 import { carregarImpostos, guardarImpostos, type ImpostosEstado, IMPOSTOS_VAZIO } from "@/lib/supabase/project-taxes";
-import {
-  resolverAtividadesEncadeadas,
-  gerarDadosGantt,
-  aoEditarDataFinal,
-  aoEditarDuracao,
-  aoEditarDataInicial,
-  ATIVIDADES_INICIAIS_SUGERIDAS,
-  type Atividade,
-} from "@/lib/calc/calendario";
+import { type Atividade } from "@/lib/calc/calendario";
+import { montarCalendarioAutomatico, type EventoTipologiaVendas, type EventoFinanciamentoMensal } from "@/lib/calc/calendario-automatico";
 import {
   listarAtividades,
-  criarAtividade,
   atualizarAtividade,
-  apagarAtividade,
-  duplicarAtividade,
 } from "@/lib/supabase/project-timeline";
 import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
 import { calcularCashFlow } from "@/lib/calc/cashflow";
-import { gerarRecebimentosMensais } from "@/lib/calc/vendas";
+import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "@/lib/calc/vendas";
+import { gerarComissaoMensal } from "@/lib/calc/sales-commission";
 import {
   calcularMatrizSensibilidade,
   extrairIndicador,
@@ -151,11 +168,13 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
-  const [calculando, setCalculando] = useState(false);
 
   // Fase 2: localização/áreas estruturadas + tipologias no motor novo (areas.ts)
   const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
   const [tipologiasNovas, setTipologiasNovas] = useState<Typology[]>([]);
+  const [unidades, setUnidades] = useState<UnidadeVenda[]>([]);
+  const [regrasPreco, setRegrasPreco] = useState<RegraEvolucaoPreco[]>([]);
+  const [cenarios, setCenarios] = useState<Cenario[]>([]);
   const [custosNovos, setCustosNovos] = useState<LinhaCusto[]>([]);
   const [financiamento, setFinanciamento] = useState<ParametrosFinanciamento>(FINANCIAMENTO_VAZIO);
   const [estruturaCapital, setEstruturaCapital] = useState<EstruturaCapitalEstado>(ESTRUTURA_CAPITAL_VAZIA);
@@ -204,6 +223,12 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     }
     const tipologias = await listarTipologiasProjeto(supabase, id);
     setTipologiasNovas(tipologias);
+    const unidadesCarregadas = await listarUnidades(supabase, id);
+    setUnidades(unidadesCarregadas);
+    const regrasPrecoCarregadas = await listarRegrasPreco(supabase, id);
+    setRegrasPreco(regrasPrecoCarregadas);
+    const cenariosCarregados = await listarCenarios(supabase, id);
+    setCenarios(cenariosCarregados);
     const custos = await listarCustosProjeto(supabase, id);
     setCustosNovos(custos);
     const parametrosFinanciamento = await carregarFinanciamento(supabase, id);
@@ -274,6 +299,9 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       // Tipologias do motor novo: cada uma já tem id real na BD (criada ao
       // clicar "+ Adicionar"), por isso aqui é sempre update, nunca insert.
       await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
+      await Promise.all(unidades.map((u) => atualizarUnidade(supabase, u.id, u)));
+      await Promise.all(regrasPreco.map((r) => atualizarRegraPreco(supabase, r.id, r)));
+      await Promise.all(cenarios.filter((c) => !c.ehBase).map((c) => atualizarCenario(supabase, c.id, c)));
       await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
       await guardarFinanciamento(supabase, id, financiamento);
       await guardarEstruturaCapital(supabase, id, estruturaCapital);
@@ -293,6 +321,9 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       inputs,
       identificacao,
       tipologiasNovas,
+      unidades,
+      regrasPreco,
+      cenarios,
       custosNovos,
       financiamento,
       estruturaCapital,
@@ -317,6 +348,9 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     inputs,
     identificacao,
     tipologiasNovas,
+    unidades,
+    regrasPreco,
+    cenarios,
     custosNovos,
     financiamento,
     estruturaCapital,
@@ -388,11 +422,137 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   async function removerTipologiaNova(tipId: string) {
     await apagarTipologia(supabase, tipId);
     setTipologiasNovas((prev) => prev.filter((t) => t.id !== tipId));
+    setUnidades((prev) => prev.filter((u) => u.tipologiaId !== tipId));
+  }
+
+  /**
+   * Sincroniza as unidades da Sales Table com a quantidade atual da
+   * tipologia. Nunca apaga sozinho uma unidade vendida ou personalizada —
+   * quando há candidatas a remover, pede confirmação primeiro (secção 14).
+   */
+  async function sincronizarUnidades(tipologia: Typology) {
+    const existentes = unidades.filter((u) => u.tipologiaId === tipologia.id);
+    const r = calcularSincronizacao(existentes, tipologia.quantidade);
+
+    if (r.paraCriar > 0) {
+      const novas = gerarUnidadesDeTipologia(tipologia, r.paraCriar, existentes.length);
+      const criadas = await criarUnidades(supabase, id, novas);
+      setUnidades((prev) => [...prev, ...criadas]);
+      return;
+    }
+
+    if (r.candidatasARemover.length > 0) {
+      const confirmar = window.confirm(
+        `A quantidade de "${tipologia.nome}" desceu para ${tipologia.quantidade}. Isto remove ${r.candidatasARemover.length} unidade(s) ainda disponível(is) e não personalizada(s). Unidades vendidas ou editadas manualmente nunca são apagadas. Continuar?`
+      );
+      if (!confirmar) return;
+      const ids = r.candidatasARemover.map((u) => u.id);
+      await apagarUnidades(supabase, ids);
+      setUnidades((prev) => prev.filter((u) => !ids.includes(u.id)));
+    }
+
+    if (r.bloqueadasParaRemover.length > 0 && r.candidatasARemover.length === 0 && r.paraCriar === 0) {
+      window.alert(
+        `Não é possível reduzir mais "${tipologia.nome}": as ${r.bloqueadasParaRemover.length} unidades restantes já estão vendidas ou foram personalizadas.`
+      );
+    }
+  }
+
+  function atualizarUnidadeLocal(unidadeId: string, patch: Partial<UnidadeVenda>) {
+    setUnidades((prev) => prev.map((u) => (u.id === unidadeId ? { ...u, ...patch, personalizada: true } : u)));
+  }
+
+  function venderUnidade(unidadeId: string, dataVenda: string) {
+    const unidade = unidades.find((u) => u.id === unidadeId);
+    if (!unidade) return;
+    const validacao = validarVenda(unidade);
+    if (!validacao.valido) {
+      window.alert(validacao.erro);
+      return;
+    }
+    setUnidades((prev) => prev.map((u) => (u.id === unidadeId ? { ...u, estadoComercial: "vendido", dataVenda } : u)));
+  }
+
+  async function adicionarRegraPreco() {
+    const nova = await criarRegraPreco(supabase, id, regrasPreco.length);
+    if (nova) setRegrasPreco((prev) => [...prev, nova]);
+  }
+
+  function atualizarRegraPrecoLocal(regraId: string, patch: Partial<RegraEvolucaoPreco>) {
+    setRegrasPreco((prev) => prev.map((r) => (r.id === regraId ? { ...r, ...patch } : r)));
+  }
+
+  async function removerRegraPreco(regraId: string) {
+    await apagarRegraPreco(supabase, regraId);
+    setRegrasPreco((prev) => prev.filter((r) => r.id !== regraId));
+  }
+
+  /**
+   * Aplica as regras de evolução de preços a todas as unidades elegíveis
+   * (disponíveis, sem override manual, sem preço bloqueado) — nunca às
+   * unidades já vendidas ou personalizadas.
+   */
+  function aplicarEvolucaoPrecos(dataLancamentoComercial: string) {
+    if (!dataLancamentoComercial) {
+      window.alert("Preenche primeiro a data de lançamento comercial no Plano de Vendas.");
+      return;
+    }
+    const datasEfetivas = calcularDatasEfetivas(
+      unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+      tipologiasNovas.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+      dataLancamentoComercial
+    );
+    const unidadesParaAjuste = unidades.map((u) => ({
+      id: u.id,
+      tipologiaId: u.tipologiaId,
+      dataVendaEfetiva: datasEfetivas.get(u.id) ?? null,
+      disponivel: u.estadoComercial === "disponivel",
+      precoBloqueado: u.precoBloqueado,
+      overrideManualValor: u.overrideManualValor,
+    }));
+    const ajustes = calcularAjustesParaSalesTable(unidadesParaAjuste, regrasPreco, dataLancamentoComercial);
+    setUnidades((prev) => prev.map((u) => (ajustes.has(u.id) ? { ...u, ajusteFaseComercialPct: ajustes.get(u.id)! } : u)));
+  }
+
+  async function adicionarCenarioConservador() {
+    const novo = await criarCenario(supabase, id, criarCenarioConservador(null));
+    if (novo) setCenarios((prev) => [...prev, novo]);
+  }
+
+  async function adicionarCenarioOtimista() {
+    const novo = await criarCenario(supabase, id, criarCenarioOtimista(null));
+    if (novo) setCenarios((prev) => [...prev, novo]);
+  }
+
+  async function duplicarCenarioHandler(original: Cenario) {
+    const copia = duplicarCenario(original, `${original.nome} (cópia)`, null);
+    const novo = await criarCenario(supabase, id, copia);
+    if (novo) setCenarios((prev) => [...prev, novo]);
+  }
+
+  function atualizarCenarioLocal(cenarioId: string, patch: Partial<Cenario>) {
+    setCenarios((prev) => prev.map((c) => (c.id === cenarioId ? { ...c, ...patch } : c)));
+  }
+
+  async function removerCenario(cenario: Cenario) {
+    if (!podeApagarCenario(cenario)) {
+      window.alert("O cenário-base nunca pode ser apagado.");
+      return;
+    }
+    const apagou = await apagarCenario(supabase, cenario);
+    if (apagou) setCenarios((prev) => prev.filter((c) => c.id !== cenario.id));
   }
 
   async function adicionarCustoNovo(grupo: GrupoCusto, nome: string) {
     const novo = await criarCusto(supabase, id, grupo, nome, custosNovos.length);
-    if (novo) setCustosNovos((prev) => [...prev, novo]);
+    if (!novo) return;
+    const baseAutomatica = BASE_AUTOMATICA_POR_NOME[nome];
+    if (baseAutomatica) {
+      await atualizarCusto(supabase, novo.id, { tipoCalculo: baseAutomatica });
+      setCustosNovos((prev) => [...prev, { ...novo, tipoCalculo: baseAutomatica }]);
+    } else {
+      setCustosNovos((prev) => [...prev, novo]);
+    }
   }
 
   function atualizarCustoNovoLocal(custoId: string, patch: Partial<LinhaCusto>) {
@@ -501,79 +661,12 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         projeto: nome,
         localizacao: [identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || null,
         valorAquisicao: inputs.custoTerreno || 0,
-        gdv: resumoProgramaAtual.receitaTotal,
+        gdv: vgvBrutoAtual,
         custoTotal: resumoCustosAtual.custoTotal,
         impostoEstimado,
       },
     };
     return criarLeadConsultoria(supabase, lead);
-  }
-
-  async function adicionarAtividade(nome: string) {
-    const nova = await criarAtividade(supabase, id, nome, atividades.length);
-    if (nova) setAtividades((prev) => [...prev, nova]);
-  }
-
-  function atualizarAtividadeLocal(atividadeId: string, patch: Partial<Atividade>) {
-    setAtividades((prev) => prev.map((a) => (a.id === atividadeId ? { ...a, ...patch } : a)));
-  }
-
-  function handleDataInicialAtividade(atividadeId: string, novaData: string) {
-    const atividade = atividades.find((a) => a.id === atividadeId);
-    if (!atividade) return;
-    if (novaData && atividade.duracaoMeses) {
-      const r = aoEditarDataInicial(novaData, atividade.duracaoMeses);
-      atualizarAtividadeLocal(atividadeId, { dataInicial: r.dataInicial, dataFinal: r.dataFinal });
-    } else {
-      atualizarAtividadeLocal(atividadeId, { dataInicial: novaData || null });
-    }
-  }
-
-  function handleDuracaoAtividade(atividadeId: string, novaDuracao: number) {
-    const atividade = atividades.find((a) => a.id === atividadeId);
-    if (!atividade) return;
-    if (atividade.dataInicial && novaDuracao > 0) {
-      const r = aoEditarDuracao(atividade.dataInicial, novaDuracao);
-      atualizarAtividadeLocal(atividadeId, { duracaoMeses: r.duracaoMeses, dataFinal: r.dataFinal });
-    } else {
-      atualizarAtividadeLocal(atividadeId, { duracaoMeses: novaDuracao || null });
-    }
-  }
-
-  function handleDataFinalAtividade(atividadeId: string, novaDataFinal: string) {
-    const atividade = atividades.find((a) => a.id === atividadeId);
-    if (!atividade || !atividade.dataInicial || !novaDataFinal) {
-      atualizarAtividadeLocal(atividadeId, { dataFinal: novaDataFinal || null });
-      return;
-    }
-    const r = aoEditarDataFinal(atividade.dataInicial, novaDataFinal);
-    atualizarAtividadeLocal(atividadeId, { duracaoMeses: r.duracaoMeses, dataFinal: r.dataFinal });
-  }
-
-  async function removerAtividade(atividadeId: string) {
-    await apagarAtividade(supabase, atividadeId);
-    setAtividades((prev) => prev.filter((a) => a.id !== atividadeId));
-  }
-
-  async function duplicarAtividadeHandler(atividade: Atividade) {
-    const nova = await duplicarAtividade(supabase, id, atividade, atividades.length);
-    if (nova) setAtividades((prev) => [...prev, nova]);
-  }
-
-  function reordenarAtividade(atividadeId: string, direcao: -1 | 1) {
-    setAtividades((prev) => {
-      const ordenadas = [...prev].sort((a, b) => a.ordem - b.ordem);
-      const idx = ordenadas.findIndex((a) => a.id === atividadeId);
-      const novoIdx = idx + direcao;
-      if (idx === -1 || novoIdx < 0 || novoIdx >= ordenadas.length) return prev;
-      const ordemA = ordenadas[idx].ordem;
-      const ordemB = ordenadas[novoIdx].ordem;
-      return prev.map((a) => {
-        if (a.id === ordenadas[idx].id) return { ...a, ordem: ordemB };
-        if (a.id === ordenadas[novoIdx].id) return { ...a, ordem: ordemA };
-        return a;
-      });
-    });
   }
 
   function updatePlanoVendas<K extends keyof PlanoVendas>(key: K, value: PlanoVendas[K]) {
@@ -628,23 +721,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setStep((s) => Math.min(s + 1, STEPS.length - 1));
   }
 
-  async function calcular() {
-    setCalculando(true);
-    const results = calcularViabilidade(inputs);
-    await supabase
-      .from("projects")
-      .update({
-        nome,
-        tipo_projeto: tipoProjeto,
-        localizacao: inputs.localizacao,
-        inputs,
-        results,
-        status: "calculado",
-        tir: results.tir,
-        roi: results.roi,
-        margem: results.margem,
-      })
-      .eq("id", id);
+  function verResultados() {
     router.push(`/app/projetos/${id}`);
   }
 
@@ -654,22 +731,103 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
   if (loading) return <div className="p-8 text-sm text-[#8FA6AF]">A carregar…</div>;
 
+  const resumoProgramaAtual = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const contextoCustoAtual: ContextoCusto = {
     valorAquisicao: inputs.custoTerreno || 0,
-    abcTotal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
-    gcaTotal: calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    abcAcimaSolo: identificacao.abcAcimaSolo ?? 0,
+    abcAbaixoSolo: identificacao.abcAbaixoSolo ?? 0,
+    abdTotal: resumoProgramaAtual.areaDependenteTotal,
     numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
   };
   const resumoCustosAtual = agregarCustos(resolverCustos(custosNovos, contextoCustoAtual));
-  const resumoProgramaAtual = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
+  const abcTotalAtual = calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas);
+  const salesTableResolvida = resolverSalesTable(unidades, tipologiasNovas);
+  const vgvBrutoAtual = calcVgvBruto(salesTableResolvida);
   const contextoFeesAtual: ContextoFees = {
     valorAquisicao: contextoCustoAtual.valorAquisicao,
     hardCostsTotal: resumoCustosAtual.totalHardCosts,
     capexTotal: resumoCustosAtual.custoTotal,
     custoTotal: resumoCustosAtual.custoTotal,
-    abcTotal: contextoCustoAtual.abcTotal,
+    abcTotal: abcTotalAtual,
     numeroUnidades: contextoCustoAtual.numeroUnidades,
   };
+
+  // Cash flow calculado uma única vez aqui — partilhado pela etapa final
+  // (Cash flow e resultados) e pelo Calendário (para mostrar drawdowns e
+  // liquidação sem recalcular o mesmo motor de maneira diferente, secção
+  // 19 do plano).
+  const recebimentosValidosAtual = validarEstruturaRecebimentos(planoVendas.estruturaRecebimentos);
+  const datasPreenchidasAtual = Boolean(
+    planoVendas.dataLancamentoComercial && planoVendas.dataInicioConstrucao && planoVendas.dataFimConstrucao && planoVendas.dataEscritura
+  );
+  const prontoParaCalcularAtual = recebimentosValidosAtual && datasPreenchidasAtual && custosNovos.length > 0;
+
+  let resultadoAtual: ReturnType<typeof calcularCashFlow> | null = null;
+  if (prontoParaCalcularAtual) {
+    const { linhas: recebimentosCalculados } =
+      salesTableResolvida.length > 0
+        ? gerarRecebimentosDaSalesTable(salesTableResolvida, tipologiasNovas, planoVendas)
+        : gerarRecebimentosMensais(vgvBrutoAtual, planoVendas);
+
+    let comissaoPorMesCalculada: Map<string, number> | undefined;
+    if (salesTableResolvida.length > 0) {
+      const { linhas: linhasComissaoCalculadas } = gerarComissaoMensal(
+        salesTableResolvida,
+        tipologiasNovas,
+        planoVendas.dataLancamentoComercial,
+        planoVendas.dataEscritura,
+        {
+          percentagemComissao: planoVendas.comissaoMediacaoPct,
+          taxaIva: planoVendas.comissaoTaxaIva,
+          pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+          pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+          ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+        }
+      );
+      comissaoPorMesCalculada = new Map(linhasComissaoCalculadas.map((l) => [l.mes, l.total]));
+    }
+
+    // Cash sweep (secção 24): resolve em que mês o gatilho é atingido a
+    // partir dos dados reais da Sales Table e dos recebimentos —
+    // financiamento.ts não conhece a Sales Table, só recebe o mês já
+    // resolvido.
+    let mesInicioCashSweepCalculado: string | null = null;
+    if (financiamento.cashSweepAtivo) {
+      const totalUnidadesAtual = unidades.length;
+      const vgvTotalAtual = vgvBrutoAtual;
+      const datasEfetivasAtual =
+        salesTableResolvida.length > 0
+          ? calcularDatasEfetivas(
+              unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+              tipologiasNovas.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+              planoVendas.dataLancamentoComercial
+            )
+          : new Map<string, string>();
+      const mesesUnicos = [...new Set(recebimentosCalculados.map((l) => l.mes))].sort();
+      let vgvAcumulado = 0;
+      const eventosCashSweep = mesesUnicos.map((mes) => {
+        vgvAcumulado += recebimentosCalculados.filter((l) => l.mes === mes).reduce((s, l) => s + l.total, 0);
+        const unidadesVendidasAteMes = [...datasEfetivasAtual.values()].filter((d) => d <= mes).length;
+        return {
+          mes,
+          temEscritura: planoVendas.dataEscritura ? mes >= planoVendas.dataEscritura.slice(0, 7) : false,
+          pctVendidoAcumulado: totalUnidadesAtual > 0 ? unidadesVendidasAteMes / totalUnidadesAtual : 0,
+          pctVgvRecebidoAcumulado: vgvTotalAtual > 0 ? vgvAcumulado / vgvTotalAtual : 0,
+        };
+      });
+      mesInicioCashSweepCalculado = resolverMesInicioCashSweep(financiamento, eventosCashSweep);
+    }
+
+    resultadoAtual = calcularCashFlow({
+      linhasCusto: custosNovos,
+      contextoCusto: contextoCustoAtual,
+      recebimentos: recebimentosCalculados,
+      comissaoPorMes: comissaoPorMesCalculada,
+      parametrosFinanciamento: financiamento,
+      mesInicioCashSweep: mesInicioCashSweepCalculado,
+      saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
+    });
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-8">
@@ -718,8 +876,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       )}
       {step === 1 && (
         <StepPrograma
-          inputs={inputs}
-          updateInput={updateInput}
           tipologiasNovas={tipologiasNovas}
           identificacao={identificacao}
           onAdicionarTipologiaNova={adicionarTipologiaNova}
@@ -728,6 +884,16 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           sugestoes={sugestoes}
           onPedirSugestao={pedirSugestaoLandwise}
           onAplicarSugestao={aplicarSugestao}
+          unidades={unidades}
+          onSincronizarUnidades={sincronizarUnidades}
+          onAtualizarUnidade={atualizarUnidadeLocal}
+          onVenderUnidade={venderUnidade}
+          dataLancamentoComercial={planoVendas.dataLancamentoComercial}
+          regrasPreco={regrasPreco}
+          onAdicionarRegraPreco={adicionarRegraPreco}
+          onAtualizarRegraPreco={atualizarRegraPrecoLocal}
+          onRemoverRegraPreco={removerRegraPreco}
+          onAplicarEvolucaoPrecos={() => aplicarEvolucaoPrecos(planoVendas.dataLancamentoComercial)}
         />
       )}
       {step === 2 && (
@@ -743,8 +909,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       )}
       {step === 3 && (
         <StepFinanciamento
-          inputs={inputs}
-          updateInput={updateInput}
           financiamento={financiamento}
           onToggleComFinanciamento={handleToggleFinanciamento}
           updateFinanciamento={updateFinanciamento}
@@ -771,40 +935,45 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           impostos={impostos}
           updateImpostos={updateImpostos}
           valorAquisicao={inputs.custoTerreno || 0}
+          resultado={resultadoAtual}
           onSolicitarConsultoria={handleSolicitarConsultoria}
         />
       )}
       {step === 6 && (
         <StepCalendario
-          inputs={inputs}
-          updateInput={updateInput}
-          atividades={atividades}
-          onAdicionarAtividade={adicionarAtividade}
-          onAtualizarAtividade={atualizarAtividadeLocal}
-          onHandleDataInicial={handleDataInicialAtividade}
-          onHandleDuracao={handleDuracaoAtividade}
-          onHandleDataFinal={handleDataFinalAtividade}
-          onRemoverAtividade={removerAtividade}
-          onDuplicarAtividade={duplicarAtividadeHandler}
-          onReordenarAtividade={reordenarAtividade}
+          custosNovos={custosNovos}
+          planoVendas={planoVendas}
+          unidades={unidades}
+          tipologiasNovas={tipologiasNovas}
+          resultado={resultadoAtual}
         />
       )}
       {step === 7 && (
         <StepCashFlowResultados
-          calculando={calculando}
-          onCalcular={calcular}
+          onVerResultados={verResultados}
           planoVendas={planoVendas}
           updatePlanoVendas={updatePlanoVendas}
           updateEstruturaRecebimentos={updateEstruturaRecebimentos}
           custosNovos={custosNovos}
           contextoCusto={contextoCustoAtual}
           resumoPrograma={resumoProgramaAtual}
+          vgvBruto={vgvBrutoAtual}
           identificacao={identificacao}
           financiamento={financiamento}
           estruturaCapital={estruturaCapital}
           hurdles={hurdles}
           feesNovos={feesNovos}
           contextoFees={contextoFeesAtual}
+          resultado={resultadoAtual}
+          prontoParaCalcular={prontoParaCalcularAtual}
+          salesTableResolvida={salesTableResolvida}
+          tipologiasNovas={tipologiasNovas}
+          cenarios={cenarios}
+          onAdicionarCenarioConservador={adicionarCenarioConservador}
+          onAdicionarCenarioOtimista={adicionarCenarioOtimista}
+          onDuplicarCenario={duplicarCenarioHandler}
+          onAtualizarCenario={atualizarCenarioLocal}
+          onRemoverCenario={removerCenario}
         />
       )}
 
@@ -857,9 +1026,9 @@ function StepIdentificacao({
   onEscolherOpcaoCp: (opcao: { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }) => void;
   tipologiasNovas: Typology[];
 }) {
-  const gcaProgramado = calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas);
+  const abcTotalProgramado = calcAbcTotalProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas);
   const abpProgramada = tipologiasNovas.reduce((s, t) => s + t.quantidade * t.abpUnidade, 0);
-  const eficiencia = calcEficiencia(abpProgramada, gcaProgramado);
+  const eficiencia = calcEficiencia(abpProgramada, abcTotalProgramado);
   const divergencia =
     identificacao.abpEstimada && tipologiasNovas.length > 0
       ? calcDivergenciaAbp(identificacao.abpEstimada, tipologiasNovas)
@@ -967,7 +1136,7 @@ function StepIdentificacao({
 
       <Card
         title="Áreas do projeto"
-        subtitle="GCA e eficiência são calculados automaticamente a partir destes valores e do programa de tipologias."
+        subtitle="ABC Total e eficiência são calculados automaticamente a partir destes valores e do programa de tipologias."
       >
         <Row>
           <Field label="ABC acima do solo (m²)">
@@ -1007,8 +1176,8 @@ function StepIdentificacao({
         </Row>
         <div className="flex gap-6 mt-2 text-sm">
           <div>
-            <span className="text-xs text-[#59636A] block">GCA programado</span>
-            <span className="font-semibold text-[#142B3A]">{gcaProgramado ? `${Math.round(gcaProgramado)} m²` : "—"}</span>
+            <span className="text-xs text-[#59636A] block">ABC Total programado</span>
+            <span className="font-semibold text-[#142B3A]">{abcTotalProgramado ? `${Math.round(abcTotalProgramado)} m²` : "—"}</span>
           </div>
           <div>
             <span className="text-xs text-[#59636A] block">Eficiência</span>
@@ -1063,8 +1232,6 @@ function CheckboxIdent({ label, checked, onChange }: { label: string; checked: b
 // Etapa 2 — Programa e vendas (tipologias + mapa de vendas)
 // ============================================================
 function StepPrograma({
-  inputs,
-  updateInput,
   tipologiasNovas,
   identificacao,
   onAdicionarTipologiaNova,
@@ -1073,9 +1240,17 @@ function StepPrograma({
   sugestoes,
   onPedirSugestao,
   onAplicarSugestao,
+  unidades,
+  onSincronizarUnidades,
+  onAtualizarUnidade,
+  onVenderUnidade,
+  dataLancamentoComercial,
+  regrasPreco,
+  onAdicionarRegraPreco,
+  onAtualizarRegraPreco,
+  onRemoverRegraPreco,
+  onAplicarEvolucaoPrecos,
 }: {
-  inputs: ProjectInputs;
-  updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
   tipologiasNovas: Typology[];
   identificacao: IdentificacaoEstruturada;
   onAdicionarTipologiaNova: () => void;
@@ -1084,182 +1259,25 @@ function StepPrograma({
   sugestoes: Record<string, { loading: boolean; resultado?: SugestaoPreco; erro?: boolean }>;
   onPedirSugestao: (t: Typology) => void;
   onAplicarSugestao: (id: string, precoM2: number) => void;
+  unidades: UnidadeVenda[];
+  onSincronizarUnidades: (t: Typology) => void;
+  onAtualizarUnidade: (id: string, patch: Partial<UnidadeVenda>) => void;
+  onVenderUnidade: (id: string, dataVenda: string) => void;
+  dataLancamentoComercial: string;
+  regrasPreco: RegraEvolucaoPreco[];
+  onAdicionarRegraPreco: () => void;
+  onAtualizarRegraPreco: (id: string, patch: Partial<RegraEvolucaoPreco>) => void;
+  onRemoverRegraPreco: (id: string) => void;
+  onAplicarEvolucaoPrecos: () => void;
 }) {
   const resumo = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const semLocalizacao = !identificacao.freguesia && !identificacao.concelho;
-  function updateTipologia(i: number, patch: Partial<Tipologia>) {
-    const novas = [...inputs.tipologias];
-    novas[i] = { ...novas[i], ...patch };
-    updateInput("tipologias", novas);
-  }
-  function addTipologia() {
-    updateInput("tipologias", [
-      ...inputs.tipologias,
-      { nome: `T${inputs.tipologias.length}`, gpa: 80, varanda: 10, terraco: 0, precoBaseM2: 3800 },
-    ]);
-  }
-  function removeTipologia(i: number) {
-    updateInput(
-      "tipologias",
-      inputs.tipologias.filter((_, idx) => idx !== i)
-    );
-  }
-
-  function updateLinha(i: number, patch: Partial<LinhaVendas>) {
-    const novas = [...inputs.mapaVendas];
-    novas[i] = { ...novas[i], ...patch };
-    updateInput("mapaVendas", novas);
-  }
-  function addLinha() {
-    updateInput("mapaVendas", [
-      ...inputs.mapaVendas,
-      { bloco: "Bloco A", piso: 0, tipologia: inputs.tipologias[0]?.nome ?? "", quantidade: 1, premioPiso: 0 },
-    ]);
-  }
-  function removeLinha(i: number) {
-    updateInput(
-      "mapaVendas",
-      inputs.mapaVendas.filter((_, idx) => idx !== i)
-    );
-  }
-
-  const totalUnidades = inputs.mapaVendas.reduce((s, l) => s + l.quantidade, 0);
 
   return (
     <>
-      <Card title="Tipologias" subtitle="Defina cada tipologia uma vez — o mapa de vendas usa-as automaticamente.">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-xs text-[#59636A] uppercase text-left">
-              <th className="pb-2">Tipologia</th>
-              <th className="pb-2">GPA (m²)</th>
-              <th className="pb-2">Varanda (m²)</th>
-              <th className="pb-2">Terraço (m²)</th>
-              <th className="pb-2">Preço base (€/m²)</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {inputs.tipologias.map((t, i) => (
-              <tr key={i}>
-                <td className="pr-2 py-1">
-                  <input className="input-dark" value={t.nome} onChange={(e) => updateTipologia(i, { nome: e.target.value })} />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.gpa}
-                    onChange={(e) => updateTipologia(i, { gpa: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.varanda}
-                    onChange={(e) => updateTipologia(i, { varanda: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.terraco}
-                    onChange={(e) => updateTipologia(i, { terraco: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={t.precoBaseM2}
-                    onChange={(e) => updateTipologia(i, { precoBaseM2: Number(e.target.value) })}
-                  />
-                </td>
-                <td>
-                  <button onClick={() => removeTipologia(i)} className="text-[#A13D2E] text-xs">
-                    Remover
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <button onClick={addTipologia} className="text-[#B96343] text-sm font-semibold mt-3">
-          + Adicionar tipologia
-        </button>
-      </Card>
-
-      <Card title="Mapa de vendas" subtitle="Cada linha é um grupo de unidades iguais — bloco, piso, tipologia e quantidade.">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-xs text-[#59636A] uppercase text-left">
-              <th className="pb-2">Bloco</th>
-              <th className="pb-2">Piso</th>
-              <th className="pb-2">Tipologia</th>
-              <th className="pb-2">Quantidade</th>
-              <th className="pb-2">Prémio piso (%)</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody>
-            {inputs.mapaVendas.map((l, i) => (
-              <tr key={i}>
-                <td className="pr-2 py-1">
-                  <input className="input-dark" value={l.bloco} onChange={(e) => updateLinha(i, { bloco: e.target.value })} />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={l.piso}
-                    onChange={(e) => updateLinha(i, { piso: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <select className="input-dark" value={l.tipologia} onChange={(e) => updateLinha(i, { tipologia: e.target.value })}>
-                    {inputs.tipologias.map((t) => (
-                      <option key={t.nome} value={t.nome}>
-                        {t.nome}
-                      </option>
-                    ))}
-                  </select>
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={l.quantidade}
-                    onChange={(e) => updateLinha(i, { quantidade: Number(e.target.value) })}
-                  />
-                </td>
-                <td className="pr-2 py-1">
-                  <input
-                    type="number"
-                    className="input-dark"
-                    value={l.premioPiso * 100}
-                    onChange={(e) => updateLinha(i, { premioPiso: Number(e.target.value) / 100 })}
-                  />
-                </td>
-                <td>
-                  <button onClick={() => removeLinha(i)} className="text-[#A13D2E] text-xs">
-                    Remover
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <button onClick={addLinha} className="text-[#B96343] text-sm font-semibold mt-3">
-          + Adicionar grupo de unidades
-        </button>
-        <p className="text-xs text-[#59636A] mt-4">Total de unidades: {totalUnidades}</p>
-      </Card>
-
       <Card
-        title="Tipologias — motor novo (Fase 2)"
-        subtitle="Áreas dependentes e área vendável equivalente calculadas por src/lib/calc/areas.ts. Ainda não alimenta o resultado financeiro abaixo — só o motor antigo (tipologias/mapa de vendas acima) faz isso, por agora."
+        title="Programa de tipologias"
+        subtitle="Cada alteração de quantidade sincroniza automaticamente a Sales Table abaixo — que é a única fonte do VGV."
       >
         {semLocalizacao && (
           <p className="text-xs text-[#B96343] mb-3">
@@ -1372,7 +1390,10 @@ function StepPrograma({
                   <td className="pr-2 py-1 text-[#59636A]">
                     €{Math.round((t.abpUnidade + t.varandaM2 * t.varandaPctValorizacao + t.terracoM2 * t.terracoPctValorizacao) * t.precoBaseM2 * t.quantidade).toLocaleString("pt-PT")}
                   </td>
-                  <td>
+                  <td className="flex gap-2">
+                    <button onClick={() => onSincronizarUnidades(t)} className="text-[#B96343] text-xs font-semibold">
+                      Sincronizar Sales Table
+                    </button>
                     <button onClick={() => onRemoverTipologiaNova(t.id)} className="text-[#A13D2E] text-xs">
                       Remover
                     </button>
@@ -1397,13 +1418,259 @@ function StepPrograma({
               <span className="font-semibold text-[#142B3A]">{Math.round(resumo.areaVendavelEquivalenteTotal)} m²</span>
             </div>
             <div>
-              <span className="text-xs text-[#59636A] block">Receita total (GDV)</span>
+              <span className="text-xs text-[#59636A] block">Receita estimada (antes de gerar a Sales Table)</span>
               <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.receitaTotal).toLocaleString("pt-PT")}</span>
             </div>
           </div>
         )}
       </Card>
+
+      <Card
+        title="Curva de vendas por tipologia"
+        subtitle="Informa só meses e velocidade — o Landwise projeta a data de cada unidade, nunca fraciona uma unidade nem excede o stock."
+      >
+        {!dataLancamentoComercial && (
+          <p className="text-xs text-[#B96343] mb-3">
+            Preenche a data de lançamento comercial na etapa &quot;Cash flow e resultados&quot; → &quot;Plano de vendas&quot; para ver a projeção de datas.
+          </p>
+        )}
+        {tipologiasNovas.map((t) => {
+          const agenda = dataLancamentoComercial
+            ? gerarAgendaAbsorcao(t.quantidade, t.mesesParaPrimeiraVenda, t.unidadesPorMes, dataLancamentoComercial)
+            : [];
+          const resumoAbsorcao = calcResumoAbsorcao(agenda, t.quantidade);
+          return (
+            <div key={t.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+              <p className="text-xs font-semibold text-[#142B3A] mb-2">{t.nome}</p>
+              <Row>
+                <Field label="Meses após o lançamento para a primeira venda">
+                  <input
+                    type="number"
+                    className="input-dark"
+                    value={t.mesesParaPrimeiraVenda}
+                    onChange={(e) => onAtualizarTipologiaNova(t.id, { mesesParaPrimeiraVenda: Number(e.target.value) })}
+                  />
+                </Field>
+                <Field label="Unidades vendidas por mês">
+                  <input
+                    type="number"
+                    step="0.1"
+                    className="input-dark"
+                    value={t.unidadesPorMes}
+                    onChange={(e) => onAtualizarTipologiaNova(t.id, { unidadesPorMes: Number(e.target.value) })}
+                  />
+                </Field>
+              </Row>
+              {resumoAbsorcao.length > 0 && (
+                <div className="mt-2 text-xs text-[#59636A]">
+                  <p>
+                    Última venda projetada: <strong className="text-[#142B3A]">{resumoAbsorcao[resumoAbsorcao.length - 1].mes}</strong> ·
+                    Duração da absorção: <strong className="text-[#142B3A]">{resumoAbsorcao.length} meses</strong>
+                  </p>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </Card>
+
+      <Card
+        title="Evolução de preços"
+        subtitle="Desconto no lançamento, aumentos por tempo ou por % vendido — geral ou por tipologia. Nunca altera unidades já vendidas, bloqueadas ou com override manual."
+      >
+        {regrasPreco.map((r) => (
+          <div key={r.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+            <Row>
+              <Field label="Âmbito">
+                <select
+                  className="input-dark"
+                  value={r.escopo.tipo === "tipologia" ? r.escopo.tipologiaId : "geral"}
+                  onChange={(e) =>
+                    onAtualizarRegraPreco(r.id, {
+                      escopo: e.target.value === "geral" ? { tipo: "geral" } : { tipo: "tipologia", tipologiaId: e.target.value },
+                    })
+                  }
+                >
+                  <option value="geral">Geral (todas as tipologias)</option>
+                  {tipologiasNovas.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.nome}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Gatilho">
+                <select
+                  className="input-dark"
+                  value={r.gatilho}
+                  onChange={(e) => onAtualizarRegraPreco(r.id, { gatilho: e.target.value as TipoGatilhoPreco })}
+                >
+                  <option value="meses_apos_lancamento">Meses após o lançamento</option>
+                  <option value="data">Data específica</option>
+                  <option value="pct_vendido_projeto">% do projeto vendido</option>
+                  <option value="pct_vendido_tipologia">% da tipologia vendido</option>
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              {r.gatilho === "data" ? (
+                <Field label="Data do gatilho">
+                  <input
+                    type="date"
+                    className="input-dark"
+                    value={r.valorGatilhoData ?? ""}
+                    onChange={(e) => onAtualizarRegraPreco(r.id, { valorGatilhoData: e.target.value })}
+                  />
+                </Field>
+              ) : r.gatilho === "meses_apos_lancamento" ? (
+                <Field label="Meses após o lançamento">
+                  <input
+                    type="number"
+                    className="input-dark"
+                    value={r.valorGatilhoNumero ?? 0}
+                    onChange={(e) => onAtualizarRegraPreco(r.id, { valorGatilhoNumero: Number(e.target.value) })}
+                  />
+                </Field>
+              ) : (
+                <Field label="% vendido (gatilho)">
+                  <PercentInput value={r.valorGatilhoNumero ?? 0} onChange={(v) => onAtualizarRegraPreco(r.id, { valorGatilhoNumero: v })} />
+                </Field>
+              )}
+              <Field label="Ajuste de preço (%)">
+                <PercentInput value={r.ajustePct} onChange={(v) => onAtualizarRegraPreco(r.id, { ajustePct: v })} />
+              </Field>
+              <Field label="Modo">
+                <select
+                  className="input-dark"
+                  value={r.modo}
+                  onChange={(e) => onAtualizarRegraPreco(r.id, { modo: e.target.value as "cumulativo" | "substituicao" })}
+                >
+                  <option value="cumulativo">Cumulativo (soma-se às anteriores)</option>
+                  <option value="substituicao">Substituição (ignora as anteriores)</option>
+                </select>
+              </Field>
+            </Row>
+            <div className="flex justify-end">
+              <button onClick={() => onRemoverRegraPreco(r.id)} className="text-[#A13D2E] text-xs">
+                Remover regra
+              </button>
+            </div>
+          </div>
+        ))}
+        <div className="flex gap-3 items-center">
+          <button onClick={onAdicionarRegraPreco} className="text-[#B96343] text-sm font-semibold">
+            + Adicionar regra
+          </button>
+          {regrasPreco.length > 0 && (
+            <button onClick={onAplicarEvolucaoPrecos} className="text-xs px-3 py-1.5 rounded-lg bg-[#142B3A] text-white font-semibold">
+              Aplicar evolução de preços à Sales Table
+            </button>
+          )}
+        </div>
+      </Card>
+
+      <Card
+        title="Sales Table"
+        subtitle="Uma linha por unidade real. É a única fonte do VGV — nenhum outro ecrã soma preços de tipologias para chegar a este valor."
+      >
+        {unidades.length === 0 && (
+          <p className="text-xs text-[#8FA6AF] mb-3">
+            Ainda sem unidades. Clica em &quot;Sincronizar Sales Table&quot; em cada tipologia acima para gerar as unidades.
+          </p>
+        )}
+        {tipologiasNovas.map((tipologia) => {
+          const unidadesDaTipologia = salesTableDaTipologia(unidades, tipologiasNovas, tipologia.id);
+          if (unidadesDaTipologia.length === 0) return null;
+          return (
+            <div key={tipologia.id} className="mb-5">
+              <p className="text-xs font-semibold text-[#142B3A] mb-2">{tipologia.nome}</p>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[#59636A] uppercase">
+                    <th className="pb-1 pr-2">Bloco</th>
+                    <th className="pb-1 pr-2">Piso</th>
+                    <th className="pb-1 pr-2">Área vendável</th>
+                    <th className="pb-1 pr-2">Prémio/desconto</th>
+                    <th className="pb-1 pr-2">Override manual</th>
+                    <th className="pb-1 pr-2">Preço final</th>
+                    <th className="pb-1 pr-2">Estado</th>
+                    <th className="pb-1 pr-2">Data venda</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unidadesDaTipologia.map((u) => (
+                    <tr key={u.id} className="border-t border-[#E3DACB]">
+                      <td className="py-1 pr-2">
+                        <input className="input-dark w-20" value={u.bloco ?? ""} onChange={(e) => onAtualizarUnidade(u.id, { bloco: e.target.value })} />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <input className="input-dark w-16" value={u.piso ?? ""} onChange={(e) => onAtualizarUnidade(u.id, { piso: e.target.value })} />
+                      </td>
+                      <td className="py-1 pr-2 text-[#59636A]">{Math.round(u.areaVendavel)} m²</td>
+                      <td className="py-1 pr-2">
+                        <input
+                          type="number"
+                          className="input-dark w-24"
+                          value={u.premioDescontoUnidade}
+                          onChange={(e) => onAtualizarUnidade(u.id, { premioDescontoUnidade: Number(e.target.value) })}
+                          disabled={u.estadoComercial !== "disponivel"}
+                        />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <input
+                          type="number"
+                          className="input-dark w-24"
+                          placeholder="—"
+                          value={u.overrideManualValor ?? ""}
+                          onChange={(e) => onAtualizarUnidade(u.id, { overrideManualValor: e.target.value ? Number(e.target.value) : null })}
+                          disabled={u.estadoComercial !== "disponivel"}
+                        />
+                      </td>
+                      <td className="py-1 pr-2 font-semibold text-[#142B3A]">€{Math.round(u.precoFinal).toLocaleString("pt-PT")}</td>
+                      <td className="py-1 pr-2">
+                        <span
+                          className={
+                            u.estadoComercial === "disponivel"
+                              ? "text-[#59636A]"
+                              : u.estadoComercial === "vendido" || u.estadoComercial === "escriturado"
+                                ? "text-[#4E7A5C] font-semibold"
+                                : "text-[#B96343]"
+                          }
+                        >
+                          {u.estadoComercial}
+                        </span>
+                      </td>
+                      <td className="py-1 pr-2">
+                        {u.estadoComercial === "disponivel" ? (
+                          <input type="date" className="input-dark" onChange={(e) => e.target.value && onVenderUnidade(u.id, e.target.value)} />
+                        ) : (
+                          u.dataVenda
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        })}
+        {unidades.length > 0 && (
+          <div className="pt-4 border-t border-[#E3DACB] text-sm">
+            <span className="text-xs text-[#59636A] block">VGV Bruto (fonte única — soma real da Sales Table)</span>
+            <span className="font-bold text-lg text-[#142B3A]">
+              €{Math.round(calcVgvBruto(resolverSalesTable(unidades, tipologiasNovas))).toLocaleString("pt-PT")}
+            </span>
+          </div>
+        )}
+      </Card>
     </>
+  );
+}
+
+function salesTableDaTipologia(unidades: UnidadeVenda[], tipologias: Typology[], tipologiaId: string) {
+  return resolverSalesTable(
+    unidades.filter((u) => u.tipologiaId === tipologiaId),
+    tipologias
   );
 }
 
@@ -1415,7 +1682,7 @@ function StepPrograma({
 // ============================================================
 const GRUPOS_CUSTO: { grupo: GrupoCusto; titulo: string; sugestoes: string[] }[] = [
   { grupo: "aquisicao", titulo: "Aquisição", sugestoes: ["Sinal", "Due diligence técnica", "Due diligence legal", "Comissão de aquisição", "Notário", "Registos"] },
-  { grupo: "hard_cost", titulo: "Hard costs", sugestoes: ["Obra acima do solo", "Obra abaixo do solo", "Jardinagem e exteriores", "Demolição", "Infraestruturas", "Contingência"] },
+  { grupo: "hard_cost", titulo: "Hard costs", sugestoes: ["Construção acima do solo", "Construção abaixo do solo", "Construção dependente", "Jardinagem e exteriores", "Demolição", "Infraestruturas", "Contingência"] },
   { grupo: "soft_cost", titulo: "Soft costs", sugestoes: ["Arquitetura", "Engenharia", "Especialidades", "Licenciamento", "Fiscalização de obra", "Seguros"] },
   { grupo: "outro", titulo: "Outros custos", sugestoes: ["Branding", "Marketing", "Comercialização", "Outro"] },
 ];
@@ -1426,10 +1693,20 @@ const TIPOS_CALCULO_CUSTO: { value: LinhaCusto["tipoCalculo"]; label: string }[]
   { value: "percentagem_hard_costs", label: "% dos hard costs" },
   { value: "percentagem_capex", label: "% do capex" },
   { value: "percentagem_custo_total", label: "% do custo total" },
-  { value: "eur_m2_abc", label: "€/m² de ABC" },
-  { value: "eur_m2_gca", label: "€/m² de GCA" },
+  { value: "eur_m2_abc_acima", label: "€/m² de ABC acima do solo" },
+  { value: "eur_m2_abc_abaixo", label: "€/m² de ABC abaixo do solo" },
+  { value: "eur_m2_abd", label: "€/m² de ABD (área dependente)" },
+  { value: "eur_m2_abc_principal", label: "€/m² de ABC (sem ABD)" },
+  { value: "eur_m2_abc_total", label: "€/m² de ABC Total (com ABD)" },
   { value: "eur_unidade", label: "€/unidade" },
 ];
+
+/** Base automática por nome (secção 21 do plano) — nunca obriga o utilizador a escolher manualmente para as 3 linhas de construção principais. */
+const BASE_AUTOMATICA_POR_NOME: Record<string, LinhaCusto["tipoCalculo"]> = {
+  "Construção acima do solo": "eur_m2_abc_acima",
+  "Construção abaixo do solo": "eur_m2_abc_abaixo",
+  "Construção dependente": "eur_m2_abd",
+};
 
 const PERFIS_DESEMBOLSO: { value: LinhaCusto["perfilDesembolso"]; label: string }[] = [
   { value: "unico_inicio", label: "Único no início" },
@@ -1457,10 +1734,12 @@ function StepAquisicaoCustos({
   onAtualizarCusto: (id: string, patch: Partial<LinhaCusto>) => void;
   onRemoverCusto: (id: string) => void;
 }) {
+  const resumoProgramaLocal = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const contexto: ContextoCusto = {
     valorAquisicao: inputs.custoTerreno || 0,
-    abcTotal: (identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0),
-    gcaTotal: calcGcaProgramado(identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo, tipologiasNovas),
+    abcAcimaSolo: identificacao.abcAcimaSolo ?? 0,
+    abcAbaixoSolo: identificacao.abcAbaixoSolo ?? 0,
+    abdTotal: resumoProgramaLocal.areaDependenteTotal,
     numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
   };
 
@@ -1627,61 +1906,41 @@ function StepAquisicaoCustos({
 }
 
 function StepFinanciamento({
-  inputs,
-  updateInput,
   financiamento,
   onToggleComFinanciamento,
   updateFinanciamento,
 }: {
-  inputs: ProjectInputs;
-  updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
   financiamento: ParametrosFinanciamento;
   onToggleComFinanciamento: (v: boolean) => void;
   updateFinanciamento: <K extends keyof ParametrosFinanciamento>(k: K, v: ParametrosFinanciamento[K]) => void;
 }) {
   const desativado = !financiamento.comFinanciamento;
+  const [euriborCarregando, setEuriborCarregando] = useState(false);
+  const [euriborErro, setEuriborErro] = useState<string | null>(null);
+
+  async function atualizarEuribor(tenor: "6m" | "12m") {
+    setEuriborCarregando(true);
+    setEuriborErro(null);
+    try {
+      const resp = await fetch(`/api/financiamento/euribor?tenor=${tenor}`);
+      const dados = await resp.json();
+      if (dados.sucesso) {
+        updateFinanciamento("euribor", dados.taxa);
+        updateFinanciamento("euriborOrigem", tenor);
+        updateFinanciamento("euriborDataReferencia", dados.dataReferencia);
+        updateFinanciamento("euriborFonte", dados.fonte);
+      } else {
+        setEuriborErro(dados.erro);
+      }
+    } catch {
+      setEuriborErro("Não foi possível ligar ao BCE. Preenche a taxa manualmente.");
+    } finally {
+      setEuriborCarregando(false);
+    }
+  }
 
   return (
     <>
-      <Card title="Custos (motor antigo — alimenta o dashboard atual)">
-        <Row>
-          <Field label="Custo de construção (€/m²) — fallback se o mapa de vendas não bastar">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.custoConstrucaoM2 ?? ""}
-              onChange={(e) => updateInput("custoConstrucaoM2", e.target.value ? Number(e.target.value) : null)}
-            />
-          </Field>
-          <Field label="IVA da construção">
-            <select
-              className="input-dark"
-              value={inputs.ivaConstrucao}
-              onChange={(e) => updateInput("ivaConstrucao", Number(e.target.value) as 0.06 | 0.23)}
-            >
-              <option value={0.23}>23%</option>
-              <option value={0.06}>6% — reabilitação urbana</option>
-            </select>
-          </Field>
-        </Row>
-        <Row>
-          <Field label="Custos de aquisição (% sobre terreno — IMT, IS, notário)">
-            <PercentInput value={inputs.custosAquisicaoPct} onChange={(v) => updateInput("custosAquisicaoPct", v)} />
-          </Field>
-          <Field label="Soft costs (% sobre construção)">
-            <PercentInput value={inputs.softCostsPct} onChange={(v) => updateInput("softCostsPct", v)} />
-          </Field>
-        </Row>
-        <Row>
-          <Field label="Contingência (% sobre construção)">
-            <PercentInput value={inputs.contingenciaPct} onChange={(v) => updateInput("contingenciaPct", v)} />
-          </Field>
-          <Field label="Marketing (% sobre CAPEX de obra)">
-            <PercentInput value={inputs.marketingPct} onChange={(v) => updateInput("marketingPct", v)} />
-          </Field>
-        </Row>
-      </Card>
-
       <Card title="Financiamento bancário">
         <Row>
           <Field label="Este projeto terá financiamento bancário?">
@@ -1719,7 +1978,16 @@ function StepFinanciamento({
         </Row>
         <Row>
           <Field label="Euribor">
-            <PercentInput value={financiamento.euribor} onChange={(v) => updateFinanciamento("euribor", v)} disabled={desativado} />
+            <PercentInput
+              value={financiamento.euribor}
+              onChange={(v) => {
+                updateFinanciamento("euribor", v);
+                updateFinanciamento("euriborOrigem", "manual");
+                updateFinanciamento("euriborDataReferencia", null);
+                updateFinanciamento("euriborFonte", null);
+              }}
+              disabled={desativado}
+            />
           </Field>
           <Field label="Spread">
             <PercentInput value={financiamento.spread} onChange={(v) => updateFinanciamento("spread", v)} disabled={desativado} />
@@ -1728,6 +1996,37 @@ function StepFinanciamento({
             <input className="input-dark" value={`${(taxaAnual(financiamento) * 100).toFixed(2)}%`} disabled />
           </Field>
         </Row>
+        {!desativado && (
+          <Row>
+            <div>
+              <div className="flex gap-2 mb-2">
+                <button
+                  onClick={() => atualizarEuribor("6m")}
+                  disabled={euriborCarregando}
+                  className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343] disabled:opacity-50"
+                >
+                  {euriborCarregando ? "A obter…" : "Atualizar Euribor 6M (BCE)"}
+                </button>
+                <button
+                  onClick={() => atualizarEuribor("12m")}
+                  disabled={euriborCarregando}
+                  className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343] disabled:opacity-50"
+                >
+                  {euriborCarregando ? "A obter…" : "Atualizar Euribor 12M (BCE)"}
+                </button>
+              </div>
+              {euriborErro && <p className="text-xs text-[#A13D2E] mb-1">{euriborErro}</p>}
+              {financiamento.euriborOrigem !== "manual" && financiamento.euriborFonte && (
+                <p className="text-xs text-[#59636A]">
+                  Origem: Euribor {financiamento.euriborOrigem === "6m" ? "6M" : "12M"} · Referência: {financiamento.euriborDataReferencia} · Fonte:{" "}
+                  {financiamento.euriborFonte}. Média mensal do BCE — não é a taxa exata de hoje; podes sobrepor o valor manualmente acima a
+                  qualquer momento.
+                </p>
+              )}
+              {financiamento.euriborOrigem === "manual" && <p className="text-xs text-[#8FA6AF]">Taxa preenchida manualmente.</p>}
+            </div>
+          </Row>
+        )}
         <Row>
           <Field label="Metodologia da taxa mensal">
             <select
@@ -1794,6 +2093,83 @@ function StepFinanciamento({
             />
           </Field>
         </Row>
+      </Card>
+
+      <Card
+        title="Cash sweep"
+        subtitle="A partir de um gatilho, usa o caixa livre para amortizar dívida antecipadamente — nunca abaixo do saldo mínimo, nunca sem reservar os próximos meses de custos."
+      >
+        <Row>
+          <Field label="Ativar cash sweep?">
+            <select
+              className="input-dark"
+              value={financiamento.cashSweepAtivo ? "sim" : "nao"}
+              onChange={(e) => updateFinanciamento("cashSweepAtivo", e.target.value === "sim")}
+              disabled={desativado}
+            >
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
+          </Field>
+          <Field label="% do caixa livre usado para amortizar">
+            <PercentInput
+              value={financiamento.cashSweepPctCaixaLivre}
+              onChange={(v) => updateFinanciamento("cashSweepPctCaixaLivre", v)}
+              disabled={desativado || !financiamento.cashSweepAtivo}
+            />
+          </Field>
+        </Row>
+        {financiamento.cashSweepAtivo && (
+          <>
+            <Row>
+              <Field label="Meses de custos futuros a reservar">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={financiamento.cashSweepMesesCustosFuturos}
+                  onChange={(e) => updateFinanciamento("cashSweepMesesCustosFuturos", Number(e.target.value))}
+                  disabled={desativado}
+                />
+              </Field>
+              <Field label="Início do cash sweep">
+                <select
+                  className="input-dark"
+                  value={financiamento.cashSweepInicioTipo}
+                  onChange={(e) => updateFinanciamento("cashSweepInicioTipo", e.target.value as ParametrosFinanciamento["cashSweepInicioTipo"])}
+                  disabled={desativado}
+                >
+                  <option value="primeira_escritura">Primeira escritura</option>
+                  <option value="pct_vendido">% do projeto vendido</option>
+                  <option value="pct_vgv_recebido">% do VGV recebido</option>
+                  <option value="data">Data específica</option>
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              {financiamento.cashSweepInicioTipo === "data" ? (
+                <Field label="Data de início">
+                  <input
+                    type="date"
+                    className="input-dark"
+                    value={financiamento.cashSweepInicioData ?? ""}
+                    onChange={(e) => updateFinanciamento("cashSweepInicioData", e.target.value)}
+                    disabled={desativado}
+                  />
+                </Field>
+              ) : (
+                financiamento.cashSweepInicioTipo !== "primeira_escritura" && (
+                  <Field label="% gatilho">
+                    <PercentInput
+                      value={financiamento.cashSweepInicioValorPct ?? 0}
+                      onChange={(v) => updateFinanciamento("cashSweepInicioValorPct", v)}
+                      disabled={desativado}
+                    />
+                  </Field>
+                )
+              )}
+            </Row>
+          </>
+        )}
       </Card>
     </>
   );
@@ -2008,11 +2384,13 @@ function StepImpostos({
   impostos,
   updateImpostos,
   valorAquisicao,
+  resultado,
   onSolicitarConsultoria,
 }: {
   impostos: ImpostosEstado;
   updateImpostos: <K extends keyof ImpostosEstado>(k: K, v: ImpostosEstado[K]) => void;
   valorAquisicao: number;
+  resultado: ReturnType<typeof calcularCashFlow> | null;
   onSolicitarConsultoria: (
     dados: { name: string; company: string; email: string; phone: string; message: string; preferenciaContacto: "email" | "telefone" },
     impostoEstimado: number
@@ -2021,13 +2399,30 @@ function StepImpostos({
   const seguro = calcSeguro(impostos.seguroTaxa, "valor_aquisicao", valorAquisicao, impostos.seguroDuracaoAnos);
   const imi = calcIMI(impostos.imiVpt ?? 0, impostos.imiTaxa, impostos.imiNumAnos);
   const { taxa: taxaIrc, taxaManualAplicada } = resolverTaxaIRC(impostos.ircAnoFiscalReferencia, impostos.ircTaxaManual);
-  const lucroTributavel = calcLucroTributavel(impostos.ircLucroTributavel ?? 0, impostos.ircPrejuizosFiscaisAcumulados);
-  const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
-  const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa);
-  const derramaEstadual = calcDerramaEstadual(lucroTributavel);
+
+  // Lucro económico vem sempre do motor de cash flow real — nunca de um
+  // campo manual solto (secção 29: "Não implementar lucro tributável
+  // manual sem ligação ao motor"). Sem resultado calculado ainda, fica a 0.
+  const lucroEconomico = resultado ? calcLucroEconomico(resultado.gdv, resultado.comissaoComercialTotal, resultado.custoTotal - resultado.comissaoComercialTotal) : 0;
+  const lucroTributavelAntesDeAjustes = resultado
+    ? calcLucroTributavelEstimado({
+        receitasReconhecidas: resultado.gdv,
+        custosFiscalmenteConsiderados: resultado.custoTotal - resultado.comissaoComercialTotal,
+        comissaoDedutivel: resultado.comissaoComercialTotal,
+        feesDedutiveis: 0,
+        custosFinanceirosDedutiveis: resultado.financiamento.jurosTotais,
+        ajustesFiscais: impostos.ircAjustesFiscais,
+      })
+    : 0;
+  const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostos.ircPrejuizosFiscaisAcumulados);
+  const ircEstimado = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcIRC(lucroTributavel, taxaIrc) : 0;
+  const derramaMunicipal = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa) : 0;
+  const derramaEstadual = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcDerramaEstadual(lucroTributavel) : 0;
   const impostoAquisicao = valorAquisicao * impostos.imtValor;
   const seloAquisicao = valorAquisicao * impostos.impostoSeloAquisicaoTaxa;
-  const impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual + impostoAquisicao + seloAquisicao;
+  const impostoSimulacaoManual =
+    impostos.estruturaFiscalAssumida !== "empresa_spv" ? (impostos.simulacaoImpostoEstimadoManual ?? 0) : 0;
+  const impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual + impostoAquisicao + seloAquisicao + impostoSimulacaoManual;
 
   const [modalAberto, setModalAberto] = useState(false);
 
@@ -2077,62 +2472,117 @@ function StepImpostos({
         <p className="text-xs text-[#59636A]">Valor total (calculado): €{Math.round(imi.valorTotal).toLocaleString("pt-PT")}</p>
       </Card>
 
-      <Card title="IRC">
+      <Card
+        title="Impostos — estimativa"
+        subtitle="Esta é uma estimativa simplificada e não substitui análise fiscal, contabilística ou jurídica. Confirme com um especialista."
+      >
         <Row>
-          <Field label="Ano fiscal de referência">
-            <input
-              type="number"
+          <Field label="Estrutura fiscal assumida">
+            <select
               className="input-dark"
-              value={impostos.ircAnoFiscalReferencia}
-              onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Taxa manual (vazio = usa a configuração anual)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.ircTaxaManual ?? ""}
-              onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)}
-              placeholder={`${(taxaIrc * 100).toFixed(0)}%`}
-            />
+              value={impostos.estruturaFiscalAssumida}
+              onChange={(e) => updateImpostos("estruturaFiscalAssumida", e.target.value as ImpostosEstado["estruturaFiscalAssumida"])}
+            >
+              <option value="empresa_spv">Empresa/SPV — IRC</option>
+              <option value="pessoa_singular">Pessoa singular / atividade individual — IRS</option>
+              <option value="nao_definida">Estrutura ainda não definida</option>
+              <option value="outra">Outra</option>
+            </select>
           </Field>
         </Row>
-        {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa manual aplicada.</p>}
-        <Row>
-          <Field label="Lucro tributável estimado (€)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.ircLucroTributavel ?? ""}
-              onChange={(e) => updateImpostos("ircLucroTributavel", e.target.value ? Number(e.target.value) : null)}
-            />
-          </Field>
-          <Field label="Prejuízos fiscais acumulados (€)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.ircPrejuizosFiscaisAcumulados}
-              onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Derrama municipal (%)">
-            <PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} />
-          </Field>
-        </Row>
-        <div className="grid grid-cols-3 gap-4 text-sm mt-2">
-          <div>
-            <span className="text-xs text-[#59636A] block">IRC estimado</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(ircEstimado).toLocaleString("pt-PT")}</span>
-          </div>
-          <div>
-            <span className="text-xs text-[#59636A] block">Derrama municipal</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(derramaMunicipal).toLocaleString("pt-PT")}</span>
-          </div>
-          <div>
-            <span className="text-xs text-[#59636A] block">Derrama estadual (escalões)</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(derramaEstadual).toLocaleString("pt-PT")}</span>
-          </div>
-        </div>
+
+        {impostos.estruturaFiscalAssumida === "empresa_spv" ? (
+          <>
+            <Row>
+              <Field label="Ano fiscal de referência">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircAnoFiscalReferencia}
+                  onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Taxa de IRC de referência">
+                <input className="input-dark" value={`${(taxaIrc * 100).toFixed(0)}%`} disabled />
+              </Field>
+              <Field label="Taxa aplicada (vazio = usa a de referência)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircTaxaManual ?? ""}
+                  onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)}
+                  placeholder={`${(taxaIrc * 100).toFixed(0)}%`}
+                />
+              </Field>
+            </Row>
+            {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa manual aplicada.</p>}
+            <div className="grid grid-cols-2 gap-4 mb-3 text-sm">
+              <div>
+                <span className="text-xs text-[#59636A] block">Lucro económico (do motor: VGV − comissão − custos)</span>
+                <span className="font-semibold text-[#142B3A]">€{Math.round(lucroEconomico).toLocaleString("pt-PT")}</span>
+              </div>
+              <div>
+                <span className="text-xs text-[#59636A] block">Lucro tributável estimado</span>
+                <span className="font-semibold text-[#142B3A]">€{Math.round(lucroTributavel).toLocaleString("pt-PT")}</span>
+              </div>
+            </div>
+            <Row>
+              <Field label="Ajustes fiscais (€, + ou −, sobre o lucro económico)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircAjustesFiscais}
+                  onChange={(e) => updateImpostos("ircAjustesFiscais", Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Prejuízos fiscais acumulados (€)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.ircPrejuizosFiscaisAcumulados}
+                  onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))}
+                />
+              </Field>
+              <Field label="Derrama municipal (%)">
+                <PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} />
+              </Field>
+            </Row>
+            <p className="text-xs text-[#59636A] mt-2">
+              IRC estimado: €{Math.round(ircEstimado).toLocaleString("pt-PT")} · Derrama municipal: €
+              {Math.round(derramaMunicipal).toLocaleString("pt-PT")}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-xs text-[#B96343] mb-3">
+              O tratamento fiscal pode estar sujeito a IRS ou outro enquadramento. É necessária análise individual.
+            </p>
+            <Row>
+              <Field label="Taxa efetiva manual (só simulação)">
+                <PercentInput
+                  value={impostos.simulacaoTaxaEfetivaManual ?? 0}
+                  onChange={(v) => updateImpostos("simulacaoTaxaEfetivaManual", v)}
+                />
+              </Field>
+              <Field label="Imposto estimado manual (€, só simulação)">
+                <input
+                  type="number"
+                  className="input-dark"
+                  value={impostos.simulacaoImpostoEstimadoManual ?? ""}
+                  onChange={(e) => updateImpostos("simulacaoImpostoEstimadoManual", e.target.value ? Number(e.target.value) : null)}
+                />
+              </Field>
+            </Row>
+            <p className="text-xs text-[#A13D2E] font-semibold">Premissa manual não validada.</p>
+          </>
+        )}
+      </Card>
+
+      <Card title="Derrama estadual">
+        <p className="text-xs text-[#59636A] mb-2">
+          Progressiva por escalões sobre o lucro tributável — não aplicada quando a estrutura fiscal não é Empresa/SPV.
+        </p>
+        <p className="text-sm text-[#142B3A]">Derrama estadual estimada: €{Math.round(derramaEstadual).toLocaleString("pt-PT")}</p>
       </Card>
 
       <Card title="IMT e Imposto de Selo da aquisição">
@@ -2276,200 +2726,122 @@ function ConsultoriaModal({
 }
 
 function StepCalendario({
-  inputs,
-  updateInput,
-  atividades,
-  onAdicionarAtividade,
-  onAtualizarAtividade,
-  onHandleDataInicial,
-  onHandleDuracao,
-  onHandleDataFinal,
-  onRemoverAtividade,
-  onDuplicarAtividade,
-  onReordenarAtividade,
+  custosNovos,
+  planoVendas,
+  unidades,
+  tipologiasNovas,
+  resultado,
 }: {
-  inputs: ProjectInputs;
-  updateInput: <K extends keyof ProjectInputs>(k: K, v: ProjectInputs[K]) => void;
-  atividades: Atividade[];
-  onAdicionarAtividade: (nome: string) => void;
-  onAtualizarAtividade: (id: string, patch: Partial<Atividade>) => void;
-  onHandleDataInicial: (id: string, data: string) => void;
-  onHandleDuracao: (id: string, duracao: number) => void;
-  onHandleDataFinal: (id: string, data: string) => void;
-  onRemoverAtividade: (id: string) => void;
-  onDuplicarAtividade: (atividade: Atividade) => void;
-  onReordenarAtividade: (id: string, direcao: -1 | 1) => void;
+  custosNovos: LinhaCusto[];
+  planoVendas: PlanoVendas;
+  unidades: UnidadeVenda[];
+  tipologiasNovas: Typology[];
+  resultado: ReturnType<typeof calcularCashFlow> | null;
 }) {
-  const { atividades: resolvidas, alertas } = resolverAtividadesEncadeadas(atividades);
-  const ordenadas = [...resolvidas].sort((a, b) => a.ordem - b.ordem);
-  const gantt = gerarDadosGantt(resolvidas);
+  const datasEfetivas = calcularDatasEfetivas(
+    unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+    tipologiasNovas.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+    planoVendas.dataLancamentoComercial
+  );
 
-  const datasValidas = gantt.flatMap((g) => [new Date(g.inicio).getTime(), new Date(g.fim).getTime()]);
+  const porTipologia: EventoTipologiaVendas[] = tipologiasNovas.map((t) => {
+    const datasDaTipologia = unidades
+      .filter((u) => u.tipologiaId === t.id)
+      .map((u) => datasEfetivas.get(u.id))
+      .filter((d): d is string => Boolean(d))
+      .sort();
+    return {
+      tipologiaId: t.id,
+      nome: t.nome,
+      primeiraData: datasDaTipologia[0] ?? null,
+      ultimaData: datasDaTipologia[datasDaTipologia.length - 1] ?? null,
+    };
+  });
+
+  const eventosFinanciamento: EventoFinanciamentoMensal[] =
+    resultado?.linhas.map((l) => ({ mes: l.mes, drawdown: l.drawdown, amortizacao: l.amortizacao, saldoDivida: l.saldoDivida })) ?? [];
+
+  const { grupos, dataInicial, dataFinal } = montarCalendarioAutomatico(
+    custosNovos,
+    { dataLancamentoComercial: planoVendas.dataLancamentoComercial || null, dataEscritura: planoVendas.dataEscritura || null, porTipologia },
+    eventosFinanciamento
+  );
+
+  const todasAsLinhas = grupos.flatMap((g) => g.linhas);
+  const datasValidas = todasAsLinhas.flatMap((l) => [new Date(l.inicio).getTime(), new Date(l.fim).getTime()]);
   const dataMinMs = datasValidas.length > 0 ? Math.min(...datasValidas) : 0;
   const dataMaxMs = datasValidas.length > 0 ? Math.max(...datasValidas) : 1;
   const totalMs = dataMaxMs - dataMinMs || 1;
 
   return (
     <>
-      <Card title="Calendário e comercialização (motor antigo — alimenta o dashboard atual)">
-        <Row>
-          <Field label="Duração total do projeto (meses)">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.duracaoTotalMeses}
-              onChange={(e) => updateInput("duracaoTotalMeses", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Duração da obra (meses)">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.duracaoObraMeses}
-              onChange={(e) => updateInput("duracaoObraMeses", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Mês de início da obra">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.mesInicioObra}
-              onChange={(e) => updateInput("mesInicioObra", Number(e.target.value))}
-            />
-          </Field>
-        </Row>
-        <Row>
-          <Field label="Sinal de venda (%)">
-            <PercentInput value={inputs.sinalVendaPct} onChange={(v) => updateInput("sinalVendaPct", v)} />
-          </Field>
-          <Field label="Comissão de mediador (% s/IVA)">
-            <PercentInput value={inputs.comissaoMediadorPct} onChange={(v) => updateInput("comissaoMediadorPct", v)} />
-          </Field>
-        </Row>
-      </Card>
-
-      <Card title="Calendário de atividades" subtitle="Início + duração = fim, calculado automaticamente. Editar qualquer um dos três recalcula os outros dois.">
-        {alertas.length > 0 && (
-          <div className="mb-3">
-            {alertas.map((al, i) => (
-              <p key={i} className={`text-xs ${al.tipo === "erro" ? "text-[#A13D2E]" : "text-[#B96343]"}`}>
-                {al.mensagem}
-              </p>
-            ))}
-          </div>
+      <Card
+        title="Calendário do projeto"
+        subtitle="Gerado automaticamente a partir da Aquisição, Custos, Plano de Vendas e Financiamento — para mudar uma data, edita-a na etapa de origem. Este ecrã nunca guarda datas próprias."
+      >
+        {grupos.length === 0 && (
+          <p className="text-xs text-[#8FA6AF]">
+            Ainda não há datas suficientes preenchidas em Aquisição, Custos, Plano de Vendas ou Financiamento para gerar o calendário.
+          </p>
         )}
-
-        {ordenadas.map((a) => (
-          <div key={a.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
-            <Row>
-              <Field label="Atividade">
-                <input className="input-dark" value={a.nome} onChange={(e) => onAtualizarAtividade(a.id, { nome: e.target.value })} />
-              </Field>
-              <Field label="Dependência (início = fim da anterior + 1 dia)">
-                <select
-                  className="input-dark"
-                  value={a.dependenciaId ?? ""}
-                  onChange={(e) => onAtualizarAtividade(a.id, { dependenciaId: e.target.value || null })}
-                >
-                  <option value="">Sem dependência</option>
-                  {atividades
-                    .filter((outra) => outra.id !== a.id)
-                    .map((outra) => (
-                      <option key={outra.id} value={outra.id}>
-                        {outra.nome}
-                      </option>
-                    ))}
-                </select>
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Data inicial">
-                <input
-                  type="date"
-                  className="input-dark"
-                  value={a.dataInicial ?? ""}
-                  onChange={(e) => onHandleDataInicial(a.id, e.target.value)}
-                  disabled={!!a.dependenciaId}
-                />
-              </Field>
-              <Field label="Duração (meses)">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={a.duracaoMeses ?? ""}
-                  onChange={(e) => onHandleDuracao(a.id, Number(e.target.value))}
-                />
-              </Field>
-              <Field label="Data final">
-                <input type="date" className="input-dark" value={a.dataFinal ?? ""} onChange={(e) => onHandleDataFinal(a.id, e.target.value)} />
-              </Field>
-            </Row>
-            <Row>
-              <Field label="Perfil de desembolso">
-                <select
-                  className="input-dark"
-                  value={a.perfilDesembolso}
-                  onChange={(e) => onAtualizarAtividade(a.id, { perfilDesembolso: e.target.value as Atividade["perfilDesembolso"] })}
-                >
-                  {PERFIS_DESEMBOLSO.map((p) => (
-                    <option key={p.value} value={p.value}>
-                      {p.label}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </Row>
-            <div className="flex justify-between items-center mt-1">
-              <div className="flex gap-2">
-                <button onClick={() => onReordenarAtividade(a.id, -1)} className="text-xs text-[#59636A]">
-                  ↑ Subir
-                </button>
-                <button onClick={() => onReordenarAtividade(a.id, 1)} className="text-xs text-[#59636A]">
-                  ↓ Descer
-                </button>
-                <button onClick={() => onDuplicarAtividade(a)} className="text-xs text-[#142B3A] underline">
-                  Duplicar
-                </button>
-              </div>
-              <button onClick={() => onRemoverAtividade(a.id)} className="text-[#A13D2E] text-xs">
-                Remover
-              </button>
+        {(dataInicial || dataFinal) && (
+          <div className="grid grid-cols-2 gap-4 mb-4 text-sm">
+            <div>
+              <span className="text-xs text-[#59636A] block">Data inicial (primeiro fluxo financeiro)</span>
+              <span className="font-semibold text-[#142B3A]">{dataInicial ?? "—"}</span>
+            </div>
+            <div>
+              <span className="text-xs text-[#59636A] block">Data final (último evento ativo)</span>
+              <span className="font-semibold text-[#142B3A]">{dataFinal ?? "—"}</span>
             </div>
           </div>
-        ))}
-
-        <div className="flex flex-wrap gap-2 mt-2">
-          {ATIVIDADES_INICIAIS_SUGERIDAS.map((nome) => (
-            <button
-              key={nome}
-              onClick={() => onAdicionarAtividade(nome)}
-              className="text-xs px-2.5 py-1 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]"
-            >
-              + {nome}
-            </button>
-          ))}
-        </div>
+        )}
       </Card>
 
-      {gantt.length > 0 && (
-        <Card title="Gantt simples">
+      {grupos.map((grupo) => (
+        <Card key={grupo.grupo} title={grupo.titulo}>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[#59636A] uppercase">
+                <th className="pb-2 pr-2">Evento</th>
+                <th className="pb-2 pr-2">Início</th>
+                <th className="pb-2 pr-2">Fim</th>
+              </tr>
+            </thead>
+            <tbody>
+              {grupo.linhas.map((l) => (
+                <tr key={l.id} className="border-t border-[#E3DACB]">
+                  <td className="py-1.5 pr-2 text-[#142B3A]">{l.nome}</td>
+                  <td className="py-1.5 pr-2">{l.inicio}</td>
+                  <td className="py-1.5 pr-2">{l.fim}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Card>
+      ))}
+
+      {todasAsLinhas.length > 0 && (
+        <Card title="Gantt do projeto">
           <div className="space-y-2">
-            {gantt.map((g) => {
-              const offsetPct = ((new Date(g.inicio).getTime() - dataMinMs) / totalMs) * 100;
-              const larguraPct = Math.max(1, ((new Date(g.fim).getTime() - new Date(g.inicio).getTime()) / totalMs) * 100);
-              return (
-                <div key={g.id} className="flex items-center gap-3 text-xs">
-                  <span className="w-40 truncate text-[#142B3A]">{g.nome}</span>
-                  <div className="flex-1 h-4 bg-[#F4EFE6] rounded relative">
-                    <div
-                      className="absolute h-4 rounded bg-[#B96343]"
-                      style={{ left: `${offsetPct}%`, width: `${larguraPct}%` }}
-                      title={`${g.inicio} → ${g.fim}`}
-                    />
+            {grupos.map((grupo) =>
+              grupo.linhas.map((g) => {
+                const offsetPct = ((new Date(g.inicio).getTime() - dataMinMs) / totalMs) * 100;
+                const larguraPct = Math.max(1, ((new Date(g.fim).getTime() - new Date(g.inicio).getTime()) / totalMs) * 100);
+                return (
+                  <div key={`${grupo.grupo}-${g.id}`} className="flex items-center gap-3 text-xs">
+                    <span className="w-48 truncate text-[#142B3A]">{g.nome}</span>
+                    <div className="flex-1 h-4 bg-[#F4EFE6] rounded relative">
+                      <div
+                        className="absolute h-4 rounded bg-[#B96343]"
+                        style={{ left: `${offsetPct}%`, width: `${larguraPct}%` }}
+                        title={`${g.inicio} → ${g.fim}`}
+                      />
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })
+            )}
           </div>
         </Card>
       )}
@@ -2480,38 +2852,68 @@ function StepCalendario({
 // ============================================================
 // Etapa final — Cash flow e resultados
 // ============================================================
-const SUBTABS_RESULTADOS = ["Plano de vendas", "Resumo", "Cash flow", "Capex", "Funding", "Financiamento", "Investidor e promotor", "Sensibilidades"] as const;
+const SUBTABS_RESULTADOS = [
+  "Plano de vendas",
+  "Resumo",
+  "Cash flow",
+  "Capex",
+  "Funding",
+  "Financiamento",
+  "Investidor e promotor",
+  "Sensibilidades",
+  "Cenários",
+] as const;
 
 function StepCashFlowResultados({
-  calculando,
-  onCalcular,
+  onVerResultados,
   planoVendas,
   updatePlanoVendas,
   updateEstruturaRecebimentos,
   custosNovos,
   contextoCusto,
   resumoPrograma,
+  vgvBruto,
   identificacao,
   financiamento,
   estruturaCapital,
   hurdles,
   feesNovos,
   contextoFees,
+  resultado,
+  prontoParaCalcular,
+  salesTableResolvida,
+  tipologiasNovas,
+  cenarios,
+  onAdicionarCenarioConservador,
+  onAdicionarCenarioOtimista,
+  onDuplicarCenario,
+  onAtualizarCenario,
+  onRemoverCenario,
 }: {
-  calculando: boolean;
-  onCalcular: () => void;
+  onVerResultados: () => void;
   planoVendas: PlanoVendas;
   updatePlanoVendas: <K extends keyof PlanoVendas>(k: K, v: PlanoVendas[K]) => void;
   updateEstruturaRecebimentos: <K extends keyof PlanoVendas["estruturaRecebimentos"]>(k: K, v: PlanoVendas["estruturaRecebimentos"][K]) => void;
   custosNovos: LinhaCusto[];
   contextoCusto: ContextoCusto;
   resumoPrograma: ReturnType<typeof calcResumoPrograma>;
+  vgvBruto: number;
   identificacao: IdentificacaoEstruturada;
   financiamento: ParametrosFinanciamento;
   estruturaCapital: EstruturaCapitalEstado;
   hurdles: (NivelHurdle & { id: string })[];
   feesNovos: Fee[];
   contextoFees: ContextoFees;
+  resultado: ReturnType<typeof calcularCashFlow> | null;
+  prontoParaCalcular: boolean;
+  salesTableResolvida: LinhaSalesTableResolvida[];
+  tipologiasNovas: Typology[];
+  cenarios: Cenario[];
+  onAdicionarCenarioConservador: () => void;
+  onAdicionarCenarioOtimista: () => void;
+  onDuplicarCenario: (cenario: Cenario) => void;
+  onAtualizarCenario: (id: string, patch: Partial<Cenario>) => void;
+  onRemoverCenario: (cenario: Cenario) => void;
 }) {
   const [subtab, setSubtab] = useState<(typeof SUBTABS_RESULTADOS)[number]>("Resumo");
   const [sensMatriz, setSensMatriz] = useState<MatrizSensibilidade>("aquisicao_vs_custo_construcao");
@@ -2521,19 +2923,6 @@ function StepCashFlowResultados({
   const datasPreenchidas = Boolean(
     planoVendas.dataLancamentoComercial && planoVendas.dataInicioConstrucao && planoVendas.dataFimConstrucao && planoVendas.dataEscritura
   );
-  const prontoParaCalcular = recebimentosValidos && datasPreenchidas && custosNovos.length > 0;
-
-  let resultado: ReturnType<typeof calcularCashFlow> | null = null;
-  if (prontoParaCalcular) {
-    const { linhas: recebimentos } = gerarRecebimentosMensais(resumoPrograma.receitaTotal, planoVendas);
-    resultado = calcularCashFlow({
-      linhasCusto: custosNovos,
-      contextoCusto,
-      recebimentos,
-      parametrosFinanciamento: financiamento,
-      saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
-    });
-  }
 
   const somaRecebimentos =
     planoVendas.estruturaRecebimentos.pctReserva +
@@ -2610,11 +2999,27 @@ function StepCashFlowResultados({
             </Field>
           </Row>
           <Row>
-            <Field label="Comissão de mediação (%)">
+            <Field label="Comissão de mediação (% sobre o preço total da unidade)">
               <PercentInput value={planoVendas.comissaoMediacaoPct} onChange={(v) => updatePlanoVendas("comissaoMediacaoPct", v)} />
             </Field>
             <Field label="Cancelamentos estimados (%)">
               <PercentInput value={planoVendas.cancelamentosEstimadosPct} onChange={(v) => updatePlanoVendas("cancelamentosEstimadosPct", v)} />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="IVA da comissão">
+              <PercentInput value={planoVendas.comissaoTaxaIva} onChange={(v) => updatePlanoVendas("comissaoTaxaIva", v)} />
+            </Field>
+            <Field label="% da comissão paga no sinal">
+              <PercentInput value={planoVendas.comissaoPctPagoSinal} onChange={(v) => updatePlanoVendas("comissaoPctPagoSinal", v)} />
+            </Field>
+            <Field label="% da comissão paga na escritura">
+              <PercentInput value={planoVendas.comissaoPctPagoEscritura} onChange={(v) => updatePlanoVendas("comissaoPctPagoEscritura", v)} />
+            </Field>
+          </Row>
+          <Row>
+            <Field label="% de IVA da comissão recuperável">
+              <PercentInput value={planoVendas.comissaoIvaRecuperavelPct} onChange={(v) => updatePlanoVendas("comissaoIvaRecuperavelPct", v)} />
             </Field>
           </Row>
 
@@ -2651,7 +3056,7 @@ function StepCashFlowResultados({
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <ResumoItem label="Freguesia / Concelho" valor={[identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || "—"} />
             <ResumoItem label="ABC total" valor={`${Math.round((identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0))} m²`} />
-            <ResumoItem label="GCA total" valor={`${Math.round(resumoPrograma.gcaTotal)} m²`} />
+            <ResumoItem label="ABC Total" valor={`${Math.round(resumoPrograma.abcTotal)} m²`} />
             <ResumoItem label="ABP" valor={`${Math.round(resumoPrograma.abpTotal)} m²`} />
             <ResumoItem label="Área vendável equivalente" valor={`${Math.round(resumoPrograma.areaVendavelEquivalenteTotal)} m²`} />
             <ResumoItem label="Número de unidades" valor={String(resumoPrograma.totalUnidades)} />
@@ -2683,6 +3088,7 @@ function StepCashFlowResultados({
                   <th className="pb-2 pr-2">Mês</th>
                   <th className="pb-2 pr-2">Receita</th>
                   <th className="pb-2 pr-2">Custos</th>
+                  <th className="pb-2 pr-2">Comissão</th>
                   <th className="pb-2 pr-2">CF unlevered</th>
                   <th className="pb-2 pr-2">Drawdown</th>
                   <th className="pb-2 pr-2">Juros+fees</th>
@@ -2698,6 +3104,7 @@ function StepCashFlowResultados({
                     <td className="py-1 pr-2">{l.mes}</td>
                     <td className="py-1 pr-2">€{Math.round(l.receitaVendas).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.comissaoComercial).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.cashFlowUnlevered).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.drawdown).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.jurosEFees).toLocaleString("pt-PT")}</td>
@@ -2863,9 +3270,18 @@ function StepCashFlowResultados({
             base={{
               linhasCusto: custosNovos,
               contextoCusto,
-              receitaTotalGdvBase: resumoPrograma.receitaTotal,
+              receitaTotalGdvBase: vgvBruto,
               planoVendas,
               parametrosFinanciamento: financiamento,
+              salesTableResolvida,
+              tipologias: tipologiasNovas,
+              comissaoParametros: {
+                percentagemComissao: planoVendas.comissaoMediacaoPct,
+                taxaIva: planoVendas.comissaoTaxaIva,
+                pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+                pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+                ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+              },
             }}
             matriz={sensMatriz}
             indicador={sensIndicador}
@@ -2873,13 +3289,109 @@ function StepCashFlowResultados({
         </Card>
       )}
 
-      <Card title="Motor antigo (compatibilidade)" subtitle="Continua a alimentar o dashboard atual — independente do motor novo acima.">
-        <button
-          onClick={onCalcular}
-          disabled={calculando}
-          className="px-6 py-3 rounded-lg bg-[#142B3A] text-white text-sm font-bold disabled:opacity-60"
+      {subtab === "Cenários" && prontoParaCalcular && (
+        <Card
+          title="Cenários"
+          subtitle="Cada cenário recalcula o modelo completo com as suas próprias variações — o cenário-base nunca pode ser apagado ou duplicado por cima."
         >
-          {calculando ? "A calcular…" : "Calcular viabilidade (motor antigo)"}
+          <div className="flex gap-2 mb-4">
+            <button onClick={onAdicionarCenarioConservador} className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]">
+              + Conservador
+            </button>
+            <button onClick={onAdicionarCenarioOtimista} className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]">
+              + Otimista
+            </button>
+          </div>
+
+          {cenarios.map((c) => (
+            <div key={c.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+              <Row>
+                <Field label="Nome">
+                  <input
+                    className="input-dark"
+                    value={c.nome}
+                    onChange={(e) => onAtualizarCenario(c.id, { nome: e.target.value })}
+                    disabled={c.ehBase}
+                  />
+                </Field>
+                <Field label="Δ Aquisição (%)">
+                  <PercentInput value={c.deltaAquisicao} onChange={(v) => onAtualizarCenario(c.id, { deltaAquisicao: v })} disabled={c.ehBase} />
+                </Field>
+                <Field label="Δ Construção (%)">
+                  <PercentInput value={c.deltaConstrucao} onChange={(v) => onAtualizarCenario(c.id, { deltaConstrucao: v })} disabled={c.ehBase} />
+                </Field>
+                <Field label="Δ Preço de venda (%)">
+                  <PercentInput value={c.deltaPreco} onChange={(v) => onAtualizarCenario(c.id, { deltaPreco: v })} disabled={c.ehBase} />
+                </Field>
+              </Row>
+              <div className="flex justify-end gap-3">
+                <button onClick={() => onDuplicarCenario(c)} className="text-xs text-[#142B3A] underline">
+                  Duplicar
+                </button>
+                {!c.ehBase && (
+                  <button onClick={() => onRemoverCenario(c)} className="text-[#A13D2E] text-xs">
+                    Remover
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+
+          <div className="overflow-x-auto mt-4">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-[#59636A] uppercase">
+                  <th className="pb-2 pr-4">Cenário</th>
+                  <th className="pb-2 pr-4">GDV</th>
+                  <th className="pb-2 pr-4">Custo total</th>
+                  <th className="pb-2 pr-4">Lucro</th>
+                  <th className="pb-2 pr-4">Margem</th>
+                  <th className="pb-2 pr-4">IRR</th>
+                  <th className="pb-2 pr-4">MOIC</th>
+                  <th className="pb-2 pr-4">Peak exposure</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compararCenarios(
+                  {
+                    linhasCusto: custosNovos,
+                    contextoCusto,
+                    receitaTotalGdvBase: vgvBruto,
+                    planoVendas,
+                    parametrosFinanciamento: financiamento,
+                    salesTableResolvida,
+                    tipologias: tipologiasNovas,
+                    comissaoParametros: {
+                      percentagemComissao: planoVendas.comissaoMediacaoPct,
+                      taxaIva: planoVendas.comissaoTaxaIva,
+                      pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+                      pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+                      ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+                    },
+                  },
+                  cenarios
+                ).map((linha) => (
+                  <tr key={linha.cenario.id} className="border-t border-[#E3DACB]">
+                    <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{linha.cenario.nome}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.gdv).toLocaleString("pt-PT")}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.custoTotal).toLocaleString("pt-PT")}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.lucro).toLocaleString("pt-PT")}</td>
+                    <td className="py-1.5 pr-4">{(linha.margem * 100).toFixed(1)}%</td>
+                    <td className="py-1.5 pr-4">{linha.irr !== null ? `${(linha.irr * 100).toFixed(1)}%` : "Não calculável"}</td>
+                    <td className="py-1.5 pr-4">{linha.moic !== null ? `${linha.moic.toFixed(2)}x` : "Não calculável"}</td>
+                    <td className="py-1.5 pr-4">€{Math.round(linha.peakExposure).toLocaleString("pt-PT")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
+      <Card title="Ver resultados">
+        <p className="text-sm text-[#59636A] mb-3">O dashboard do projeto recalcula os resultados ao vivo a partir do que foi preenchido aqui — não é preciso nenhum passo de &quot;calcular&quot; separado.</p>
+        <button onClick={onVerResultados} className="px-6 py-3 rounded-lg bg-[#142B3A] text-white text-sm font-bold">
+          Ver dashboard do projeto
         </button>
       </Card>
 
