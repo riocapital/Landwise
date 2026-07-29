@@ -47,6 +47,7 @@ import {
   calcVgvBruto,
   validarVenda,
   type UnidadeVenda,
+  type LinhaSalesTableResolvida,
 } from "@/lib/calc/sales-table";
 import { listarUnidades, criarUnidades, atualizarUnidade, apagarUnidades } from "@/lib/supabase/project-units";
 import { gerarAgendaAbsorcao, calcResumoAbsorcao, calcularDatasEfetivas } from "@/lib/calc/sales-curve";
@@ -965,6 +966,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           contextoFees={contextoFeesAtual}
           resultado={resultadoAtual}
           prontoParaCalcular={prontoParaCalcularAtual}
+          salesTableResolvida={salesTableResolvida}
+          tipologiasNovas={tipologiasNovas}
           cenarios={cenarios}
           onAdicionarCenarioConservador={adicionarCenarioConservador}
           onAdicionarCenarioOtimista={adicionarCenarioOtimista}
@@ -2878,6 +2881,8 @@ function StepCashFlowResultados({
   contextoFees,
   resultado,
   prontoParaCalcular,
+  salesTableResolvida,
+  tipologiasNovas,
   cenarios,
   onAdicionarCenarioConservador,
   onAdicionarCenarioOtimista,
@@ -2901,6 +2906,8 @@ function StepCashFlowResultados({
   contextoFees: ContextoFees;
   resultado: ReturnType<typeof calcularCashFlow> | null;
   prontoParaCalcular: boolean;
+  salesTableResolvida: LinhaSalesTableResolvida[];
+  tipologiasNovas: Typology[];
   cenarios: Cenario[];
   onAdicionarCenarioConservador: () => void;
   onAdicionarCenarioOtimista: () => void;
@@ -3266,6 +3273,15 @@ function StepCashFlowResultados({
               receitaTotalGdvBase: vgvBruto,
               planoVendas,
               parametrosFinanciamento: financiamento,
+              salesTableResolvida,
+              tipologias: tipologiasNovas,
+              comissaoParametros: {
+                percentagemComissao: planoVendas.comissaoMediacaoPct,
+                taxaIva: planoVendas.comissaoTaxaIva,
+                pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+                pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+                ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+              },
             }}
             matriz={sensMatriz}
             indicador={sensIndicador}
@@ -3337,7 +3353,22 @@ function StepCashFlowResultados({
               </thead>
               <tbody>
                 {compararCenarios(
-                  { linhasCusto: custosNovos, contextoCusto, receitaTotalGdvBase: vgvBruto, planoVendas, parametrosFinanciamento: financiamento },
+                  {
+                    linhasCusto: custosNovos,
+                    contextoCusto,
+                    receitaTotalGdvBase: vgvBruto,
+                    planoVendas,
+                    parametrosFinanciamento: financiamento,
+                    salesTableResolvida,
+                    tipologias: tipologiasNovas,
+                    comissaoParametros: {
+                      percentagemComissao: planoVendas.comissaoMediacaoPct,
+                      taxaIva: planoVendas.comissaoTaxaIva,
+                      pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+                      pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+                      ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+                    },
+                  },
                   cenarios
                 ).map((linha) => (
                   <tr key={linha.cenario.id} className="border-t border-[#E3DACB]">
