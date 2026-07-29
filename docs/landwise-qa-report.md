@@ -15,8 +15,9 @@
 | `npm run lint` | ✅ 0 erros (1 aviso pré-existente e não relacionado, sobre fontes na landing page) |
 | `npx tsc --noEmit` | ✅ 0 erros |
 | `npm run build` | ✅ Limpo, 21 rotas compiladas |
-| Migrations | 18 aplicadas e confirmadas (0002-0018); 1 (0019) com aplicação não verificada diretamente nesta sessão — ver secção de limitações |
+| Migrations | **19 aplicadas e confirmadas (0002-0019)** — a 0019 foi verificada de forma independente após a primeira versão deste relatório (ver correção abaixo) |
 | Golden test | ✅ 15/15 — **encontrou e permitiu corrigir um bug real** (ver secção dedicada) |
+| Verificação independente | ✅ Os números deste relatório (294/294 testes, build limpo) foram confirmados de forma independente no ambiente Windows do utilizador (Claude Code), não só no sandbox onde foram gerados |
 
 ---
 
@@ -120,7 +121,7 @@ Sem este golden test, esta divergência continuaria por detetar — é exatament
 ## Limitações conhecidas (não escondidas)
 
 - **Nível 5 (teste manual guiado) nunca foi executado** — precisa de alguém com acesso à conta a percorrer o fluxo completo (criar projeto → CEP → áreas → tipologias → Sales Table → vendas → aquisição → custos → financiamento → investidor → calendário → escrituras → cash flow → dashboard → sensibilidades → fechar e reabrir).
-- **Migration 0019 (`project_scenarios`)**: o código está confirmado commitado no repositório (`git log` mostra o commit), mas a aplicação da migration na Supabase não foi verificada diretamente por mim nesta sessão — o SQL Editor ficou indisponível (em branco, mesmo após várias tentativas de recarregar) no momento da verificação. O utilizador reportou "acho que já foi" sem confirmação firme.
+- **~~Migration 0019~~ — corrigido:** aplicação confirmada de forma independente (a tabela `project_scenarios` existe na Supabase, verificado diretamente). Já não é uma limitação.
 - **`reportPayload` ainda não está ligado a um projeto real** — o tipo e a função de montagem estão completos e testados, mas falta reunir campos de proveniência (`localizacao.rua/distrito`, o mapa `premissas` com origem por campo) que hoje não estão centralizados no wizard.
 - **Secção 29 (Impostos) parcialmente feita**: a estrutura fiscal IRC vs IRS está implementada, mas os campos IMI/Seguros/IMT/IS/IVA global **não foram removidos** do separador de Impostos (o plano original pedia para os mover para Aquisição/Custos) — ficaram onde estavam, por ser uma reorganização de UI maior e mais arriscada.
 - **9 das 29 verificações de alertas (secção 41) não têm modelo de dados suficiente ainda**: sinal/reforços da aquisição, escritura de aquisição sem data, IVA reduzido sem confirmação, comissão duplicada, IVA duplicado, dados migrados que exigem revisão. A verificação "sensibilidade-base divergente" existe e está testada, mas não está ligada ao dashboard em produção (exigiria recalcular a matriz completa só para esse alerta).
