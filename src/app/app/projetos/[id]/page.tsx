@@ -79,6 +79,25 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         </div>
       </div>
 
+      {r.alertas.length > 0 && (
+        <div className="mb-5 space-y-2">
+          {r.alertas.map((a) => (
+            <div
+              key={a.id}
+              className="flex items-start gap-2 px-4 py-2.5 rounded-lg text-sm border"
+              style={{
+                borderColor: a.tipo === "erro" ? "#A13D2E" : a.tipo === "alerta" ? "#B96343" : "#68735E",
+                background: a.tipo === "erro" ? "#FBEEEC" : a.tipo === "alerta" ? "#FDF3EC" : "#F1F2ED",
+                color: a.tipo === "erro" ? "#A13D2E" : a.tipo === "alerta" ? "#8A4A2E" : "#4A5240",
+              }}
+            >
+              <span className="font-bold uppercase text-xs mt-0.5">{a.tipo === "erro" ? "Erro" : a.tipo === "alerta" ? "Alerta" : "Sugestão"}</span>
+              <span>{a.mensagem}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
       <SectionLabel>Indicadores de retorno</SectionLabel>
       <div className="grid grid-cols-4 gap-4 mb-5">
         <Kpi label="VGV Bruto" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />

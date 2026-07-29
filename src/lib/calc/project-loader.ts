@@ -27,6 +27,8 @@ import {
   resolverTaxaIRC,
 } from "./impostos";
 import { calcMetricasPorM2, calcEstruturaSobreVgv, type MetricasPorM2, type EstruturaSobreVgv } from "./metricas";
+import { extrairIndicador } from "./sensibilidades";
+import { gerarAlertas, type Alerta } from "./alertas";
 
 import { listarTipologiasProjeto } from "./../supabase/project-typologies";
 import { listarUnidades } from "./../supabase/project-units";
@@ -52,6 +54,7 @@ export type ResultadoProjetoCompleto = {
   investidorPromotor: ResultadosInvestidorPromotor | null;
   metricasPorM2: MetricasPorM2 | null;
   estruturaSobreVgv: EstruturaSobreVgv | null;
+  alertas: Alerta[];
 };
 
 export async function carregarResultadoProjeto(supabase: SupabaseClient, projectId: string): Promise<ResultadoProjetoCompleto> {
@@ -99,6 +102,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       investidorPromotor: null,
       metricasPorM2: null,
       estruturaSobreVgv: null,
+      alertas: [],
     };
   }
 
@@ -115,6 +119,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       investidorPromotor: null,
       metricasPorM2: null,
       estruturaSobreVgv: null,
+      alertas: [],
     };
   }
 
@@ -242,6 +247,66 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   const metricasPorM2 = calcMetricasPorM2(parametrosMetricas);
   const estruturaSobreVgv = calcEstruturaSobreVgv(parametrosMetricas);
 
+  // --- Alertas (secção 41 do plano) ---
+  const hoje = new Date().toISOString().slice(0, 10);
+  const datasEfetivasAlertas =
+    salesTableResolvida.length > 0
+      ? calcularDatasEfetivas(
+          unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+          tipologias.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+          planoVendas.dataLancamentoComercial
+        )
+      : new Map<string, string>();
+  const datasVendaOrdenadas = [...datasEfetivasAlertas.values()].sort();
+
+  let saldoAnteriorAcumulado = 0;
+  const linhasReconciliacao = resultado.linhas.map((l) => {
+    const entradas = l.receitaVendas + l.drawdown + l.equityCall;
+    const saidas =
+      l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos + l.ivaNaoRecuperavel + l.comissaoComercial + l.jurosEFees + l.amortizacao + l.distribuicoes;
+    const linha = { mes: l.mes, saldoAnterior: saldoAnteriorAcumulado, entradas, saidas, saldoAtual: l.saldoCaixaAcumulado };
+    saldoAnteriorAcumulado = l.saldoCaixaAcumulado;
+    return linha;
+  });
+
+  const alertas = gerarAlertas({
+    temCodigoPostalValido: projetoRow ? Boolean(projetoRow.freguesia && projetoRow.concelho) : null,
+    abcTotal,
+    abpProgramada: resumoPrograma.abpTotal,
+    eficiencia,
+    totalUnidades: unidades.length,
+    unidadesVendidas: unidades.filter((u) => u.estadoComercial !== "disponivel").length,
+    dataLancamentoComercialPassada: Boolean(planoVendas.dataLancamentoComercial && planoVendas.dataLancamentoComercial <= hoje),
+    algumaUnidadeComSinalMaisReforcosAcimaDe100Pct: salesTableResolvida.some((u) => u.sinalValor + u.reforcosValor > u.precoFinal),
+    algumaTipologiaVendeuMaisDoQueAQuantidade: tipologias.some((t) => unidades.filter((u) => u.tipologiaId === t.id).length > t.quantidade),
+    // Aquisição: ainda não há um modelo dedicado de sinal/reforços da aquisição distinto das linhas de custo — não implementado, nunca dispara.
+    sinalMaisReforcosAquisicaoAcimaDe100Pct: false,
+    temEscrituraAquisicaoSemData: false,
+    existeCustoAtivoSemData: custos.some((c) => c.valorInput > 0 && (!c.dataInicial || !c.dataFinal)),
+    existeHardCostSemDuracao: custos.some((c) => c.grupo === "hard_cost" && c.valorInput > 0 && !c.duracaoMeses),
+    dataEscritura: planoVendas.dataEscritura || null,
+    primeiraDataVendaUnidade: datasVendaOrdenadas[0] ?? null,
+    dataFimConstrucao: planoVendas.dataFimConstrucao || null,
+    // IVA reduzido: ainda não há uma confirmação distinta rastreada por linha — não implementado, nunca dispara.
+    ivaReduzidoAplicadoSemConfirmacao: false,
+    ltv: resultado.financiamento.ltv,
+    algumMesComSaldoCaixaNegativoAposFinanciamento: resultado.linhas.some((l) => l.saldoCaixaAcumulado < -0.01),
+    equityCommitted: resultado.equity.equityContributed,
+    peakCashExposure: resultado.equity.peakCashExposure,
+    irrLevered: extrairIndicador(resultado, "irr_levered"),
+    gdv: resultado.gdv,
+    custoTotal: resultado.custoTotal,
+    margem: resultado.margem,
+    temInvestidorExterno: estruturaCapital.temInvestidorExterno,
+    lucroLevered: resultado.lucroLevered,
+    lucroInvestidor: investidorPromotor?.investidor.lucro ?? null,
+    lucroPromotorTotal: investidorPromotor?.promotor.lucroTotal ?? null,
+    feesPromotor: investidorPromotor?.promotor.fees ?? null,
+    linhasReconciliacao,
+    // Sensibilidade-base: exigiria recalcular a matriz completa só para este alerta — fica null (nunca dispara) até isso ser justificável.
+    margemSensibilidadeBase: null,
+  });
+
   return {
     projeto,
     dadosSuficientes: true,
@@ -254,6 +319,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     investidorPromotor,
     metricasPorM2,
     estruturaSobreVgv,
+    alertas,
   };
 }
 
