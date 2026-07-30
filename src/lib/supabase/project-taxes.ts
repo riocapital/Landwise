@@ -1,7 +1,7 @@
 // Acesso a `project_taxes` — liga o wizard ao motor impostos.ts.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { EstruturaFiscalAssumida } from "./../calc/impostos";
+import type { EstruturaFiscalAssumida, RegimeIRC } from "./../calc/impostos";
 
 export type ImpostosEstado = {
   seguroTaxa: number;
@@ -13,6 +13,7 @@ export type ImpostosEstado = {
   imiDataInicial: string | null;
   estruturaFiscalAssumida: EstruturaFiscalAssumida; // secção 29 do plano
   ircAnoFiscalReferencia: number;
+  ircRegime: RegimeIRC;
   ircTaxaManual: number | null;
   ircAjustesFiscais: number; // +/- diferença entre lucro económico e tributável, ligado ao motor (nunca um valor solto)
   ircPrejuizosFiscaisAcumulados: number;
@@ -34,6 +35,7 @@ export const IMPOSTOS_VAZIO: ImpostosEstado = {
   imiDataInicial: null,
   estruturaFiscalAssumida: "nao_definida",
   ircAnoFiscalReferencia: new Date().getFullYear(),
+  ircRegime: "geral",
   ircTaxaManual: null,
   ircAjustesFiscais: 0,
   ircPrejuizosFiscaisAcumulados: 0,
@@ -58,6 +60,7 @@ export async function carregarImpostos(supabase: SupabaseClient, projectId: stri
     imiDataInicial: data.imi_data_inicial,
     estruturaFiscalAssumida: data.estrutura_fiscal_assumida ?? "nao_definida",
     ircAnoFiscalReferencia: data.irc_ano_fiscal_referencia ?? IMPOSTOS_VAZIO.ircAnoFiscalReferencia,
+    ircRegime: data.irc_regime ?? "geral",
     ircTaxaManual: data.irc_taxa_manual,
     ircAjustesFiscais: data.irc_ajustes_fiscais ?? 0,
     ircPrejuizosFiscaisAcumulados: data.irc_prejuizos_fiscais_acumulados ?? 0,
@@ -83,6 +86,7 @@ export async function guardarImpostos(supabase: SupabaseClient, projectId: strin
       imi_data_inicial: estado.imiDataInicial,
       estrutura_fiscal_assumida: estado.estruturaFiscalAssumida,
       irc_ano_fiscal_referencia: estado.ircAnoFiscalReferencia,
+      irc_regime: estado.ircRegime,
       irc_taxa_manual: estado.ircTaxaManual,
       irc_ajustes_fiscais: estado.ircAjustesFiscais,
       irc_prejuizos_fiscais_acumulados: estado.ircPrejuizosFiscaisAcumulados,

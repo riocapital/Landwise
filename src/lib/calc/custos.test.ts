@@ -44,6 +44,11 @@ describe("Bases diretas (estágio A)", () => {
     expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(5000);
   });
 
+  it("valor_mensal multiplica pelo número de meses", () => {
+    const l = linha({ tipoCalculo: "valor_mensal", valorInput: 2500, duracaoMeses: 12 });
+    expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(30_000);
+  });
+
   it("percentagem_aquisicao multiplica pelo valor de aquisição", () => {
     const l = linha({ tipoCalculo: "percentagem_aquisicao", valorInput: 0.02 });
     expect(resolverValoresCustos([l], contexto).get(l.id)).toBe(20_000);

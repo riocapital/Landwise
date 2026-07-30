@@ -52,9 +52,13 @@ export type ProjectInputs = {
   tipologias: Tipologia[];
   mapaVendas: LinhaVendas[];
 
-  // Custo de aquisição do terreno (fixo, não vem do mapa de vendas)
+  // Aquisição — mantida no JSONB legado por compatibilidade, mas editada apenas na etapa Aquisição e custos.
   custoTerreno: number;
-  custosAquisicaoPct: number; // 0-1 sobre custo do terreno (IMT+IS+notário)
+  sinalAquisicaoPct: number; // 0-1 sobre o preço total
+  dataSinalAquisicao: string; // YYYY-MM-DD
+  duracaoAteEscrituraMeses: number;
+  dataEscrituraAquisicao: string; // YYYY-MM-DD, calculada ou override manual
+  custosAquisicaoPct: number; // 0-1 sobre custo do terreno (legado)
   softCostsPct: number; // 0-1 sobre custo de construção
   contingenciaPct: number; // 0-1 sobre custo de construção
   custoConstrucaoM2: number | null; // se não vier do mapa de vendas, usar isto × GCA
@@ -115,6 +119,10 @@ export const DEFAULT_INPUTS: ProjectInputs = {
   ],
   mapaVendas: [],
   custoTerreno: 0,
+  sinalAquisicaoPct: 0.1,
+  dataSinalAquisicao: "",
+  duracaoAteEscrituraMeses: 3,
+  dataEscrituraAquisicao: "",
   custosAquisicaoPct: 0.078,
   softCostsPct: 0.06,
   contingenciaPct: 0.05,

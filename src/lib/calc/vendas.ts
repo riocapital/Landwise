@@ -135,9 +135,12 @@ export function gerarRecebimentosDaSalesTable(
 ): { linhas: LinhaRecebimentoMensal[]; receitaLiquidaCancelamentos: number } {
   const fatorCancelamento = 1 - plano.cancelamentosEstimadosPct;
   const e = plano.estruturaRecebimentos;
-  const pctReservaMaisCpcv = e.pctReserva + e.pctCpcv;
 
-  const reservaCpcvPorMes = new Map<string, number>();
+  // Reserva e CPCV podem ocorrer no mesmo mês, mas são conceitos distintos.
+  // Mantê-los separados evita esconder o sinal de CPCV no cash flow e no
+  // reportPayload, sem alterar o total recebido pela unidade.
+  const reservaPorMes = new Map<string, number>();
+  const cpcvPorMes = new Map<string, number>();
   let receitaTotal = 0;
 
   const datasEfetivas = calcularDatasEfetivas(
@@ -154,29 +157,36 @@ export function gerarRecebimentosDaSalesTable(
     if (!dataVendaEfetiva) continue; // sem data real nem projetável (tipologia sem curva configurada) — não agenda, nunca inventa mês
 
     const mes = dataVendaEfetiva.slice(0, 7);
-    reservaCpcvPorMes.set(mes, (reservaCpcvPorMes.get(mes) ?? 0) + precoLiquido * pctReservaMaisCpcv);
+    reservaPorMes.set(mes, (reservaPorMes.get(mes) ?? 0) + precoLiquido * e.pctReserva);
+    cpcvPorMes.set(mes, (cpcvPorMes.get(mes) ?? 0) + precoLiquido * e.pctCpcv);
   }
 
-  const construcaoPorMes = distribuirValorPorPerfil(
-    receitaTotal * e.pctDuranteConstrucao,
-    plano.dataInicioConstrucao,
-    plano.dataFimConstrucao,
-    "linear"
-  );
-  const conclusaoPorMes = new Map([[plano.dataFimConstrucao.slice(0, 7), receitaTotal * e.pctConclusao]]);
-  const escrituraPorMes = new Map([[plano.dataEscritura.slice(0, 7), receitaTotal * e.pctEscritura]]);
+  const construcaoPorMes =
+    plano.dataInicioConstrucao && plano.dataFimConstrucao
+      ? distribuirValorPorPerfil(receitaTotal * e.pctDuranteConstrucao, plano.dataInicioConstrucao, plano.dataFimConstrucao, "linear")
+      : new Map<string, number>();
+  const conclusaoPorMes = new Map<string, number>();
+  if (plano.dataFimConstrucao) conclusaoPorMes.set(plano.dataFimConstrucao.slice(0, 7), receitaTotal * e.pctConclusao);
+  const escrituraPorMes = new Map<string, number>();
+  if (plano.dataEscritura) escrituraPorMes.set(plano.dataEscritura.slice(0, 7), receitaTotal * e.pctEscritura);
 
-  const todosMeses = new Set<string>([...reservaCpcvPorMes.keys(), ...construcaoPorMes.keys(), ...conclusaoPorMes.keys(), ...escrituraPorMes.keys()]);
+  const todosMeses = new Set<string>([
+    ...reservaPorMes.keys(),
+    ...cpcvPorMes.keys(),
+    ...construcaoPorMes.keys(),
+    ...conclusaoPorMes.keys(),
+    ...escrituraPorMes.keys(),
+  ]);
 
   const linhas: LinhaRecebimentoMensal[] = [...todosMeses]
     .sort()
     .map((mes) => {
-      const reservaCpcv = reservaCpcvPorMes.get(mes) ?? 0;
+      const reserva = reservaPorMes.get(mes) ?? 0;
+      const cpcv = cpcvPorMes.get(mes) ?? 0;
       const duranteConstrucao = construcaoPorMes.get(mes) ?? 0;
       const conclusao = conclusaoPorMes.get(mes) ?? 0;
       const escritura = escrituraPorMes.get(mes) ?? 0;
-      // reserva e cpcv reportados juntos na mesma linha (ambos seguem a data de venda da unidade) — reserva leva o total, cpcv fica a 0, para não duplicar a soma.
-      return { mes, reserva: reservaCpcv, cpcv: 0, duranteConstrucao, conclusao, escritura, total: reservaCpcv + duranteConstrucao + conclusao + escritura };
+      return { mes, reserva, cpcv, duranteConstrucao, conclusao, escritura, total: reserva + cpcv + duranteConstrucao + conclusao + escritura };
     });
 
   return { linhas, receitaLiquidaCancelamentos: receitaTotal };

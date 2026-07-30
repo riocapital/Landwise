@@ -26,7 +26,7 @@ export function criarPayloadProjetoDemo(userId: string) {
   return {
     user_id: userId,
     nome: "Projeto demonstrativo — Benfica, Lisboa",
-    tipo_projeto: "Terreno para construir",
+    tipo_projeto: "Terreno para Construção",
     localizacao: "Benfica, Lisboa",
     status: "calculado" as const,
     is_demo: true,

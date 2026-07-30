@@ -1,11 +1,5 @@
-// Camada de serviço para localização e geocodificação por código postal — Landwise
-//
-// Corre SEMPRE no servidor (rota API abaixo, nunca importado por componentes
-// "use client"). Nenhuma chave de API é usada aqui neste momento: o provedor
-// por omissão (geoapi.pt) é aberto e gratuito. Se no futuro for preciso trocar
-// para um provedor que exija chave (ex.: cttcodigopostal.pt), a chave deve
-// vir de uma variável de ambiente só do lado do servidor (sem prefixo
-// NEXT_PUBLIC_) — nunca hardcoded, nunca enviada ao browser.
+// Serviço server-side de localização por código postal português.
+// Provedor principal: GEO API PT, usando o endpoint JSON oficial.
 
 export type SugestaoLocalizacao = {
   rua: string | null;
@@ -18,85 +12,144 @@ export type SugestaoLocalizacao = {
 };
 
 export type ResultadoLookupCodigoPostal =
-  | { encontrado: true; opcoes: SugestaoLocalizacao[] }
+  | { encontrado: true; opcoes: SugestaoLocalizacao[]; fonte: string; consultadoEm: string }
   | { encontrado: false; motivo: "codigo_invalido" | "sem_resultados" | "erro_provedor" };
 
 const REGEX_CP = /^\d{4}-\d{3}$/;
 
-/**
- * Provedor por omissão: geoapi.pt (dados abertos, sem necessidade de chave).
- * Ver https://geoapi.pt/docs/ — endpoint de códigos postais.
- *
- * A função devolve SEMPRE uma lista (0, 1 ou várias moradas para o mesmo
- * código postal), nunca lança exceção para o chamador — falhas de rede ou
- * do provedor são tratadas como "erro_provedor", permitindo à UI cair em
- * preenchimento manual sem bloquear o wizard (regra do plano: "se a consulta
- * não encontrar resultados, não bloquear o projeto").
- */
 export async function procurarCodigoPostal(codigoPostal: string): Promise<ResultadoLookupCodigoPostal> {
   const cp = codigoPostal.trim();
-  if (!REGEX_CP.test(cp)) {
-    return { encontrado: false, motivo: "codigo_invalido" };
-  }
+  if (!REGEX_CP.test(cp)) return { encontrado: false, motivo: "codigo_invalido" };
 
-  const providerUrl = process.env.LANDWISE_GEOAPI_BASE_URL ?? "https://geoapi.pt/cp";
+  // A documentação oficial recomenda json.geoapi.pt para respostas JSON.
+  const providerUrl = process.env.LANDWISE_GEOAPI_BASE_URL ?? "https://json.geoapi.pt/cp";
 
   try {
-    const resposta = await fetch(`${providerUrl}/${cp}`, {
+    const resposta = await fetch(`${providerUrl}/${encodeURIComponent(cp)}`, {
       headers: { Accept: "application/json" },
-      // Timeout curto: preferimos cair em preenchimento manual a bloquear o wizard.
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(6000),
+      next: { revalidate: 86400 },
     });
 
-    if (!resposta.ok) {
-      return { encontrado: false, motivo: "erro_provedor" };
-    }
+    if (!resposta.ok) return { encontrado: false, motivo: resposta.status === 404 ? "sem_resultados" : "erro_provedor" };
 
     const dados = await resposta.json();
-    const opcoes = normalizarRespostaGeoApi(dados);
+    const opcoes = deduplicar(normalizarRespostaGeoApi(dados));
+    if (opcoes.length === 0) return { encontrado: false, motivo: "sem_resultados" };
 
-    if (opcoes.length === 0) {
-      return { encontrado: false, motivo: "sem_resultados" };
-    }
-    return { encontrado: true, opcoes };
+    return {
+      encontrado: true,
+      opcoes,
+      fonte: "GEO API PT",
+      consultadoEm: new Date().toISOString(),
+    };
   } catch {
     return { encontrado: false, motivo: "erro_provedor" };
   }
 }
 
-/**
- * Normaliza a resposta do provedor para o formato interno da Landwise.
- * Isolada numa função própria para que trocar de provedor no futuro
- * (ex.: cttcodigopostal.pt) exija só uma nova função de normalização,
- * não mudanças na rota API nem no wizard.
- */
 function normalizarRespostaGeoApi(dados: unknown): SugestaoLocalizacao[] {
   if (!dados || typeof dados !== "object") return [];
 
-  // geoapi.pt devolve um objeto com "distrito", "concelho", "freguesias": [...]
-  // e, quando aplicável, uma lista de moradas/artérias. Mantemos a normalização
-  // tolerante a formatos ligeiramente diferentes por CP4 vs CP4-CP3.
-  const registo = dados as Record<string, unknown>;
-  const distrito = typeof registo.distrito === "string" ? registo.distrito : null;
-  const concelho = typeof registo.concelho === "string" ? registo.concelho : null;
+  if (Array.isArray(dados)) {
+    return dados.flatMap((item) => normalizarRespostaGeoApi(item));
+  }
 
-  const freguesias = Array.isArray(registo.freguesias) ? registo.freguesias : [registo];
+  const r = dados as Record<string, unknown>;
+  const distrito = texto(r.distrito) ?? textoObj(r.distrito, ["nome", "designacao"]);
+  const concelho =
+    texto(r.concelho) ??
+    texto(r.municipio) ??
+    textoObj(r.concelho, ["nome", "designacao"]) ??
+    textoObj(r.municipio, ["nome", "designacao"]);
+  const localidade = texto(r.localidade) ?? texto(r.designacao_postal) ?? texto(r.designacaoPostal);
 
-  return (freguesias as Record<string, unknown>[]).map((f) => ({
-    rua: typeof f.morada === "string" ? f.morada : typeof f.rua === "string" ? f.rua : null,
-    localidade: typeof f.localidade === "string" ? f.localidade : null,
-    freguesia: typeof f.freguesia === "string" ? f.freguesia : typeof f.nome === "string" ? f.nome : null,
+  const centro = extrairCentro(r.centro ?? r.center ?? r.coordenadas ?? r.coordinates);
+  const latitude = numero(r.latitude) ?? centro.latitude;
+  const longitude = numero(r.longitude) ?? centro.longitude;
+
+  const base: SugestaoLocalizacao = {
+    rua: texto(r.rua) ?? texto(r.morada) ?? texto(r.arteria) ?? texto(r.artéria),
+    localidade,
+    freguesia: texto(r.freguesia) ?? textoObj(r.freguesia, ["nome", "designacao"]),
     concelho,
     distrito,
-    latitude: typeof f.latitude === "number" ? f.latitude : parseNumeroOuNull(f.latitude),
-    longitude: typeof f.longitude === "number" ? f.longitude : parseNumeroOuNull(f.longitude),
-  }));
+    latitude,
+    longitude,
+  };
+
+  const colecoes = [r.opcoes, r.moradas, r.arterias, r.artérias, r.freguesias].filter(Array.isArray) as unknown[][];
+  if (colecoes.length === 0) return [base];
+
+  const opcoes = colecoes.flat().flatMap((item) => {
+    if (typeof item === "string") {
+      return [{ ...base, freguesia: base.freguesia ?? item }];
+    }
+    if (!item || typeof item !== "object") return [];
+    const itemNorm = normalizarRespostaGeoApi(item);
+    return itemNorm.map((opcao) => ({
+      rua: opcao.rua ?? base.rua,
+      localidade: opcao.localidade ?? base.localidade,
+      freguesia: opcao.freguesia ?? base.freguesia,
+      concelho: opcao.concelho ?? base.concelho,
+      distrito: opcao.distrito ?? base.distrito,
+      latitude: opcao.latitude ?? base.latitude,
+      longitude: opcao.longitude ?? base.longitude,
+    }));
+  });
+
+  return opcoes.length > 0 ? opcoes : [base];
 }
 
-function parseNumeroOuNull(v: unknown): number | null {
-  if (typeof v === "string" && v.trim() !== "") {
-    const n = Number(v);
+function deduplicar(opcoes: SugestaoLocalizacao[]): SugestaoLocalizacao[] {
+  const vistos = new Set<string>();
+  return opcoes.filter((o) => {
+    const temConteudo = Boolean(o.rua || o.localidade || o.freguesia || o.concelho || o.distrito || o.latitude || o.longitude);
+    if (!temConteudo) return false;
+    const chave = [o.rua, o.localidade, o.freguesia, o.concelho, o.distrito, o.latitude, o.longitude].join("|");
+    if (vistos.has(chave)) return false;
+    vistos.add(chave);
+    return true;
+  });
+}
+
+function texto(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+function textoObj(v: unknown, chaves: string[]): string | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  for (const chave of chaves) {
+    const t = texto(r[chave]);
+    if (t) return t;
+  }
+  return null;
+}
+
+function numero(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim()) {
+    const n = Number(v.replace(",", "."));
     return Number.isFinite(n) ? n : null;
   }
   return null;
+}
+
+function extrairCentro(v: unknown): { latitude: number | null; longitude: number | null } {
+  if (Array.isArray(v) && v.length >= 2) {
+    return { latitude: numero(v[0]), longitude: numero(v[1]) };
+  }
+  if (typeof v === "string") {
+    const [lat, lon] = v.split(",");
+    return { latitude: numero(lat), longitude: numero(lon) };
+  }
+  if (v && typeof v === "object") {
+    const r = v as Record<string, unknown>;
+    return {
+      latitude: numero(r.latitude ?? r.lat ?? r.y),
+      longitude: numero(r.longitude ?? r.lon ?? r.lng ?? r.x),
+    };
+  }
+  return { latitude: null, longitude: null };
 }

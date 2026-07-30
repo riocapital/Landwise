@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, use } from "react";
+import { TIPOS_PROJETO, normalizarTipoProjeto } from "@/lib/project-types";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -18,6 +19,7 @@ import {
 import type { SugestaoPreco, SujeitoComparacao } from "@/lib/calc/comparaveis";
 import { resolverCustos, agregarCustos, type LinhaCusto, type GrupoCusto, type ContextoCusto } from "@/lib/calc/custos";
 import { listarCustosProjeto, criarCusto, atualizarCusto, apagarCusto } from "@/lib/supabase/project-costs";
+import { garantirCustosPadrao, garantirTipologiasPadrao, CUSTOS_PADRAO } from "@/lib/supabase/project-defaults";
 import { calcDataFinal } from "@/lib/calc/calendario";
 import { taxaAnual, taxaMensal, resolverMesInicioCashSweep, type ParametrosFinanciamento } from "@/lib/calc/financiamento";
 import { carregarFinanciamento, guardarFinanciamento, FINANCIAMENTO_VAZIO } from "@/lib/supabase/project-financing";
@@ -45,7 +47,6 @@ import {
   calcularSincronizacao,
   resolverSalesTable,
   calcVgvBruto,
-  validarVenda,
   type UnidadeVenda,
   type LinhaSalesTableResolvida,
 } from "@/lib/calc/sales-table";
@@ -68,17 +69,13 @@ import {
 } from "@/lib/calc/cenarios";
 import { listarCenarios, criarCenario, atualizarCenario, apagarCenario } from "@/lib/supabase/project-scenarios";
 import {
-  calcSeguro,
-  calcIMI,
   resolverTaxaIRC,
   calcLucroTributavel,
   calcLucroEconomico,
   calcLucroTributavelEstimado,
-  calcIRC,
+  calcIRCComRegime,
   calcDerramaMunicipal,
   calcDerramaEstadual,
-  TAXA_SEGURO_SUGERIDA,
-  TAXA_IMI_SUGERIDA,
 } from "@/lib/calc/impostos";
 import { carregarImpostos, guardarImpostos, type ImpostosEstado, IMPOSTOS_VAZIO } from "@/lib/supabase/project-taxes";
 import { type Atividade } from "@/lib/calc/calendario";
@@ -89,7 +86,7 @@ import {
 } from "@/lib/supabase/project-timeline";
 import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
-import { calcularCashFlow } from "@/lib/calc/cashflow";
+import { calcularCashFlow, calcularReservaMinimaCustos } from "@/lib/calc/cashflow";
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "@/lib/calc/vendas";
 import { gerarComissaoMensal } from "@/lib/calc/sales-commission";
 import {
@@ -127,11 +124,11 @@ type IdentificacaoEstruturada = {
   areaDependenteEstimada: number | null;
   abpEstimada: number | null;
   temGaragem: boolean;
+  numEstacionamentos: number;
   temElevador: boolean;
+  numElevadores: number;
   temJardimExterior: boolean;
-  necessitaDemolicao: boolean;
   imovelOcupado: boolean;
-  temLicenciamentoAprovado: boolean;
 };
 
 const IDENTIFICACAO_VAZIA: IdentificacaoEstruturada = {
@@ -149,11 +146,11 @@ const IDENTIFICACAO_VAZIA: IdentificacaoEstruturada = {
   areaDependenteEstimada: null,
   abpEstimada: null,
   temGaragem: false,
+  numEstacionamentos: 0,
   temElevador: false,
+  numElevadores: 0,
   temJardimExterior: false,
-  necessitaDemolicao: false,
   imovelOcupado: false,
-  temLicenciamentoAprovado: false,
 };
 
 export default function WizardPage({ params }: { params: Promise<{ id: string }> }) {
@@ -163,7 +160,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
   const [step, setStep] = useState(0);
   const [nome, setNome] = useState("Novo projeto");
-  const [tipoProjeto, setTipoProjeto] = useState("Terreno para construir");
+  const [tipoProjeto, setTipoProjeto] = useState("Terreno para Construção");
   const [inputs, setInputs] = useState<ProjectInputs>(DEFAULT_INPUTS);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -187,17 +184,20 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [opcoesCp, setOpcoesCp] = useState<
     { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[]
   >([]);
+  const [erroCp, setErroCp] = useState<string | null>(null);
   const [sugestoes, setSugestoes] = useState<
     Record<string, { loading: boolean; resultado?: SugestaoPreco; erro?: boolean }>
   >({});
 
   const carregar = useCallback(async () => {
     const { data } = await supabase.from("projects").select("*").eq("id", id).single();
+    let inputsCarregados: ProjectInputs = DEFAULT_INPUTS;
     if (data) {
       setNome(data.nome);
-      setTipoProjeto(data.tipo_projeto);
+      setTipoProjeto(normalizarTipoProjeto(data.tipo_projeto));
       if (data.inputs && Object.keys(data.inputs).length > 0) {
-        setInputs({ ...DEFAULT_INPUTS, ...data.inputs });
+        inputsCarregados = { ...DEFAULT_INPUTS, ...data.inputs };
+        setInputs(inputsCarregados);
       }
       setIdentificacao({
         codigoPostal: data.codigo_postal ?? "",
@@ -214,14 +214,15 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         areaDependenteEstimada: data.area_dependente_estimada ?? null,
         abpEstimada: data.abp_estimada ?? null,
         temGaragem: data.tem_garagem ?? false,
+        numEstacionamentos: data.num_estacionamentos ?? 0,
         temElevador: data.tem_elevador ?? false,
+        numElevadores: data.num_elevadores ?? 0,
         temJardimExterior: data.tem_jardim_exterior ?? false,
-        necessitaDemolicao: data.necessita_demolicao ?? false,
         imovelOcupado: data.imovel_ocupado ?? false,
-        temLicenciamentoAprovado: data.tem_licenciamento_aprovado ?? false,
       });
     }
-    const tipologias = await listarTipologiasProjeto(supabase, id);
+    const tipologiasLidas = await listarTipologiasProjeto(supabase, id);
+    const tipologias = await garantirTipologiasPadrao(supabase, id, tipologiasLidas);
     setTipologiasNovas(tipologias);
     const unidadesCarregadas = await listarUnidades(supabase, id);
     setUnidades(unidadesCarregadas);
@@ -229,7 +230,9 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setRegrasPreco(regrasPrecoCarregadas);
     const cenariosCarregados = await listarCenarios(supabase, id);
     setCenarios(cenariosCarregados);
-    const custos = await listarCustosProjeto(supabase, id);
+    const custosLidos = await listarCustosProjeto(supabase, id);
+    const custosPadrao = await garantirCustosPadrao(supabase, id, custosLidos);
+    const custos = await reconciliarCustosAquisicaoCarregados(supabase, custosPadrao, inputsCarregados);
     setCustosNovos(custos);
     const parametrosFinanciamento = await carregarFinanciamento(supabase, id);
     setFinanciamento(parametrosFinanciamento);
@@ -244,7 +247,13 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     const atividadesCarregadas = await listarAtividades(supabase, id);
     setAtividades(atividadesCarregadas);
     const planoVendasCarregado = await carregarPlanoVendas(supabase, id);
-    setPlanoVendas(planoVendasCarregado);
+    const datasConstrucao = obterDatasConstrucaoDosCustos(custos);
+    const planoVendasFinal = {
+      ...planoVendasCarregado,
+      dataInicioConstrucao: datasConstrucao.inicio || planoVendasCarregado.dataInicioConstrucao,
+      dataFimConstrucao: datasConstrucao.fim || planoVendasCarregado.dataFimConstrucao,
+    };
+    setPlanoVendas(planoVendasFinal);
     setLoading(false);
   }, [id, supabase]);
 
@@ -288,11 +297,11 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           area_dependente_estimada: identificacao.areaDependenteEstimada,
           abp_estimada: identificacao.abpEstimada,
           tem_garagem: identificacao.temGaragem,
+          num_estacionamentos: identificacao.temGaragem ? identificacao.numEstacionamentos : 0,
           tem_elevador: identificacao.temElevador,
+          num_elevadores: identificacao.temElevador ? identificacao.numElevadores : 0,
           tem_jardim_exterior: identificacao.temJardimExterior,
-          necessita_demolicao: identificacao.necessitaDemolicao,
           imovel_ocupado: identificacao.imovelOcupado,
-          tem_licenciamento_aprovado: identificacao.temLicenciamentoAprovado,
         })
         .eq("id", id);
 
@@ -368,7 +377,11 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
   async function handleCodigoPostalBlur() {
     const cp = identificacao.codigoPostal.trim();
-    if (!/^\d{4}-\d{3}$/.test(cp)) return;
+    setErroCp(null);
+    if (!/^\d{4}-\d{3}$/.test(cp)) {
+      if (cp) setErroCp("Introduza o código postal completo no formato 0000-000.");
+      return;
+    }
     setALoadearCp(true);
     setOpcoesCp([]);
     try {
@@ -380,8 +393,11 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         } else {
           setOpcoesCp(data.opcoes);
         }
+      } else {
+        setErroCp("Não conseguimos identificar este código postal. Preencha os dados de localização manualmente.");
       }
-      // Se não encontrar, não bloqueia nada — os campos continuam livres para preenchimento manual.
+    } catch {
+      setErroCp("O serviço de código postal está temporariamente indisponível. Preencha manualmente ou tente novamente.");
     } finally {
       setALoadearCp(false);
     }
@@ -462,16 +478,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setUnidades((prev) => prev.map((u) => (u.id === unidadeId ? { ...u, ...patch, personalizada: true } : u)));
   }
 
-  function venderUnidade(unidadeId: string, dataVenda: string) {
-    const unidade = unidades.find((u) => u.id === unidadeId);
-    if (!unidade) return;
-    const validacao = validarVenda(unidade);
-    if (!validacao.valido) {
-      window.alert(validacao.erro);
-      return;
-    }
-    setUnidades((prev) => prev.map((u) => (u.id === unidadeId ? { ...u, estadoComercial: "vendido", dataVenda } : u)));
-  }
+
 
   async function adicionarRegraPreco() {
     const nova = await criarRegraPreco(supabase, id, regrasPreco.length);
@@ -556,7 +563,29 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   }
 
   function atualizarCustoNovoLocal(custoId: string, patch: Partial<LinhaCusto>) {
-    setCustosNovos((prev) => prev.map((c) => (c.id === custoId ? { ...c, ...patch } : c)));
+    const atualizados = custosNovos.map((c) => (c.id === custoId ? { ...c, ...patch } : c));
+    const { inicio, fim } = obterDatasConstrucaoDosCustos(atualizados);
+    const duracao = inicio && fim ? Math.max(1, diferencaMesesDatas(inicio, fim) + 1) : null;
+    const comFiscalizacaoSincronizada = atualizados.map((c) =>
+      c.nome === "Fiscalização de obra" && inicio && fim
+        ? {
+            ...c,
+            tipoCalculo: "valor_mensal" as const,
+            dataInicial: inicio,
+            dataFinal: fim,
+            duracaoMeses: duracao,
+            perfilDesembolso: "linear" as const,
+          }
+        : c
+    );
+    setCustosNovos(comFiscalizacaoSincronizada);
+    if (inicio || fim) {
+      setPlanoVendas((prev) => ({
+        ...prev,
+        dataInicioConstrucao: inicio || prev.dataInicioConstrucao,
+        dataFimConstrucao: fim || prev.dataFimConstrucao,
+      }));
+    }
   }
 
   async function removerCustoNovo(custoId: string) {
@@ -670,7 +699,27 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   }
 
   function updatePlanoVendas<K extends keyof PlanoVendas>(key: K, value: PlanoVendas[K]) {
-    setPlanoVendas((prev) => ({ ...prev, [key]: value }));
+    const proximo = { ...planoVendas, [key]: value };
+    setPlanoVendas(proximo);
+    if (key === "dataInicioConstrucao" || key === "dataFimConstrucao") {
+      const inicio = proximo.dataInicioConstrucao;
+      const fim = proximo.dataFimConstrucao;
+      const duracao = inicio && fim ? Math.max(1, diferencaMesesDatas(inicio, fim) + 1) : null;
+      setCustosNovos((prev) =>
+        prev.map((c) =>
+          c.nome === "Fiscalização de obra"
+            ? {
+                ...c,
+                tipoCalculo: "valor_mensal",
+                dataInicial: inicio || null,
+                dataFinal: fim || null,
+                duracaoMeses: duracao,
+                perfilDesembolso: "linear",
+              }
+            : c
+        )
+      );
+    }
   }
 
   function updateEstruturaRecebimentos<K extends keyof PlanoVendas["estruturaRecebimentos"]>(
@@ -751,6 +800,16 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     abcTotal: abcTotalAtual,
     numeroUnidades: contextoCustoAtual.numeroUnidades,
   };
+  const reservaMinimaAtual = calcularReservaMinimaCustos(
+    custosNovos,
+    contextoCustoAtual,
+    financiamento.saldoMinimoMesesReserva ?? 6
+  );
+  const financiamentoEfetivo: ParametrosFinanciamento = {
+    ...financiamento,
+    saldoMinimoCaixa: reservaMinimaAtual.valor,
+    cashSweepMesesCustosFuturos: financiamento.saldoMinimoMesesReserva ?? financiamento.cashSweepMesesCustosFuturos,
+  };
 
   // Cash flow calculado uma única vez aqui — partilhado pela etapa final
   // (Cash flow e resultados) e pelo Calendário (para mostrar drawdowns e
@@ -815,7 +874,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           pctVgvRecebidoAcumulado: vgvTotalAtual > 0 ? vgvAcumulado / vgvTotalAtual : 0,
         };
       });
-      mesInicioCashSweepCalculado = resolverMesInicioCashSweep(financiamento, eventosCashSweep);
+      mesInicioCashSweepCalculado = resolverMesInicioCashSweep(financiamentoEfetivo, eventosCashSweep);
     }
 
     resultadoAtual = calcularCashFlow({
@@ -823,9 +882,9 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       contextoCusto: contextoCustoAtual,
       recebimentos: recebimentosCalculados,
       comissaoPorMes: comissaoPorMesCalculada,
-      parametrosFinanciamento: financiamento,
+      parametrosFinanciamento: financiamentoEfetivo,
       mesInicioCashSweep: mesInicioCashSweepCalculado,
-      saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
+      saldoMinimoCaixa: financiamentoEfetivo.saldoMinimoCaixa,
     });
   }
 
@@ -868,6 +927,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           identificacao={identificacao}
           updateIdentificacao={updateIdentificacao}
           aLoadearCp={aLoadearCp}
+          erroCp={erroCp}
           opcoesCp={opcoesCp}
           onCodigoPostalBlur={handleCodigoPostalBlur}
           onEscolherOpcaoCp={aplicarOpcaoCp}
@@ -887,8 +947,9 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           unidades={unidades}
           onSincronizarUnidades={sincronizarUnidades}
           onAtualizarUnidade={atualizarUnidadeLocal}
-          onVenderUnidade={venderUnidade}
-          dataLancamentoComercial={planoVendas.dataLancamentoComercial}
+          planoVendas={planoVendas}
+          updatePlanoVendas={updatePlanoVendas}
+          updateEstruturaRecebimentos={updateEstruturaRecebimentos}
           regrasPreco={regrasPreco}
           onAdicionarRegraPreco={adicionarRegraPreco}
           onAtualizarRegraPreco={atualizarRegraPrecoLocal}
@@ -902,6 +963,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           identificacao={identificacao}
           tipologiasNovas={tipologiasNovas}
           inputs={inputs}
+          updateInput={updateInput}
           onAdicionarCusto={adicionarCustoNovo}
           onAtualizarCusto={atualizarCustoNovoLocal}
           onRemoverCusto={removerCustoNovo}
@@ -912,6 +974,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           financiamento={financiamento}
           onToggleComFinanciamento={handleToggleFinanciamento}
           updateFinanciamento={updateFinanciamento}
+          reservaMinima={reservaMinimaAtual}
         />
       )}
       {step === 4 && (
@@ -934,7 +997,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         <StepImpostos
           impostos={impostos}
           updateImpostos={updateImpostos}
-          valorAquisicao={inputs.custoTerreno || 0}
           resultado={resultadoAtual}
           onSolicitarConsultoria={handleSolicitarConsultoria}
         />
@@ -952,8 +1014,6 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         <StepCashFlowResultados
           onVerResultados={verResultados}
           planoVendas={planoVendas}
-          updatePlanoVendas={updatePlanoVendas}
-          updateEstruturaRecebimentos={updateEstruturaRecebimentos}
           custosNovos={custosNovos}
           contextoCusto={contextoCustoAtual}
           resumoPrograma={resumoProgramaAtual}
@@ -1007,6 +1067,7 @@ function StepIdentificacao({
   identificacao,
   updateIdentificacao,
   aLoadearCp,
+  erroCp,
   opcoesCp,
   onCodigoPostalBlur,
   onEscolherOpcaoCp,
@@ -1021,6 +1082,7 @@ function StepIdentificacao({
   identificacao: IdentificacaoEstruturada;
   updateIdentificacao: <K extends keyof IdentificacaoEstruturada>(k: K, v: IdentificacaoEstruturada[K]) => void;
   aLoadearCp: boolean;
+  erroCp: string | null;
   opcoesCp: { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }[];
   onCodigoPostalBlur: () => void;
   onEscolherOpcaoCp: (opcao: { rua: string | null; localidade: string | null; freguesia: string | null; concelho: string | null; distrito: string | null; latitude: number | null; longitude: number | null }) => void;
@@ -1040,10 +1102,11 @@ function StepIdentificacao({
         <Row>
           <Field label="Tipo de projeto">
             <select className="input-dark" value={tipoProjeto} onChange={(e) => setTipoProjeto(e.target.value)}>
-              <option>Terreno para construir</option>
-              <option>Prédio para reabilitação</option>
-              <option>Prédio aprovado</option>
-              <option>Apartamento para remodelar</option>
+              {TIPOS_PROJETO.map((tipo) => (
+                <option key={tipo} value={tipo}>
+                  {tipo}
+                </option>
+              ))}
             </select>
           </Field>
           <Field label="Área do lote (m²)">
@@ -1052,16 +1115,6 @@ function StepIdentificacao({
               className="input-dark"
               value={inputs.areaLote ?? ""}
               onChange={(e) => updateInput("areaLote", e.target.value ? Number(e.target.value) : null)}
-            />
-          </Field>
-        </Row>
-        <Row>
-          <Field label="Custo de aquisição do terreno (€)">
-            <input
-              type="number"
-              className="input-dark"
-              value={inputs.custoTerreno || ""}
-              onChange={(e) => updateInput("custoTerreno", Number(e.target.value) || 0)}
             />
           </Field>
         </Row>
@@ -1086,6 +1139,7 @@ function StepIdentificacao({
           </Field>
         </Row>
         {aLoadearCp && <p className="text-xs text-[#8FA6AF] mb-3">A procurar o código postal…</p>}
+        {erroCp && <p className="text-xs text-[#A13D2E] mb-3">{erroCp}</p>}
         {opcoesCp.length > 1 && (
           <div className="mb-4">
             <p className="text-xs text-[#59636A] mb-2">Este código postal tem várias moradas — escolha uma:</p>
@@ -1194,26 +1248,45 @@ function StepIdentificacao({
       </Card>
 
       <Card title="Características">
-        <div className="grid grid-cols-2 gap-x-4">
-          <CheckboxIdent label="Possui garagem" checked={identificacao.temGaragem} onChange={(v) => updateIdentificacao("temGaragem", v)} />
-          <CheckboxIdent label="Possui elevador" checked={identificacao.temElevador} onChange={(v) => updateIdentificacao("temElevador", v)} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+          <div>
+            <CheckboxIdent label="Possui garagem" checked={identificacao.temGaragem} onChange={(v) => updateIdentificacao("temGaragem", v)} />
+            {identificacao.temGaragem && (
+              <Field label="Número total de estacionamentos">
+                <input
+                  type="number"
+                  min={0}
+                  className="input-dark mb-3"
+                  value={identificacao.numEstacionamentos}
+                  onChange={(e) => updateIdentificacao("numEstacionamentos", Math.max(0, Number(e.target.value) || 0))}
+                />
+              </Field>
+            )}
+          </div>
+          <div>
+            <CheckboxIdent label="Possui elevador" checked={identificacao.temElevador} onChange={(v) => updateIdentificacao("temElevador", v)} />
+            {identificacao.temElevador && (
+              <Field label="Número de elevadores">
+                <input
+                  type="number"
+                  min={0}
+                  className="input-dark mb-3"
+                  value={identificacao.numElevadores}
+                  onChange={(e) => updateIdentificacao("numElevadores", Math.max(0, Number(e.target.value) || 0))}
+                />
+              </Field>
+            )}
+          </div>
           <CheckboxIdent
             label="Possui jardim ou áreas exteriores"
             checked={identificacao.temJardimExterior}
             onChange={(v) => updateIdentificacao("temJardimExterior", v)}
           />
-          <CheckboxIdent
-            label="Necessita demolição"
-            checked={identificacao.necessitaDemolicao}
-            onChange={(v) => updateIdentificacao("necessitaDemolicao", v)}
-          />
           <CheckboxIdent label="Imóvel ocupado" checked={identificacao.imovelOcupado} onChange={(v) => updateIdentificacao("imovelOcupado", v)} />
-          <CheckboxIdent
-            label="Possui licenciamento aprovado"
-            checked={identificacao.temLicenciamentoAprovado}
-            onChange={(v) => updateIdentificacao("temLicenciamentoAprovado", v)}
-          />
         </div>
+        <p className="text-xs text-[#8FA6AF] mt-2">
+          Demolição é configurada como custo opcional. O enquadramento do licenciamento decorre do tipo de projeto.
+        </p>
       </Card>
     </>
   );
@@ -1243,8 +1316,9 @@ function StepPrograma({
   unidades,
   onSincronizarUnidades,
   onAtualizarUnidade,
-  onVenderUnidade,
-  dataLancamentoComercial,
+  planoVendas,
+  updatePlanoVendas,
+  updateEstruturaRecebimentos,
   regrasPreco,
   onAdicionarRegraPreco,
   onAtualizarRegraPreco,
@@ -1262,8 +1336,9 @@ function StepPrograma({
   unidades: UnidadeVenda[];
   onSincronizarUnidades: (t: Typology) => void;
   onAtualizarUnidade: (id: string, patch: Partial<UnidadeVenda>) => void;
-  onVenderUnidade: (id: string, dataVenda: string) => void;
-  dataLancamentoComercial: string;
+  planoVendas: PlanoVendas;
+  updatePlanoVendas: <K extends keyof PlanoVendas>(key: K, value: PlanoVendas[K]) => void;
+  updateEstruturaRecebimentos: <K extends keyof PlanoVendas["estruturaRecebimentos"]>(key: K, value: PlanoVendas["estruturaRecebimentos"][K]) => void;
   regrasPreco: RegraEvolucaoPreco[];
   onAdicionarRegraPreco: () => void;
   onAtualizarRegraPreco: (id: string, patch: Partial<RegraEvolucaoPreco>) => void;
@@ -1272,9 +1347,118 @@ function StepPrograma({
 }) {
   const resumo = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const semLocalizacao = !identificacao.freguesia && !identificacao.concelho;
+  const datasEfetivas = planoVendas.dataLancamentoComercial
+    ? calcularDatasEfetivas(
+        unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
+        tipologiasNovas.map((t) => ({ id: t.id, quantidade: t.quantidade, mesesParaPrimeiraVenda: t.mesesParaPrimeiraVenda, unidadesPorMes: t.unidadesPorMes })),
+        planoVendas.dataLancamentoComercial
+      )
+    : new Map<string, string>();
+  const comissaoSplitValido = Math.abs(planoVendas.comissaoPctPagoSinal + planoVendas.comissaoPctPagoEscritura - 1) < 0.001;
+  const somaRecebimentos =
+    planoVendas.estruturaRecebimentos.pctReserva +
+    planoVendas.estruturaRecebimentos.pctCpcv +
+    planoVendas.estruturaRecebimentos.pctDuranteConstrucao +
+    planoVendas.estruturaRecebimentos.pctConclusao +
+    planoVendas.estruturaRecebimentos.pctEscritura;
+  const recebimentosValidos = validarEstruturaRecebimentos(planoVendas.estruturaRecebimentos);
 
   return (
     <>
+      <Card
+        title="Plano e velocidade de vendas"
+        subtitle="A data de lançamento governa a curva, as datas projetadas da Sales Table, os sinais do CPCV, as comissões e o cash flow."
+      >
+        <Row>
+          <Field label="Data de lançamento comercial">
+            <input
+              type="date"
+              className="input-dark"
+              value={planoVendas.dataLancamentoComercial}
+              onChange={(e) => updatePlanoVendas("dataLancamentoComercial", e.target.value)}
+            />
+          </Field>
+          <Field label="Comissão comercial (%)">
+            <PercentInput value={planoVendas.comissaoMediacaoPct} onChange={(v) => updatePlanoVendas("comissaoMediacaoPct", v)} />
+          </Field>
+        </Row>
+        <Row>
+          <Field label="IVA da comissão">
+            <select
+              className="input-dark"
+              value={planoVendas.comissaoTaxaIva}
+              onChange={(e) => updatePlanoVendas("comissaoTaxaIva", Number(e.target.value))}
+            >
+              <option value={0}>Sem IVA</option>
+              <option value={0.06}>6%</option>
+              <option value={0.23}>23%</option>
+            </select>
+          </Field>
+          <Field label="Comissão paga no sinal (%)">
+            <PercentInput value={planoVendas.comissaoPctPagoSinal} onChange={(v) => updatePlanoVendas("comissaoPctPagoSinal", v)} />
+          </Field>
+          <Field label="Comissão paga na escritura (%)">
+            <PercentInput value={planoVendas.comissaoPctPagoEscritura} onChange={(v) => updatePlanoVendas("comissaoPctPagoEscritura", v)} />
+          </Field>
+          <Field label="IVA recuperável da comissão (%)">
+            <PercentInput value={planoVendas.comissaoIvaRecuperavelPct} onChange={(v) => updatePlanoVendas("comissaoIvaRecuperavelPct", v)} />
+          </Field>
+        </Row>
+        {!comissaoSplitValido && (
+          <p className="text-xs text-[#A13D2E] mt-2">A comissão paga no sinal e na escritura deve somar 100%.</p>
+        )}
+        <p className="text-xs text-[#59636A] mt-2">
+          A comissão incide sobre o preço total da unidade. O sinal do CPCV entra no mês da venda; o saldo entra na escritura.
+        </p>
+
+        <div className="mt-5 pt-4 border-t border-[#E3DACB]">
+          <p className="text-xs font-semibold text-[#142B3A] mb-3">Calendário e recebimentos comerciais</p>
+          <Row>
+            <Field label="Data prevista das escrituras">
+              <input
+                type="date"
+                className="input-dark"
+                value={planoVendas.dataEscritura}
+                onChange={(e) => updatePlanoVendas("dataEscritura", e.target.value)}
+              />
+            </Field>
+            <Field label="Cancelamentos estimados (%)">
+              <PercentInput value={planoVendas.cancelamentosEstimadosPct} onChange={(v) => updatePlanoVendas("cancelamentosEstimadosPct", v)} />
+            </Field>
+            <Field label="Início da construção (derivado dos hard costs)">
+              <input className="input-dark" value={planoVendas.dataInicioConstrucao || "—"} disabled />
+            </Field>
+            <Field label="Fim da construção (derivado dos hard costs)">
+              <input className="input-dark" value={planoVendas.dataFimConstrucao || "—"} disabled />
+            </Field>
+          </Row>
+          <p className="text-xs font-semibold text-[#142B3A] mt-3 mb-2">
+            Estrutura de recebimentos — {Math.round(somaRecebimentos * 100)}%
+            {!recebimentosValidos && <span className="text-[#A13D2E]"> (tem de somar 100%)</span>}
+          </p>
+          <Row>
+            <Field label="Reserva (%)">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctReserva} onChange={(v) => updateEstruturaRecebimentos("pctReserva", v)} />
+            </Field>
+            <Field label="CPCV / sinal (%)">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctCpcv} onChange={(v) => updateEstruturaRecebimentos("pctCpcv", v)} />
+            </Field>
+            <Field label="Durante a construção (%)">
+              <PercentInput
+                value={planoVendas.estruturaRecebimentos.pctDuranteConstrucao}
+                onChange={(v) => updateEstruturaRecebimentos("pctDuranteConstrucao", v)}
+              />
+            </Field>
+            <Field label="Na conclusão (%)">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctConclusao} onChange={(v) => updateEstruturaRecebimentos("pctConclusao", v)} />
+            </Field>
+            <Field label="Na escritura (%)">
+              <PercentInput value={planoVendas.estruturaRecebimentos.pctEscritura} onChange={(v) => updateEstruturaRecebimentos("pctEscritura", v)} />
+            </Field>
+          </Row>
+        </div>
+      </Card>
+
       <Card
         title="Programa de tipologias"
         subtitle="Cada alteração de quantidade sincroniza automaticamente a Sales Table abaixo — que é a única fonte do VGV."
@@ -1429,14 +1613,14 @@ function StepPrograma({
         title="Curva de vendas por tipologia"
         subtitle="Informa só meses e velocidade — o Landwise projeta a data de cada unidade, nunca fraciona uma unidade nem excede o stock."
       >
-        {!dataLancamentoComercial && (
+        {!planoVendas.dataLancamentoComercial && (
           <p className="text-xs text-[#B96343] mb-3">
-            Preenche a data de lançamento comercial na etapa &quot;Cash flow e resultados&quot; → &quot;Plano de vendas&quot; para ver a projeção de datas.
+            Preenche a data de lançamento comercial no bloco acima para ver a projeção de datas.
           </p>
         )}
         {tipologiasNovas.map((t) => {
-          const agenda = dataLancamentoComercial
-            ? gerarAgendaAbsorcao(t.quantidade, t.mesesParaPrimeiraVenda, t.unidadesPorMes, dataLancamentoComercial)
+          const agenda = planoVendas.dataLancamentoComercial
+            ? gerarAgendaAbsorcao(t.quantidade, t.mesesParaPrimeiraVenda, t.unidadesPorMes, planoVendas.dataLancamentoComercial)
             : [];
           const resumoAbsorcao = calcResumoAbsorcao(agenda, t.quantidade);
           return (
@@ -1641,11 +1825,16 @@ function StepPrograma({
                         </span>
                       </td>
                       <td className="py-1 pr-2">
-                        {u.estadoComercial === "disponivel" ? (
-                          <input type="date" className="input-dark" onChange={(e) => e.target.value && onVenderUnidade(u.id, e.target.value)} />
-                        ) : (
-                          u.dataVenda
-                        )}
+                        <input
+                          type="date"
+                          className="input-dark"
+                          value={u.dataVenda ?? datasEfetivas.get(u.id) ?? ""}
+                          onChange={(e) => onAtualizarUnidade(u.id, { dataVenda: e.target.value || null })}
+                          disabled={u.estadoComercial === "escriturado"}
+                        />
+                        <span className="block text-[10px] text-[#59636A] mt-1">
+                          {u.dataVenda ? "Override manual" : datasEfetivas.has(u.id) ? "Calculada pela curva" : "Preencha o lançamento e a curva"}
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -1681,14 +1870,15 @@ function salesTableDaTipologia(unidades: UnidadeVenda[], tipologias: Typology[],
 // Etapa nova — Aquisição e Custos (liga project_costs ao motor custos.ts)
 // ============================================================
 const GRUPOS_CUSTO: { grupo: GrupoCusto; titulo: string; sugestoes: string[] }[] = [
-  { grupo: "aquisicao", titulo: "Aquisição", sugestoes: ["Sinal", "Due diligence técnica", "Due diligence legal", "Comissão de aquisição", "Notário", "Registos"] },
-  { grupo: "hard_cost", titulo: "Hard costs", sugestoes: ["Construção acima do solo", "Construção abaixo do solo", "Construção dependente", "Jardinagem e exteriores", "Demolição", "Infraestruturas", "Contingência"] },
-  { grupo: "soft_cost", titulo: "Soft costs", sugestoes: ["Arquitetura", "Engenharia", "Especialidades", "Licenciamento", "Fiscalização de obra", "Seguros"] },
-  { grupo: "outro", titulo: "Outros custos", sugestoes: ["Branding", "Marketing", "Comercialização", "Outro"] },
+  { grupo: "aquisicao", titulo: "Aquisição", sugestoes: [] },
+  { grupo: "hard_cost", titulo: "Hard costs", sugestoes: ["Jardinagem e exteriores", "Demolição", "Infraestruturas", "Ligações", "Equipamentos"] },
+  { grupo: "soft_cost", titulo: "Soft costs", sugestoes: ["Especialidades", "Seguros"] },
+  { grupo: "outro", titulo: "Outros custos", sugestoes: ["Branding", "Outro"] },
 ];
 
 const TIPOS_CALCULO_CUSTO: { value: LinhaCusto["tipoCalculo"]; label: string }[] = [
   { value: "valor_fixo", label: "Valor fixo (€)" },
+  { value: "valor_mensal", label: "Valor mensal (€/mês)" },
   { value: "percentagem_aquisicao", label: "% da aquisição" },
   { value: "percentagem_hard_costs", label: "% dos hard costs" },
   { value: "percentagem_capex", label: "% do capex" },
@@ -1717,11 +1907,98 @@ const PERFIS_DESEMBOLSO: { value: LinhaCusto["perfilDesembolso"]; label: string 
   { value: "back_loaded", label: "Back-loaded" },
 ];
 
+function adicionarMesesData(data: string, meses: number): string {
+  if (!data) return "";
+  const [ano, mes, dia] = data.split("-").map(Number);
+  if (!ano || !mes || !dia) return "";
+  const d = new Date(Date.UTC(ano, mes - 1 + Math.max(0, Math.floor(meses)), dia));
+  return d.toISOString().slice(0, 10);
+}
+
+function diferencaMesesDatas(inicio: string, fim: string): number {
+  if (!inicio || !fim) return 0;
+  const a = new Date(`${inicio}T00:00:00Z`);
+  const b = new Date(`${fim}T00:00:00Z`);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b < a) return 0;
+  return Math.max(0, (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth());
+}
+
+function obterDatasConstrucaoDosCustos(custos: LinhaCusto[]): { inicio: string; fim: string } {
+  const principais = custos.filter(
+    (c) =>
+      c.grupo === "hard_cost" &&
+      ["Construção acima do solo", "Construção abaixo do solo", "Construção dependente"].includes(c.nome)
+  );
+  const inicios = principais.map((c) => c.dataInicial).filter((d): d is string => Boolean(d)).sort();
+  const finais = principais.map((c) => c.dataFinal).filter((d): d is string => Boolean(d)).sort();
+  return { inicio: inicios[0] ?? "", fim: finais[finais.length - 1] ?? "" };
+}
+
+/**
+ * Liga os inputs de aquisição legados às linhas mensais do motor quando o
+ * projeto é aberto. Só preenche linhas vazias/datas ausentes: nunca substitui
+ * valores que o utilizador já personalizou.
+ */
+async function reconciliarCustosAquisicaoCarregados(
+  supabase: ReturnType<typeof createClient>,
+  custos: LinhaCusto[],
+  inputs: ProjectInputs
+): Promise<LinhaCusto[]> {
+  const resultado = custos.map((c) => ({ ...c }));
+  const porNome = new Map(resultado.map((c) => [c.nome, c]));
+  const reforcos = resultado.filter((c) => c.grupo === "aquisicao" && c.nome.startsWith("Reforço da aquisição"));
+  const somaReforcos = reforcos.reduce((soma, c) => soma + c.valorInput, 0);
+  const sinal = Math.max(0, (inputs.custoTerreno || 0) * (inputs.sinalAquisicaoPct || 0));
+  const dataEscritura = inputs.dataEscrituraAquisicao || adicionarMesesData(inputs.dataSinalAquisicao, inputs.duracaoAteEscrituraMeses);
+  const residual = Math.max(0, (inputs.custoTerreno || 0) - sinal - somaReforcos);
+
+  const aplicar = async (nome: string, patch: Partial<LinhaCusto>) => {
+    const linha = porNome.get(nome);
+    if (!linha || Object.keys(patch).length === 0) return;
+    Object.assign(linha, patch);
+    await atualizarCusto(supabase, linha.id, patch);
+  };
+
+  const linhaSinal = porNome.get("Sinal da aquisição");
+  if (linhaSinal) {
+    await aplicar("Sinal da aquisição", {
+      ...(linhaSinal.valorInput === 0 && sinal > 0 ? { valorInput: sinal } : {}),
+      ...(!linhaSinal.dataInicial && inputs.dataSinalAquisicao
+        ? { dataInicial: inputs.dataSinalAquisicao, dataFinal: inputs.dataSinalAquisicao, duracaoMeses: 1, perfilDesembolso: "unico_inicio" as const }
+        : {}),
+    });
+  }
+
+  const linhaEscritura = porNome.get("Escritura da aquisição");
+  if (linhaEscritura) {
+    await aplicar("Escritura da aquisição", {
+      ...(linhaEscritura.valorInput === 0 && residual > 0 ? { valorInput: residual } : {}),
+      ...(!linhaEscritura.dataInicial && dataEscritura
+        ? { dataInicial: dataEscritura, dataFinal: dataEscritura, duracaoMeses: 1, perfilDesembolso: "unico_inicio" as const }
+        : {}),
+    });
+  }
+
+  if (dataEscritura) {
+    for (const nome of ["Notário", "Registos", "IMT", "Imposto do selo", "Comissão de aquisição", "Outros custos de aquisição"]) {
+      const linha = porNome.get(nome);
+      if (linha && !linha.dataInicial) {
+        await aplicar(nome, { dataInicial: dataEscritura, dataFinal: dataEscritura, duracaoMeses: 1, perfilDesembolso: "unico_inicio" });
+      }
+    }
+  }
+
+  return resultado;
+}
+
+const NOMES_CUSTOS_FIXOS = new Set(CUSTOS_PADRAO.map((c) => c.nome));
+
 function StepAquisicaoCustos({
   custosNovos,
   identificacao,
   tipologiasNovas,
   inputs,
+  updateInput,
   onAdicionarCusto,
   onAtualizarCusto,
   onRemoverCusto,
@@ -1730,6 +2007,7 @@ function StepAquisicaoCustos({
   identificacao: IdentificacaoEstruturada;
   tipologiasNovas: Typology[];
   inputs: ProjectInputs;
+  updateInput: <K extends keyof ProjectInputs>(key: K, value: ProjectInputs[K]) => void;
   onAdicionarCusto: (grupo: GrupoCusto, nome: string) => void;
   onAtualizarCusto: (id: string, patch: Partial<LinhaCusto>) => void;
   onRemoverCusto: (id: string) => void;
@@ -1740,142 +2018,204 @@ function StepAquisicaoCustos({
     abcAcimaSolo: identificacao.abcAcimaSolo ?? 0,
     abcAbaixoSolo: identificacao.abcAbaixoSolo ?? 0,
     abdTotal: resumoProgramaLocal.areaDependenteTotal,
-    numeroUnidades: tipologiasNovas.reduce((s, t) => s + t.quantidade, 0),
+    numeroUnidades: tipologiasNovas.reduce((soma, t) => soma + t.quantidade, 0),
   };
-
   const resolvidas = resolverCustos(custosNovos, contexto);
   const resumo = agregarCustos(resolvidas);
+  const custoPorNome = (nome: string) => custosNovos.find((c) => c.nome === nome);
+  const reforcos = custosNovos.filter((c) => c.grupo === "aquisicao" && c.nome.startsWith("Reforço da aquisição"));
+  const somaReforcos = reforcos.reduce((soma, c) => soma + c.valorInput, 0);
+  const sinalValor = Math.max(0, (inputs.custoTerreno || 0) * (inputs.sinalAquisicaoPct || 0));
+  const valorEscritura = Math.max(0, (inputs.custoTerreno || 0) - sinalValor - somaReforcos);
+  const dataEscrituraCalculada = inputs.dataEscrituraAquisicao || adicionarMesesData(inputs.dataSinalAquisicao, inputs.duracaoAteEscrituraMeses);
+
+  function atualizarLinha(nome: string, patch: Partial<LinhaCusto>) {
+    const c = custoPorNome(nome);
+    if (c) onAtualizarCusto(c.id, patch);
+  }
+
+  function sincronizarAquisicao(patchInputs: Partial<ProjectInputs>) {
+    const proximo = { ...inputs, ...patchInputs };
+    const sinal = Math.max(0, (proximo.custoTerreno || 0) * (proximo.sinalAquisicaoPct || 0));
+    const dataEscritura = proximo.dataEscrituraAquisicao || adicionarMesesData(proximo.dataSinalAquisicao, proximo.duracaoAteEscrituraMeses);
+    const residual = Math.max(0, (proximo.custoTerreno || 0) - sinal - somaReforcos);
+    atualizarLinha("Sinal da aquisição", {
+      valorInput: sinal,
+      dataInicial: proximo.dataSinalAquisicao || null,
+      dataFinal: proximo.dataSinalAquisicao || null,
+      duracaoMeses: 1,
+      perfilDesembolso: "unico_inicio",
+    });
+    atualizarLinha("Escritura da aquisição", {
+      valorInput: residual,
+      dataInicial: dataEscritura || null,
+      dataFinal: dataEscritura || null,
+      duracaoMeses: 1,
+      perfilDesembolso: "unico_inicio",
+    });
+    ["Notário", "Registos", "IMT", "Imposto do selo", "Comissão de aquisição", "Outros custos de aquisição"].forEach((nome) => {
+      const linha = custoPorNome(nome);
+      if (linha && !linha.dataInicial) {
+        onAtualizarCusto(linha.id, { dataInicial: dataEscritura || null, dataFinal: dataEscritura || null, duracaoMeses: 1, perfilDesembolso: "unico_inicio" });
+      }
+    });
+  }
+
+  function alterarInput<K extends keyof ProjectInputs>(key: K, value: ProjectInputs[K]) {
+    updateInput(key, value);
+    sincronizarAquisicao({ [key]: value } as Partial<ProjectInputs>);
+  }
 
   function handleData(custo: LinhaCusto, dataInicial: string, duracaoMeses: number) {
     const dataFinal = dataInicial && duracaoMeses > 0 ? calcDataFinal(dataInicial, duracaoMeses) : null;
     onAtualizarCusto(custo.id, { dataInicial: dataInicial || null, duracaoMeses: duracaoMeses || null, dataFinal });
   }
 
+  function renderLinhaAquisicaoCompacta(c: LinhaCusto) {
+    return (
+      <div key={c.id} className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr] gap-3 items-end border-b border-[#E3DACB] py-3 last:border-b-0">
+        <Field label="Custo">
+          <input className="input-dark" value={c.nome} disabled />
+        </Field>
+        <Field label="Valor (€)">
+          <input
+            type="number"
+            className="input-dark"
+            value={c.valorInput}
+            onChange={(e) => onAtualizarCusto(c.id, { valorInput: Number(e.target.value), tipoCalculo: "valor_fixo", taxaIva: null, ivaRecuperavelPct: 0 })}
+          />
+        </Field>
+        <Field label="Data">
+          <input
+            type="date"
+            className="input-dark"
+            value={c.dataInicial ?? ""}
+            onChange={(e) =>
+              onAtualizarCusto(c.id, {
+                dataInicial: e.target.value || null,
+                dataFinal: e.target.value || null,
+                duracaoMeses: 1,
+                perfilDesembolso: "unico_inicio",
+              })
+            }
+          />
+        </Field>
+      </div>
+    );
+  }
+
+  function renderLinhaCusto(c: LinhaCusto, opcoes: { mostrarIva?: boolean } = {}) {
+    const fixa = NOMES_CUSTOS_FIXOS.has(c.nome);
+    const mensal = c.tipoCalculo === "valor_mensal";
+    const mostrarIva = opcoes.mostrarIva ?? true;
+    return (
+      <div key={c.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
+        <Row>
+          <Field label="Nome">
+            <input className="input-dark" value={c.nome} disabled={fixa} onChange={(e) => onAtualizarCusto(c.id, { nome: e.target.value })} />
+          </Field>
+          <Field label="Tipo de cálculo">
+            <select
+              className="input-dark"
+              value={c.tipoCalculo}
+              disabled={["Construção acima do solo", "Construção abaixo do solo", "Construção dependente", "Fiscalização de obra"].includes(c.nome)}
+              onChange={(e) => onAtualizarCusto(c.id, { tipoCalculo: e.target.value as LinhaCusto["tipoCalculo"] })}
+            >
+              {TIPOS_CALCULO_CUSTO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+          </Field>
+          <Field label={mensal ? "Valor por mês" : c.tipoCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
+            {c.tipoCalculo.startsWith("percentagem") ? (
+              <PercentInput value={c.valorInput} onChange={(v) => onAtualizarCusto(c.id, { valorInput: v })} />
+            ) : (
+              <input type="number" className="input-dark" value={c.valorInput} onChange={(e) => onAtualizarCusto(c.id, { valorInput: Number(e.target.value) })} />
+            )}
+          </Field>
+        </Row>
+        <Row>
+          {mostrarIva && (
+            <>
+              <Field label="Taxa de IVA">
+                <select className="input-dark" value={c.taxaIva ?? ""} onChange={(e) => onAtualizarCusto(c.id, { taxaIva: e.target.value ? Number(e.target.value) : null })}>
+                  <option value="">Sem IVA</option><option value={0.06}>6%</option><option value={0.13}>13%</option><option value={0.23}>23%</option>
+                </select>
+              </Field>
+              <Field label="% de IVA recuperável"><PercentInput value={c.ivaRecuperavelPct} onChange={(v) => onAtualizarCusto(c.id, { ivaRecuperavelPct: v })} /></Field>
+            </>
+          )}
+          <Field label="Perfil de desembolso">
+            <select className="input-dark" value={c.perfilDesembolso} onChange={(e) => onAtualizarCusto(c.id, { perfilDesembolso: e.target.value as LinhaCusto["perfilDesembolso"] })}>
+              {PERFIS_DESEMBOLSO.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            </select>
+          </Field>
+        </Row>
+        <Row>
+          <Field label="Data inicial"><input type="date" className="input-dark" value={c.dataInicial ?? ""} disabled={c.nome === "Fiscalização de obra"} onChange={(e) => handleData(c, e.target.value, c.duracaoMeses ?? 1)} /></Field>
+          <Field label="Duração (meses)"><input type="number" className="input-dark" value={c.duracaoMeses ?? ""} disabled={c.nome === "Fiscalização de obra"} onChange={(e) => handleData(c, c.dataInicial ?? "", Number(e.target.value))} /></Field>
+          <Field label="Data final (calculada)"><input type="date" className="input-dark" value={c.dataFinal ?? ""} disabled /></Field>
+        </Row>
+        <div className="flex justify-between items-center mt-1">
+          <span className="text-xs text-[#59636A]">Valor resolvido: €{Math.round(resolvidas.find((r) => r.id === c.id)?.valorResolvido ?? 0).toLocaleString("pt-PT")}</span>
+          {!fixa && <button onClick={() => onRemoverCusto(c.id)} className="text-[#A13D2E] text-xs">Remover</button>}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <>
-      {GRUPOS_CUSTO.map(({ grupo, titulo, sugestoes }) => {
-        const linhasDoGrupo = custosNovos.filter((c) => c.grupo === grupo);
-        const subtotal =
-          grupo === "aquisicao"
-            ? resumo.totalAquisicao
-            : grupo === "hard_cost"
-              ? resumo.totalHardCosts
-              : grupo === "soft_cost"
-                ? resumo.totalSoftCosts
-                : resumo.totalOutros;
+      <Card title="Aquisição" subtitle={`Subtotal: €${Math.round(resumo.totalAquisicao).toLocaleString("pt-PT")}. A aquisição é preenchida aqui e não na Identificação.`}>
+        <Row>
+          <Field label="Preço total"><input type="number" className="input-dark" value={inputs.custoTerreno || 0} onChange={(e) => alterarInput("custoTerreno", Number(e.target.value))} /></Field>
+          <Field label="Sinal (%)"><PercentInput value={inputs.sinalAquisicaoPct} onChange={(v) => alterarInput("sinalAquisicaoPct", v)} /></Field>
+          <Field label="Valor do sinal"><input className="input-dark" value={`€${Math.round(sinalValor).toLocaleString("pt-PT")}`} disabled /></Field>
+          <Field label="Data do sinal"><input type="date" className="input-dark" value={inputs.dataSinalAquisicao} onChange={(e) => alterarInput("dataSinalAquisicao", e.target.value)} /></Field>
+        </Row>
+        <Row>
+          <Field label="Tempo até à escritura (meses)"><input type="number" className="input-dark" value={inputs.duracaoAteEscrituraMeses} onChange={(e) => { const meses = Number(e.target.value); updateInput("dataEscrituraAquisicao", ""); alterarInput("duracaoAteEscrituraMeses", meses); }} /></Field>
+          <Field label="Data da escritura">
+            <input type="date" className="input-dark" value={dataEscrituraCalculada} onChange={(e) => { const data = e.target.value; updateInput("dataEscrituraAquisicao", data); updateInput("duracaoAteEscrituraMeses", diferencaMesesDatas(inputs.dataSinalAquisicao, data)); sincronizarAquisicao({ dataEscrituraAquisicao: data, duracaoAteEscrituraMeses: diferencaMesesDatas(inputs.dataSinalAquisicao, data) }); }} />
+          </Field>
+          <Field label="Reforços"><input className="input-dark" value={`€${Math.round(somaReforcos).toLocaleString("pt-PT")}`} disabled /></Field>
+          <Field label="Valor residual da escritura"><input className="input-dark" value={`€${Math.round(valorEscritura).toLocaleString("pt-PT")}`} disabled /></Field>
+        </Row>
+        {sinalValor + somaReforcos > (inputs.custoTerreno || 0) && <p className="text-xs text-[#A13D2E]">Sinal e reforços não podem ultrapassar o preço de aquisição.</p>}
 
+        {reforcos.map((c, idx) => (
+          <div key={c.id} className="grid grid-cols-4 gap-3 border-t border-[#E3DACB] pt-3 mt-3">
+            <Field label={`Reforço ${idx + 1} (€)`}><input type="number" className="input-dark" value={c.valorInput} onChange={(e) => {
+              const novoValor = Number(e.target.value);
+              onAtualizarCusto(c.id, { valorInput: novoValor });
+              atualizarLinha("Escritura da aquisição", { valorInput: Math.max(0, (inputs.custoTerreno || 0) - sinalValor - (somaReforcos - c.valorInput + novoValor)) });
+            }} /></Field>
+            <Field label="Data"><input type="date" className="input-dark" value={c.dataInicial ?? ""} onChange={(e) => onAtualizarCusto(c.id, { dataInicial: e.target.value || null, dataFinal: e.target.value || null, duracaoMeses: 1, perfilDesembolso: "unico_inicio" })} /></Field>
+            <Field label="% do preço"><input className="input-dark" value={`${inputs.custoTerreno > 0 ? ((c.valorInput / inputs.custoTerreno) * 100).toFixed(2) : "0.00"}%`} disabled /></Field>
+            <div className="flex items-end"><button className="text-[#A13D2E] text-xs pb-2" onClick={() => {
+              atualizarLinha("Escritura da aquisição", { valorInput: Math.max(0, (inputs.custoTerreno || 0) - sinalValor - (somaReforcos - c.valorInput)) });
+              onRemoverCusto(c.id);
+            }}>Remover reforço</button></div>
+          </div>
+        ))}
+        <button onClick={() => onAdicionarCusto("aquisicao", `Reforço da aquisição ${reforcos.length + 1}`)} className="text-[#B96343] text-sm font-semibold mt-3">+ Adicionar reforço</button>
+
+        <div className="mt-5 pt-4 border-t border-[#E3DACB]">
+          <p className="text-xs font-semibold text-[#142B3A] mb-3">Custos de aquisição</p>
+          {custosNovos
+            .filter((c) => c.grupo === "aquisicao" && !["Sinal da aquisição", "Escritura da aquisição"].includes(c.nome) && !c.nome.startsWith("Reforço da aquisição"))
+            .map(renderLinhaAquisicaoCompacta)}
+        </div>
+      </Card>
+
+      {GRUPOS_CUSTO.filter((g) => g.grupo !== "aquisicao").map(({ grupo, titulo, sugestoes }) => {
+        const linhasDoGrupo = custosNovos.filter((c) => c.grupo === grupo);
+        const subtotal = grupo === "hard_cost" ? resumo.totalHardCosts : grupo === "soft_cost" ? resumo.totalSoftCosts : resumo.totalOutros;
+        const sugestoesOpcionais = sugestoes.filter((nome) => !NOMES_CUSTOS_FIXOS.has(nome) && !linhasDoGrupo.some((c) => c.nome === nome));
         return (
           <Card key={grupo} title={titulo} subtitle={`Subtotal: €${Math.round(subtotal).toLocaleString("pt-PT")}`}>
-            {linhasDoGrupo.length === 0 && <p className="text-xs text-[#8FA6AF] mb-3">Ainda sem linhas neste grupo.</p>}
-            {linhasDoGrupo.map((c) => (
-              <div key={c.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
-                <Row>
-                  <Field label="Nome">
-                    <input className="input-dark" value={c.nome} onChange={(e) => onAtualizarCusto(c.id, { nome: e.target.value })} />
-                  </Field>
-                  <Field label="Tipo de cálculo">
-                    <select
-                      className="input-dark"
-                      value={c.tipoCalculo}
-                      onChange={(e) => onAtualizarCusto(c.id, { tipoCalculo: e.target.value as LinhaCusto["tipoCalculo"] })}
-                    >
-                      {TIPOS_CALCULO_CUSTO.map((t) => (
-                        <option key={t.value} value={t.value}>
-                          {t.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                  <Field label={c.tipoCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
-                    {c.tipoCalculo.startsWith("percentagem") ? (
-                      <PercentInput value={c.valorInput} onChange={(v) => onAtualizarCusto(c.id, { valorInput: v })} />
-                    ) : (
-                      <input
-                        type="number"
-                        className="input-dark"
-                        value={c.valorInput}
-                        onChange={(e) => onAtualizarCusto(c.id, { valorInput: Number(e.target.value) })}
-                      />
-                    )}
-                  </Field>
-                </Row>
-                <Row>
-                  <Field label="Taxa de IVA">
-                    <select
-                      className="input-dark"
-                      value={c.taxaIva ?? ""}
-                      onChange={(e) => onAtualizarCusto(c.id, { taxaIva: e.target.value ? Number(e.target.value) : null })}
-                    >
-                      <option value="">Sem IVA</option>
-                      <option value={0.06}>6%</option>
-                      <option value={0.13}>13%</option>
-                      <option value={0.23}>23%</option>
-                    </select>
-                  </Field>
-                  <Field label="% de IVA recuperável">
-                    <PercentInput value={c.ivaRecuperavelPct} onChange={(v) => onAtualizarCusto(c.id, { ivaRecuperavelPct: v })} />
-                  </Field>
-                  <Field label="Perfil de desembolso">
-                    <select
-                      className="input-dark"
-                      value={c.perfilDesembolso}
-                      onChange={(e) => onAtualizarCusto(c.id, { perfilDesembolso: e.target.value as LinhaCusto["perfilDesembolso"] })}
-                    >
-                      {PERFIS_DESEMBOLSO.map((p) => (
-                        <option key={p.value} value={p.value}>
-                          {p.label}
-                        </option>
-                      ))}
-                    </select>
-                  </Field>
-                </Row>
-                <Row>
-                  <Field label="Data inicial">
-                    <input
-                      type="date"
-                      className="input-dark"
-                      value={c.dataInicial ?? ""}
-                      onChange={(e) => handleData(c, e.target.value, c.duracaoMeses ?? 1)}
-                    />
-                  </Field>
-                  <Field label="Duração (meses)">
-                    <input
-                      type="number"
-                      className="input-dark"
-                      value={c.duracaoMeses ?? ""}
-                      onChange={(e) => handleData(c, c.dataInicial ?? "", Number(e.target.value))}
-                    />
-                  </Field>
-                  <Field label="Data final (calculada)">
-                    <input type="date" className="input-dark" value={c.dataFinal ?? ""} disabled />
-                  </Field>
-                </Row>
-                <div className="flex justify-between items-center mt-1">
-                  <span className="text-xs text-[#59636A]">
-                    Valor resolvido: €{Math.round(resolvidas.find((r) => r.id === c.id)?.valorResolvido ?? 0).toLocaleString("pt-PT")}
-                  </span>
-                  <button onClick={() => onRemoverCusto(c.id)} className="text-[#A13D2E] text-xs">
-                    Remover
-                  </button>
-                </div>
-              </div>
-            ))}
+            {linhasDoGrupo.map((c) => renderLinhaCusto(c))}
             <div className="flex flex-wrap gap-2 mt-2">
-              {sugestoes.map((s) => (
-                <button
-                  key={s}
-                  onClick={() => onAdicionarCusto(grupo, s)}
-                  className="text-xs px-2.5 py-1 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]"
-                >
-                  + {s}
-                </button>
-              ))}
-              <button
-                onClick={() => onAdicionarCusto(grupo, "Nova linha")}
-                className="text-xs px-2.5 py-1 rounded-full border border-dashed border-[#B96343] text-[#B96343]"
-              >
-                + Linha personalizada
-              </button>
+              {sugestoesOpcionais.map((nome) => <button key={nome} onClick={() => onAdicionarCusto(grupo, nome)} className="text-xs px-2.5 py-1 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]">+ {nome}</button>)}
+              <button onClick={() => onAdicionarCusto(grupo, "Nova linha")} className="text-xs px-2.5 py-1 rounded-full border border-dashed border-[#B96343] text-[#B96343]">+ Linha personalizada</button>
             </div>
           </Card>
         );
@@ -1883,22 +2223,10 @@ function StepAquisicaoCustos({
 
       <Card title="Resumo de custos e IVA">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <span className="text-xs text-[#59636A] block">Custo total</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.custoTotal).toLocaleString("pt-PT")}</span>
-          </div>
-          <div>
-            <span className="text-xs text-[#59636A] block">IVA suportado</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaSuportadoTotal).toLocaleString("pt-PT")}</span>
-          </div>
-          <div>
-            <span className="text-xs text-[#59636A] block">IVA recuperável</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaRecuperavelTotal).toLocaleString("pt-PT")}</span>
-          </div>
-          <div>
-            <span className="text-xs text-[#59636A] block">IVA não recuperável</span>
-            <span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaNaoRecuperavelTotal).toLocaleString("pt-PT")}</span>
-          </div>
+          <div><span className="text-xs text-[#59636A] block">Custo total</span><span className="font-semibold text-[#142B3A]">€{Math.round(resumo.custoTotal).toLocaleString("pt-PT")}</span></div>
+          <div><span className="text-xs text-[#59636A] block">IVA suportado</span><span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaSuportadoTotal).toLocaleString("pt-PT")}</span></div>
+          <div><span className="text-xs text-[#59636A] block">IVA recuperável</span><span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaRecuperavelTotal).toLocaleString("pt-PT")}</span></div>
+          <div><span className="text-xs text-[#59636A] block">IVA não recuperável</span><span className="font-semibold text-[#142B3A]">€{Math.round(resumo.ivaNaoRecuperavelTotal).toLocaleString("pt-PT")}</span></div>
         </div>
       </Card>
     </>
@@ -1909,10 +2237,12 @@ function StepFinanciamento({
   financiamento,
   onToggleComFinanciamento,
   updateFinanciamento,
+  reservaMinima,
 }: {
   financiamento: ParametrosFinanciamento;
   onToggleComFinanciamento: (v: boolean) => void;
   updateFinanciamento: <K extends keyof ParametrosFinanciamento>(k: K, v: ParametrosFinanciamento[K]) => void;
+  reservaMinima: ReturnType<typeof calcularReservaMinimaCustos>;
 }) {
   const desativado = !financiamento.comFinanciamento;
   const [euriborCarregando, setEuriborCarregando] = useState(false);
@@ -2047,14 +2377,11 @@ function StepFinanciamento({
           <Field label="Structuring fee (% do limite)">
             <PercentInput value={financiamento.structuringFeePct} onChange={(v) => updateFinanciamento("structuringFeePct", v)} disabled={desativado} />
           </Field>
-          <Field label="Setup costs (€)">
-            <input
-              type="number"
-              className="input-dark"
-              value={financiamento.setupCosts}
-              onChange={(e) => updateFinanciamento("setupCosts", Number(e.target.value))}
-              disabled={desativado}
-            />
+          <Field label="Setup costs (% do limite)">
+            <PercentInput value={financiamento.setupCostsPct ?? 0.003} onChange={(v) => updateFinanciamento("setupCostsPct", v)} disabled={desativado} />
+          </Field>
+          <Field label="Setup costs fixos adicionais (€)">
+            <input type="number" className="input-dark" value={financiamento.setupCosts} onChange={(e) => updateFinanciamento("setupCosts", Number(e.target.value))} disabled={desativado} />
           </Field>
         </Row>
         <Row>
@@ -2083,14 +2410,25 @@ function StepFinanciamento({
               disabled={desativado}
             />
           </Field>
-          <Field label="Saldo mínimo de caixa (€)">
-            <input
-              type="number"
+          <Field label="Meses de custos futuros cobertos pela reserva">
+            <select
               className="input-dark"
-              value={financiamento.saldoMinimoCaixa}
-              onChange={(e) => updateFinanciamento("saldoMinimoCaixa", Number(e.target.value))}
+              value={financiamento.saldoMinimoMesesReserva ?? 6}
+              onChange={(e) => {
+                const meses = Number(e.target.value);
+                updateFinanciamento("saldoMinimoMesesReserva", meses);
+                updateFinanciamento("cashSweepMesesCustosFuturos", meses);
+              }}
               disabled={desativado}
-            />
+            >
+              {[3, 6, 9, 12].map((m) => <option key={m} value={m}>{m} meses</option>)}
+            </select>
+          </Field>
+          <Field label="Saldo mínimo calculado (€)">
+            <input className="input-dark" value={`€${Math.round(reservaMinima.valor).toLocaleString("pt-PT")}`} disabled />
+            <span className="block text-[10px] text-[#59636A] mt-1">
+              Janela crítica: {reservaMinima.mesInicio ?? "—"} a {reservaMinima.mesFim ?? "—"}. Exclui aquisição, amortizações, distribuições e imposto sobre lucro.
+            </span>
           </Field>
         </Row>
       </Card>
@@ -2122,14 +2460,8 @@ function StepFinanciamento({
         {financiamento.cashSweepAtivo && (
           <>
             <Row>
-              <Field label="Meses de custos futuros a reservar">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={financiamento.cashSweepMesesCustosFuturos}
-                  onChange={(e) => updateFinanciamento("cashSweepMesesCustosFuturos", Number(e.target.value))}
-                  disabled={desativado}
-                />
+              <Field label="Reserva protegida pelo cash sweep">
+                <input className="input-dark" value={`${financiamento.saldoMinimoMesesReserva ?? 6} meses · €${Math.round(reservaMinima.valor).toLocaleString("pt-PT")}`} disabled />
               </Field>
               <Field label="Início do cash sweep">
                 <select
@@ -2383,27 +2715,21 @@ function StepEstruturaCapital({
 function StepImpostos({
   impostos,
   updateImpostos,
-  valorAquisicao,
   resultado,
   onSolicitarConsultoria,
 }: {
   impostos: ImpostosEstado;
   updateImpostos: <K extends keyof ImpostosEstado>(k: K, v: ImpostosEstado[K]) => void;
-  valorAquisicao: number;
   resultado: ReturnType<typeof calcularCashFlow> | null;
   onSolicitarConsultoria: (
     dados: { name: string; company: string; email: string; phone: string; message: string; preferenciaContacto: "email" | "telefone" },
     impostoEstimado: number
   ) => Promise<{ ok: boolean; erro?: string }>;
 }) {
-  const seguro = calcSeguro(impostos.seguroTaxa, "valor_aquisicao", valorAquisicao, impostos.seguroDuracaoAnos);
-  const imi = calcIMI(impostos.imiVpt ?? 0, impostos.imiTaxa, impostos.imiNumAnos);
   const { taxa: taxaIrc, taxaManualAplicada } = resolverTaxaIRC(impostos.ircAnoFiscalReferencia, impostos.ircTaxaManual);
-
-  // Lucro económico vem sempre do motor de cash flow real — nunca de um
-  // campo manual solto (secção 29: "Não implementar lucro tributável
-  // manual sem ligação ao motor"). Sem resultado calculado ainda, fica a 0.
-  const lucroEconomico = resultado ? calcLucroEconomico(resultado.gdv, resultado.comissaoComercialTotal, resultado.custoTotal - resultado.comissaoComercialTotal) : 0;
+  const lucroEconomico = resultado
+    ? calcLucroEconomico(resultado.gdv, resultado.comissaoComercialTotal, resultado.custoTotal - resultado.comissaoComercialTotal)
+    : 0;
   const lucroTributavelAntesDeAjustes = resultado
     ? calcLucroTributavelEstimado({
         receitasReconhecidas: resultado.gdv,
@@ -2415,74 +2741,23 @@ function StepImpostos({
       })
     : 0;
   const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostos.ircPrejuizosFiscaisAcumulados);
-  const ircEstimado = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcIRC(lucroTributavel, taxaIrc) : 0;
+  const resultadoIrc = calcIRCComRegime(lucroTributavel, taxaIrc, impostos.ircRegime);
+  const ircEstimado = impostos.estruturaFiscalAssumida === "empresa_spv" ? resultadoIrc.imposto : 0;
   const derramaMunicipal = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa) : 0;
   const derramaEstadual = impostos.estruturaFiscalAssumida === "empresa_spv" ? calcDerramaEstadual(lucroTributavel) : 0;
-  const impostoAquisicao = valorAquisicao * impostos.imtValor;
-  const seloAquisicao = valorAquisicao * impostos.impostoSeloAquisicaoTaxa;
-  const impostoSimulacaoManual =
-    impostos.estruturaFiscalAssumida !== "empresa_spv" ? (impostos.simulacaoImpostoEstimadoManual ?? 0) : 0;
-  const impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual + impostoAquisicao + seloAquisicao + impostoSimulacaoManual;
-
+  const impostoSimulacaoManual = impostos.estruturaFiscalAssumida !== "empresa_spv" ? (impostos.simulacaoImpostoEstimadoManual ?? 0) : 0;
+  const impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual + impostoSimulacaoManual;
   const [modalAberto, setModalAberto] = useState(false);
 
   return (
     <>
-      <Card title="Seguro">
-        <Row>
-          <Field label={`Taxa de seguro (sugestão: ${(TAXA_SEGURO_SUGERIDA * 100).toFixed(2)}%, editável)`}>
-            <PercentInput value={impostos.seguroTaxa} onChange={(v) => updateImpostos("seguroTaxa", v)} />
-          </Field>
-          <Field label="Duração (anos)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.seguroDuracaoAnos}
-              onChange={(e) => updateImpostos("seguroDuracaoAnos", Number(e.target.value))}
-            />
-          </Field>
-          <Field label="Valor total (calculado)">
-            <input className="input-dark" value={`€${Math.round(seguro.valorTotal).toLocaleString("pt-PT")}`} disabled />
-          </Field>
-        </Row>
-      </Card>
-
-      <Card title="IMI" subtitle="Aplicado sobre o VPT — nunca sobre o valor de aquisição ou o GDV.">
-        <Row>
-          <Field label="VPT (€)">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.imiVpt ?? ""}
-              onChange={(e) => updateImpostos("imiVpt", e.target.value ? Number(e.target.value) : null)}
-            />
-          </Field>
-          <Field label={`Taxa de IMI (referência: ${(TAXA_IMI_SUGERIDA * 100).toFixed(2)}%, editável)`}>
-            <PercentInput value={impostos.imiTaxa} onChange={(v) => updateImpostos("imiTaxa", v)} />
-          </Field>
-          <Field label="Número de anos">
-            <input
-              type="number"
-              className="input-dark"
-              value={impostos.imiNumAnos}
-              onChange={(e) => updateImpostos("imiNumAnos", Number(e.target.value))}
-            />
-          </Field>
-        </Row>
-        <p className="text-xs text-[#59636A]">Valor total (calculado): €{Math.round(imi.valorTotal).toLocaleString("pt-PT")}</p>
-      </Card>
-
       <Card
         title="Impostos — estimativa"
-        subtitle="Esta é uma estimativa simplificada e não substitui análise fiscal, contabilística ou jurídica. Confirme com um especialista."
+        subtitle="O tratamento depende da estrutura jurídica, do município, do ano e das regras aplicáveis ao projeto. Confirme sempre com contabilista certificado ou consultor fiscal."
       >
         <Row>
           <Field label="Estrutura fiscal assumida">
-            <select
-              className="input-dark"
-              value={impostos.estruturaFiscalAssumida}
-              onChange={(e) => updateImpostos("estruturaFiscalAssumida", e.target.value as ImpostosEstado["estruturaFiscalAssumida"])}
-            >
+            <select className="input-dark" value={impostos.estruturaFiscalAssumida} onChange={(e) => updateImpostos("estruturaFiscalAssumida", e.target.value as ImpostosEstado["estruturaFiscalAssumida"])}>
               <option value="empresa_spv">Empresa/SPV — IRC</option>
               <option value="pessoa_singular">Pessoa singular / atividade individual — IRS</option>
               <option value="nao_definida">Estrutura ainda não definida</option>
@@ -2494,131 +2769,54 @@ function StepImpostos({
         {impostos.estruturaFiscalAssumida === "empresa_spv" ? (
           <>
             <Row>
-              <Field label="Ano fiscal de referência">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={impostos.ircAnoFiscalReferencia}
-                  onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))}
-                />
+              <Field label="Regime de IRC assumido">
+                <select className="input-dark" value={impostos.ircRegime} onChange={(e) => updateImpostos("ircRegime", e.target.value as ImpostosEstado["ircRegime"])}>
+                  <option value="geral">Taxa geral</option>
+                  <option value="pme_small_mid_cap">PME / Small Mid Cap elegível</option>
+                </select>
               </Field>
-              <Field label="Taxa de IRC de referência">
-                <input className="input-dark" value={`${(taxaIrc * 100).toFixed(0)}%`} disabled />
-              </Field>
-              <Field label="Taxa aplicada (vazio = usa a de referência)">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={impostos.ircTaxaManual ?? ""}
-                  onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)}
-                  placeholder={`${(taxaIrc * 100).toFixed(0)}%`}
-                />
-              </Field>
+              <Field label="Ano fiscal de referência"><input type="number" className="input-dark" value={impostos.ircAnoFiscalReferencia} onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))} /></Field>
+              <Field label="Taxa geral de referência"><input className="input-dark" value={`${(taxaIrc * 100).toFixed(1)}%`} disabled /></Field>
+              <Field label="Taxa geral manual (opcional)"><input type="number" className="input-dark" value={impostos.ircTaxaManual == null ? "" : impostos.ircTaxaManual * 100} onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)} placeholder={`${(taxaIrc * 100).toFixed(1)}%`} /></Field>
             </Row>
-            {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa manual aplicada.</p>}
-            <div className="grid grid-cols-2 gap-4 mb-3 text-sm">
-              <div>
-                <span className="text-xs text-[#59636A] block">Lucro económico (do motor: VGV − comissão − custos)</span>
-                <span className="font-semibold text-[#142B3A]">€{Math.round(lucroEconomico).toLocaleString("pt-PT")}</span>
-              </div>
-              <div>
-                <span className="text-xs text-[#59636A] block">Lucro tributável estimado</span>
-                <span className="font-semibold text-[#142B3A]">€{Math.round(lucroTributavel).toLocaleString("pt-PT")}</span>
-              </div>
+            {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa geral manual aplicada. Esta premissa deve ser validada.</p>}
+            {impostos.ircRegime === "pme_small_mid_cap" && (
+              <p className="text-xs text-[#59636A] mb-3">O motor aplica a taxa reduzida apenas aos primeiros €50.000 de matéria coletável e a taxa geral ao excedente. A elegibilidade deve ser confirmada.</p>
+            )}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mb-4">
+              <div><span className="text-xs text-[#59636A] block">Lucro económico</span><span className="font-semibold text-[#142B3A]">€{Math.round(lucroEconomico).toLocaleString("pt-PT")}</span></div>
+              <div><span className="text-xs text-[#59636A] block">Lucro tributável estimado</span><span className="font-semibold text-[#142B3A]">€{Math.round(lucroTributavel).toLocaleString("pt-PT")}</span></div>
+              <div><span className="text-xs text-[#59636A] block">IRC estimado</span><span className="font-semibold text-[#142B3A]">€{Math.round(ircEstimado).toLocaleString("pt-PT")}</span></div>
+              <div><span className="text-xs text-[#59636A] block">Imposto total estimado</span><span className="font-semibold text-[#142B3A]">€{Math.round(impostoEstimadoTotal).toLocaleString("pt-PT")}</span></div>
             </div>
+            {impostos.ircRegime === "pme_small_mid_cap" && (
+              <p className="text-xs text-[#59636A] mb-3">Parcela com taxa reduzida: €{Math.round(resultadoIrc.parcelaTaxaReduzida).toLocaleString("pt-PT")} · Parcela com taxa geral: €{Math.round(resultadoIrc.parcelaTaxaGeral).toLocaleString("pt-PT")}</p>
+            )}
             <Row>
-              <Field label="Ajustes fiscais (€, + ou −, sobre o lucro económico)">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={impostos.ircAjustesFiscais}
-                  onChange={(e) => updateImpostos("ircAjustesFiscais", Number(e.target.value))}
-                />
-              </Field>
-              <Field label="Prejuízos fiscais acumulados (€)">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={impostos.ircPrejuizosFiscaisAcumulados}
-                  onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))}
-                />
-              </Field>
-              <Field label="Derrama municipal (%)">
-                <PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} />
-              </Field>
+              <Field label="Ajustes fiscais estimados (€)"><input type="number" className="input-dark" value={impostos.ircAjustesFiscais} onChange={(e) => updateImpostos("ircAjustesFiscais", Number(e.target.value))} /></Field>
+              <Field label="Prejuízos fiscais acumulados (€)"><input type="number" className="input-dark" value={impostos.ircPrejuizosFiscaisAcumulados} onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))} /></Field>
+              <Field label="Derrama municipal (%)"><PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} /></Field>
             </Row>
-            <p className="text-xs text-[#59636A] mt-2">
-              IRC estimado: €{Math.round(ircEstimado).toLocaleString("pt-PT")} · Derrama municipal: €
-              {Math.round(derramaMunicipal).toLocaleString("pt-PT")}
-            </p>
+            <p className="text-xs text-[#59636A] mt-2">Derrama municipal estimada: €{Math.round(derramaMunicipal).toLocaleString("pt-PT")} · Derrama estadual progressiva estimada: €{Math.round(derramaEstadual).toLocaleString("pt-PT")}.</p>
+            <p className="text-xs text-[#8FA6AF] mt-2">A derrama municipal não é fixa nacionalmente. A derrama estadual não é uma taxa fixa de 1,5% e só se aplica quando os limites legais são ultrapassados.</p>
           </>
         ) : (
           <>
-            <p className="text-xs text-[#B96343] mb-3">
-              O tratamento fiscal pode estar sujeito a IRS ou outro enquadramento. É necessária análise individual.
-            </p>
+            <p className="text-xs text-[#B96343] mb-3">O tratamento pode estar sujeito a IRS ou outro enquadramento. O Landwise não aplica IRC automaticamente.</p>
             <Row>
-              <Field label="Taxa efetiva manual (só simulação)">
-                <PercentInput
-                  value={impostos.simulacaoTaxaEfetivaManual ?? 0}
-                  onChange={(v) => updateImpostos("simulacaoTaxaEfetivaManual", v)}
-                />
-              </Field>
-              <Field label="Imposto estimado manual (€, só simulação)">
-                <input
-                  type="number"
-                  className="input-dark"
-                  value={impostos.simulacaoImpostoEstimadoManual ?? ""}
-                  onChange={(e) => updateImpostos("simulacaoImpostoEstimadoManual", e.target.value ? Number(e.target.value) : null)}
-                />
-              </Field>
+              <Field label="Taxa efetiva manual (simulação)"><PercentInput value={impostos.simulacaoTaxaEfetivaManual ?? 0} onChange={(v) => updateImpostos("simulacaoTaxaEfetivaManual", v)} /></Field>
+              <Field label="Imposto estimado manual (€)"><input type="number" className="input-dark" value={impostos.simulacaoImpostoEstimadoManual ?? ""} onChange={(e) => updateImpostos("simulacaoImpostoEstimadoManual", e.target.value ? Number(e.target.value) : null)} /></Field>
             </Row>
             <p className="text-xs text-[#A13D2E] font-semibold">Premissa manual não validada.</p>
           </>
         )}
       </Card>
 
-      <Card title="Derrama estadual">
-        <p className="text-xs text-[#59636A] mb-2">
-          Progressiva por escalões sobre o lucro tributável — não aplicada quando a estrutura fiscal não é Empresa/SPV.
-        </p>
-        <p className="text-sm text-[#142B3A]">Derrama estadual estimada: €{Math.round(derramaEstadual).toLocaleString("pt-PT")}</p>
+      <Card title="Confirmação profissional">
+        <p className="text-sm text-[#142B3A] mb-3">IMT e imposto do selo pertencem à aquisição; IVA pertence a cada custo. Esta aba apresenta apenas uma estimativa do imposto sobre o resultado.</p>
+        <button onClick={() => setModalAberto(true)} className="text-sm font-semibold text-white bg-[#142B3A] px-4 py-2 rounded-lg">Solicitar análise especializada</button>
       </Card>
-
-      <Card title="IMT e Imposto de Selo da aquisição">
-        <Row>
-          <Field label="Método de cálculo do IMT">
-            <select className="input-dark" value={impostos.imtMetodo} onChange={(e) => updateImpostos("imtMetodo", e.target.value as ImpostosEstado["imtMetodo"])}>
-              <option value="percentagem">Percentagem da aquisição</option>
-              <option value="valor_manual">Valor manual</option>
-            </select>
-          </Field>
-          <Field label={impostos.imtMetodo === "percentagem" ? "Taxa de IMT" : "Valor de IMT (€)"}>
-            {impostos.imtMetodo === "percentagem" ? (
-              <PercentInput value={impostos.imtValor} onChange={(v) => updateImpostos("imtValor", v)} />
-            ) : (
-              <input type="number" className="input-dark" value={impostos.imtValor} onChange={(e) => updateImpostos("imtValor", Number(e.target.value))} />
-            )}
-          </Field>
-          <Field label="Taxa de imposto de selo da aquisição">
-            <PercentInput value={impostos.impostoSeloAquisicaoTaxa} onChange={(v) => updateImpostos("impostoSeloAquisicaoTaxa", v)} />
-          </Field>
-        </Row>
-        <p className="text-xs text-[#59636A]">
-          IMT (calculado): €{Math.round(impostoAquisicao).toLocaleString("pt-PT")} · Selo (calculado): €{Math.round(seloAquisicao).toLocaleString("pt-PT")}
-        </p>
-      </Card>
-
-      <Card title="★ A estrutura fiscal pode impactar significativamente o retorno do projeto.">
-        <p className="text-sm text-[#142B3A] mb-3">Saiba como otimizar. Esta estimativa não substitui uma análise fiscal, jurídica ou contabilística individual.</p>
-        <button onClick={() => setModalAberto(true)} className="text-sm font-semibold text-white bg-[#142B3A] px-4 py-2 rounded-lg">
-          Solicitar análise especializada
-        </button>
-      </Card>
-
-      {modalAberto && (
-        <ConsultoriaModal onFechar={() => setModalAberto(false)} onEnviar={(dados) => onSolicitarConsultoria(dados, impostoEstimadoTotal)} />
-      )}
+      {modalAberto && <ConsultoriaModal onFechar={() => setModalAberto(false)} onEnviar={(dados) => onSolicitarConsultoria(dados, impostoEstimadoTotal)} />}
     </>
   );
 }
@@ -2768,7 +2966,9 @@ function StepCalendario({
   );
 
   const todasAsLinhas = grupos.flatMap((g) => g.linhas);
-  const datasValidas = todasAsLinhas.flatMap((l) => [new Date(l.inicio).getTime(), new Date(l.fim).getTime()]);
+  const datasValidas = todasAsLinhas
+    .flatMap((l) => [new Date(`${l.inicio}T00:00:00Z`).getTime(), new Date(`${l.fim}T00:00:00Z`).getTime()])
+    .filter((v) => Number.isFinite(v));
   const dataMinMs = datasValidas.length > 0 ? Math.min(...datasValidas) : 0;
   const dataMaxMs = datasValidas.length > 0 ? Math.max(...datasValidas) : 1;
   const totalMs = dataMaxMs - dataMinMs || 1;
@@ -2826,8 +3026,11 @@ function StepCalendario({
           <div className="space-y-2">
             {grupos.map((grupo) =>
               grupo.linhas.map((g) => {
-                const offsetPct = ((new Date(g.inicio).getTime() - dataMinMs) / totalMs) * 100;
-                const larguraPct = Math.max(1, ((new Date(g.fim).getTime() - new Date(g.inicio).getTime()) / totalMs) * 100);
+                const inicioMs = new Date(`${g.inicio}T00:00:00Z`).getTime();
+                const fimMs = new Date(`${g.fim}T00:00:00Z`).getTime();
+                if (!Number.isFinite(inicioMs) || !Number.isFinite(fimMs)) return null;
+                const offsetPct = ((inicioMs - dataMinMs) / totalMs) * 100;
+                const larguraPct = Math.max(1, ((fimMs - inicioMs) / totalMs) * 100);
                 return (
                   <div key={`${grupo.grupo}-${g.id}`} className="flex items-center gap-3 text-xs">
                     <span className="w-48 truncate text-[#142B3A]">{g.nome}</span>
@@ -2853,7 +3056,6 @@ function StepCalendario({
 // Etapa final — Cash flow e resultados
 // ============================================================
 const SUBTABS_RESULTADOS = [
-  "Plano de vendas",
   "Resumo",
   "Cash flow",
   "Capex",
@@ -2867,8 +3069,6 @@ const SUBTABS_RESULTADOS = [
 function StepCashFlowResultados({
   onVerResultados,
   planoVendas,
-  updatePlanoVendas,
-  updateEstruturaRecebimentos,
   custosNovos,
   contextoCusto,
   resumoPrograma,
@@ -2892,8 +3092,6 @@ function StepCashFlowResultados({
 }: {
   onVerResultados: () => void;
   planoVendas: PlanoVendas;
-  updatePlanoVendas: <K extends keyof PlanoVendas>(k: K, v: PlanoVendas[K]) => void;
-  updateEstruturaRecebimentos: <K extends keyof PlanoVendas["estruturaRecebimentos"]>(k: K, v: PlanoVendas["estruturaRecebimentos"][K]) => void;
   custosNovos: LinhaCusto[];
   contextoCusto: ContextoCusto;
   resumoPrograma: ReturnType<typeof calcResumoPrograma>;
@@ -2947,107 +3145,13 @@ function StepCashFlowResultados({
         ))}
       </div>
 
-      {!prontoParaCalcular && subtab !== "Plano de vendas" && (
+      {!prontoParaCalcular && (
         <Card title="Preenche o Plano de Vendas primeiro">
           <p className="text-sm text-[#59636A]">
             {!datasPreenchidas && "Faltam datas do plano de vendas (lançamento, início/fim de construção, escritura). "}
             {!recebimentosValidos && `A estrutura de recebimentos soma ${Math.round(somaRecebimentos * 100)}%, tem de somar 100%. `}
             {custosNovos.length === 0 && "Ainda não há linhas de custo na etapa Aquisição e Custos."}
           </p>
-        </Card>
-      )}
-
-      {subtab === "Plano de vendas" && (
-        <Card title="Plano de vendas">
-          <Row>
-            <Field label="Data de lançamento comercial">
-              <input
-                type="date"
-                className="input-dark"
-                value={planoVendas.dataLancamentoComercial}
-                onChange={(e) => updatePlanoVendas("dataLancamentoComercial", e.target.value)}
-              />
-            </Field>
-            <Field label="Duração esperada das vendas (meses)">
-              <input
-                type="number"
-                className="input-dark"
-                value={planoVendas.duracaoVendasMeses}
-                onChange={(e) => updatePlanoVendas("duracaoVendasMeses", Number(e.target.value))}
-              />
-            </Field>
-          </Row>
-          <Row>
-            <Field label="Início da construção">
-              <input
-                type="date"
-                className="input-dark"
-                value={planoVendas.dataInicioConstrucao}
-                onChange={(e) => updatePlanoVendas("dataInicioConstrucao", e.target.value)}
-              />
-            </Field>
-            <Field label="Fim da construção">
-              <input
-                type="date"
-                className="input-dark"
-                value={planoVendas.dataFimConstrucao}
-                onChange={(e) => updatePlanoVendas("dataFimConstrucao", e.target.value)}
-              />
-            </Field>
-            <Field label="Data da escritura">
-              <input type="date" className="input-dark" value={planoVendas.dataEscritura} onChange={(e) => updatePlanoVendas("dataEscritura", e.target.value)} />
-            </Field>
-          </Row>
-          <Row>
-            <Field label="Comissão de mediação (% sobre o preço total da unidade)">
-              <PercentInput value={planoVendas.comissaoMediacaoPct} onChange={(v) => updatePlanoVendas("comissaoMediacaoPct", v)} />
-            </Field>
-            <Field label="Cancelamentos estimados (%)">
-              <PercentInput value={planoVendas.cancelamentosEstimadosPct} onChange={(v) => updatePlanoVendas("cancelamentosEstimadosPct", v)} />
-            </Field>
-          </Row>
-          <Row>
-            <Field label="IVA da comissão">
-              <PercentInput value={planoVendas.comissaoTaxaIva} onChange={(v) => updatePlanoVendas("comissaoTaxaIva", v)} />
-            </Field>
-            <Field label="% da comissão paga no sinal">
-              <PercentInput value={planoVendas.comissaoPctPagoSinal} onChange={(v) => updatePlanoVendas("comissaoPctPagoSinal", v)} />
-            </Field>
-            <Field label="% da comissão paga na escritura">
-              <PercentInput value={planoVendas.comissaoPctPagoEscritura} onChange={(v) => updatePlanoVendas("comissaoPctPagoEscritura", v)} />
-            </Field>
-          </Row>
-          <Row>
-            <Field label="% de IVA da comissão recuperável">
-              <PercentInput value={planoVendas.comissaoIvaRecuperavelPct} onChange={(v) => updatePlanoVendas("comissaoIvaRecuperavelPct", v)} />
-            </Field>
-          </Row>
-
-          <h4 className="text-sm font-semibold text-[#142B3A] mt-4 mb-2">
-            Estrutura de recebimentos — soma: {Math.round(somaRecebimentos * 100)}% {!recebimentosValidos && <span className="text-[#A13D2E]">(tem de ser 100%)</span>}
-          </h4>
-          <Row>
-            <Field label="% na reserva">
-              <PercentInput value={planoVendas.estruturaRecebimentos.pctReserva} onChange={(v) => updateEstruturaRecebimentos("pctReserva", v)} />
-            </Field>
-            <Field label="% no CPCV">
-              <PercentInput value={planoVendas.estruturaRecebimentos.pctCpcv} onChange={(v) => updateEstruturaRecebimentos("pctCpcv", v)} />
-            </Field>
-          </Row>
-          <Row>
-            <Field label="% durante a construção">
-              <PercentInput
-                value={planoVendas.estruturaRecebimentos.pctDuranteConstrucao}
-                onChange={(v) => updateEstruturaRecebimentos("pctDuranteConstrucao", v)}
-              />
-            </Field>
-            <Field label="% na conclusão">
-              <PercentInput value={planoVendas.estruturaRecebimentos.pctConclusao} onChange={(v) => updateEstruturaRecebimentos("pctConclusao", v)} />
-            </Field>
-            <Field label="% na escritura">
-              <PercentInput value={planoVendas.estruturaRecebimentos.pctEscritura} onChange={(v) => updateEstruturaRecebimentos("pctEscritura", v)} />
-            </Field>
-          </Row>
         </Card>
       )}
 

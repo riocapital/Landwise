@@ -118,3 +118,13 @@ src/
 supabase/schema.sql
 .env.example
 ```
+
+## Correções 29/07/2026
+
+Para a revisão mais recente, consultar:
+
+- `docs/landwise-correcoes-29-07-implementation.md`
+- `docs/landwise-qa-29-07.md`
+- `docs/landwise-integration-instructions.md`
+- `supabase/migrations/0020_correcoes_29_07.sql`
+- `scripts/qa-correcoes-29-07.ts`

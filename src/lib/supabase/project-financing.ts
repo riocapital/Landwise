@@ -20,6 +20,7 @@ export type ProjectFinancingRow = {
   metodo_taxa_mensal: ParametrosFinanciamento["metodoTaxaMensal"];
   structuring_fee_pct: number;
   setup_costs: number;
+  setup_costs_pct: number;
   imposto_selo_emprestimo_pct: number;
   imposto_selo_juros_pct: number;
   limite_credito: number | null;
@@ -36,6 +37,7 @@ export type ProjectFinancingRow = {
   cash_sweep_inicio_data: string | null;
   capitalizacao_juros: boolean;
   saldo_minimo_caixa: number;
+  saldo_minimo_meses_reserva: number;
 };
 
 export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
@@ -46,17 +48,19 @@ export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
   euriborOrigem: "manual",
   euriborDataReferencia: null,
   euriborFonte: null,
-  spread: 0,
-  structuringFeePct: 0,
+  spread: 0.0185,
+  structuringFeePct: 0.02,
   setupCosts: 0,
-  impostoSeloEmprestimoPct: 0,
-  impostoSeloJurosPct: 0,
+  setupCostsPct: 0.003,
+  impostoSeloEmprestimoPct: 0.005,
+  impostoSeloJurosPct: 0.01,
   limiteCredito: null,
   saldoMinimoCaixa: 0,
+  saldoMinimoMesesReserva: 6,
   metodoTaxaMensal: "nominal_anual_div_12",
   cashSweepAtivo: false,
-  cashSweepPctCaixaLivre: 0,
-  cashSweepMesesCustosFuturos: 0,
+  cashSweepPctCaixaLivre: 0.3,
+  cashSweepMesesCustosFuturos: 6,
   cashSweepInicioTipo: "primeira_escritura",
   cashSweepInicioValorPct: null,
   cashSweepInicioData: null,
@@ -74,10 +78,12 @@ export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanci
     spread: row.spread,
     structuringFeePct: row.structuring_fee_pct,
     setupCosts: row.setup_costs,
+    setupCostsPct: row.setup_costs_pct ?? 0.003,
     impostoSeloEmprestimoPct: row.imposto_selo_emprestimo_pct,
     impostoSeloJurosPct: row.imposto_selo_juros_pct,
     limiteCredito: row.limite_credito,
     saldoMinimoCaixa: row.saldo_minimo_caixa,
+    saldoMinimoMesesReserva: row.saldo_minimo_meses_reserva ?? 6,
     metodoTaxaMensal: row.metodo_taxa_mensal,
     cashSweepAtivo: row.cash_sweep,
     cashSweepPctCaixaLivre: row.cash_sweep_pct_caixa_livre,
@@ -110,10 +116,12 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
       metodo_taxa_mensal: parametros.metodoTaxaMensal,
       structuring_fee_pct: parametros.structuringFeePct,
       setup_costs: parametros.setupCosts,
+      setup_costs_pct: parametros.setupCostsPct ?? 0.003,
       imposto_selo_emprestimo_pct: parametros.impostoSeloEmprestimoPct,
       imposto_selo_juros_pct: parametros.impostoSeloJurosPct,
       limite_credito: parametros.limiteCredito,
       saldo_minimo_caixa: parametros.saldoMinimoCaixa,
+      saldo_minimo_meses_reserva: parametros.saldoMinimoMesesReserva ?? 6,
       cash_sweep: parametros.cashSweepAtivo,
       cash_sweep_pct_caixa_livre: parametros.cashSweepPctCaixaLivre,
       cash_sweep_meses_custos_futuros: parametros.cashSweepMesesCustosFuturos,

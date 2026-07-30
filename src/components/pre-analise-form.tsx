@@ -2,10 +2,11 @@
 
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { TIPOS_PROJETO } from "@/lib/project-types";
 
 export function PreAnaliseForm() {
   const supabase = createClient();
-  const [tipoProjeto, setTipoProjeto] = useState("Terreno para construir");
+  const [tipoProjeto, setTipoProjeto] = useState("Terreno para Construção");
   const [localizacao, setLocalizacao] = useState("");
   const [areaLote, setAreaLote] = useState("");
   const [areaConstrucao, setAreaConstrucao] = useState("");
@@ -50,9 +51,7 @@ export function PreAnaliseForm() {
               <div className="field">
                 <label htmlFor="tipo">Tipo de projeto</label>
                 <select id="tipo" value={tipoProjeto} onChange={(e) => setTipoProjeto(e.target.value)}>
-                  <option>Terreno para construir</option>
-                  <option>Prédio aprovado</option>
-                  <option>Apartamento para remodelar</option>
+                  {TIPOS_PROJETO.map((tipo) => <option key={tipo}>{tipo}</option>)}
                 </select>
               </div>
               <div className="field">

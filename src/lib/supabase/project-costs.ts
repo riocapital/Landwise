@@ -65,11 +65,13 @@ export async function criarCusto(supabase: SupabaseClient, projectId: string, gr
 
 export async function atualizarCusto(supabase: SupabaseClient, id: string, patch: Partial<LinhaCusto>): Promise<void> {
   const dbPatch: Partial<ProjectCostRow> = {};
-  if (patch.nome !== undefined) dbPatch.nome = patch.nome;
+  if (patch.nome !== undefined) { dbPatch.nome = patch.nome; dbPatch.categoria = patch.nome; }
   if (patch.tipoCalculo !== undefined) dbPatch.tipo_calculo = patch.tipoCalculo;
   if (patch.valorInput !== undefined) dbPatch.valor_input = patch.valorInput;
+  if (patch.baseReferenciaCustoId !== undefined) dbPatch.base_referencia_custo_id = patch.baseReferenciaCustoId;
   if (patch.taxaIva !== undefined) dbPatch.taxa_iva = patch.taxaIva;
   if (patch.ivaRecuperavelPct !== undefined) dbPatch.iva_recuperavel_pct = patch.ivaRecuperavelPct;
+  if (patch.dataIvaRecuperacao !== undefined) dbPatch.data_iva_recuperacao = patch.dataIvaRecuperacao;
   if (patch.dataInicial !== undefined) dbPatch.data_inicial = patch.dataInicial;
   if (patch.duracaoMeses !== undefined) dbPatch.duracao_meses = patch.duracaoMeses;
   if (patch.dataFinal !== undefined) dbPatch.data_final = patch.dataFinal;

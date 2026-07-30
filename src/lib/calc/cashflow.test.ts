@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { calcularCashFlow, type PremissasCashFlow } from "./cashflow";
+import { calcularCashFlow, calcularReservaMinimaCustos, type PremissasCashFlow } from "./cashflow";
 import type { LinhaCusto, ContextoCusto } from "./custos";
 import type { ParametrosFinanciamento } from "./financiamento";
 import type { LinhaRecebimentoMensal } from "./vendas";
@@ -168,5 +168,37 @@ describe("calcularCashFlow — caso vazio", () => {
     expect(resultado.linhas).toHaveLength(0);
     expect(resultado.gdv).toBe(0);
     expect(resultado.margem).toBe(0);
+  });
+});
+
+
+describe("correções 29/07 — IVA e reserva mínima", () => {
+  it("não conta IVA não recuperável duas vezes no cash flow", () => {
+    const resultado = calcularCashFlow({
+      linhasCusto: [custo({ valorInput: 10_000, taxaIva: 0.23, ivaRecuperavelPct: 0, dataInicial: "2026-01-01", dataFinal: "2026-01-31", duracaoMeses: 1 })],
+      contextoCusto: contexto,
+      recebimentos: [],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+    expect(resultado.custoTotal).toBeCloseTo(12_300, 6);
+    expect(resultado.linhas[0].hardCosts).toBeCloseTo(10_000, 6);
+    expect(resultado.linhas[0].ivaNaoRecuperavel).toBeCloseTo(2_300, 6);
+  });
+
+  it("calcula a maior janela móvel de 2 meses apenas com custos operacionais", () => {
+    const reserva = calcularReservaMinimaCustos(
+      [
+        custo({ grupo: "aquisicao", valorInput: 1_000_000, dataInicial: "2026-01-01", dataFinal: "2026-01-31", duracaoMeses: 1 }),
+        custo({ grupo: "hard_cost", valorInput: 100_000, dataInicial: "2026-02-01", dataFinal: "2026-02-28", duracaoMeses: 1 }),
+        custo({ grupo: "soft_cost", valorInput: 150_000, dataInicial: "2026-03-01", dataFinal: "2026-03-31", duracaoMeses: 1 }),
+        custo({ grupo: "hard_cost", valorInput: 50_000, dataInicial: "2026-04-01", dataFinal: "2026-04-30", duracaoMeses: 1 }),
+      ],
+      contexto,
+      2
+    );
+    expect(reserva.valor).toBeCloseTo(250_000, 6);
+    expect(reserva.mesInicio).toBe("2026-02");
+    expect(reserva.mesFim).toBe("2026-03");
   });
 });

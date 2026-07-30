@@ -145,7 +145,8 @@ describe("gerarRecebimentosDaSalesTable — reserva/CPCV seguem a data real ou p
     const { linhas } = gerarRecebimentosDaSalesTable(unidades, [tipologia({})], plano);
     const mesJunho = linhas.find((l) => l.mes === "2026-06");
     expect(mesJunho).toBeDefined();
-    expect(mesJunho!.reserva).toBeGreaterThan(0); // reserva+cpcv da unidade vendida cai no mês real
+    expect(mesJunho!.reserva).toBeGreaterThan(0);
+    expect(mesJunho!.cpcv).toBeGreaterThan(0); // reserva e CPCV da unidade vendida aparecem separados no mês real
   });
 
   it("unidade ainda disponível usa a data projetada pela curva da sua tipologia", () => {
@@ -154,16 +155,19 @@ describe("gerarRecebimentosDaSalesTable — reserva/CPCV seguem a data real ou p
     // lançamento 2026-01 + 3 meses = 2026-04
     const mesAbril = linhas.find((l) => l.mes === "2026-04");
     expect(mesAbril).toBeDefined();
-    expect(mesAbril!.reserva).toBeCloseTo(280_000 * 0.2, 0); // reserva+cpcv = 10%+10% do preço
+    expect(mesAbril!.reserva).toBeCloseTo(280_000 * 0.1, 0);
+    expect(mesAbril!.cpcv).toBeCloseTo(280_000 * 0.1, 0);
   });
 
-  it("a soma de reserva+cpcv nunca é contada duas vezes (cpcv fica a 0, reserva leva o total combinado)", () => {
+  it("mantém reserva e CPCV separados sem alterar o total recebido", () => {
     const unidades = [unidade({ id: "u1", ordem: 0 })];
     const { linhas } = gerarRecebimentosDaSalesTable(unidades, [tipologia({ quantidade: 1 })], plano);
     const totalReserva = linhas.reduce((s, l) => s + l.reserva, 0);
     const totalCpcv = linhas.reduce((s, l) => s + l.cpcv, 0);
-    expect(totalCpcv).toBe(0);
-    expect(totalReserva).toBeCloseTo(280_000 * (0.1 + 0.1), 0);
+    const totalCombinado = linhas.reduce((s, l) => s + l.reserva + l.cpcv, 0);
+    expect(totalReserva).toBeCloseTo(280_000 * 0.1, 0);
+    expect(totalCpcv).toBeCloseTo(280_000 * 0.1, 0);
+    expect(totalCombinado).toBeCloseTo(280_000 * 0.2, 0);
   });
 
   it("nunca agenda uma unidade sem data real e sem curva configurada (unidadesPorMes = 0) — não inventa mês", () => {
