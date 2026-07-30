@@ -28,6 +28,7 @@ export type PlanoVendas = {
   dataInicioConstrucao: string;
   dataFimConstrucao: string;
   dataEscritura: string; // normalmente perto ou depois da conclusão
+  duracaoEscrituraAposObraMeses: number; // default da escritura de CADA unidade = fim de obra + este nº de meses (sempre sobreponível na Sales Table)
   estruturaRecebimentos: EstruturaRecebimentos;
   comissaoMediacaoPct: number; // % da receita, saída de caixa (não uma redução do GDV bruto) — secção 18 do plano
   comissaoTaxaIva: number;

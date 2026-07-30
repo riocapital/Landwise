@@ -9,6 +9,7 @@ const planoBase: PlanoVendas = {
   dataInicioConstrucao: "2026-01-01",
   dataFimConstrucao: "2027-12-01",
   dataEscritura: "2028-01-01",
+  duracaoEscrituraAposObraMeses: 2,
   estruturaRecebimentos: {
     pctReserva: 0.05,
     pctCpcv: 0.15,
@@ -131,6 +132,7 @@ describe("gerarRecebimentosDaSalesTable — reserva/CPCV seguem a data real ou p
     dataInicioConstrucao: "2026-01-01",
     dataFimConstrucao: "2027-12-01",
     dataEscritura: "2028-01-01",
+  duracaoEscrituraAposObraMeses: 2,
     estruturaRecebimentos: { pctReserva: 0.1, pctCpcv: 0.1, pctDuranteConstrucao: 0.5, pctConclusao: 0.1, pctEscritura: 0.2 },
     comissaoMediacaoPct: 0.03,
     comissaoTaxaIva: 0.23,

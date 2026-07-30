@@ -9,6 +9,7 @@ export const PLANO_VENDAS_VAZIO: PlanoVendas = {
   dataInicioConstrucao: "",
   dataFimConstrucao: "",
   dataEscritura: "",
+  duracaoEscrituraAposObraMeses: 2,
   estruturaRecebimentos: { pctReserva: 0.1, pctCpcv: 0.2, pctDuranteConstrucao: 0.4, pctConclusao: 0.1, pctEscritura: 0.2 },
   comissaoMediacaoPct: 0,
   comissaoTaxaIva: 0.23,
@@ -27,6 +28,7 @@ export async function carregarPlanoVendas(supabase: SupabaseClient, projectId: s
     dataInicioConstrucao: data.data_inicio_construcao ?? "",
     dataFimConstrucao: data.data_fim_construcao ?? "",
     dataEscritura: data.data_escritura ?? "",
+    duracaoEscrituraAposObraMeses: data.duracao_escritura_apos_obra_meses ?? 2,
     estruturaRecebimentos: {
       pctReserva: data.pct_reserva ?? 0.1,
       pctCpcv: data.pct_cpcv ?? 0.2,
@@ -52,6 +54,7 @@ export async function guardarPlanoVendas(supabase: SupabaseClient, projectId: st
       data_inicio_construcao: plano.dataInicioConstrucao || null,
       data_fim_construcao: plano.dataFimConstrucao || null,
       data_escritura: plano.dataEscritura || null,
+      duracao_escritura_apos_obra_meses: plano.duracaoEscrituraAposObraMeses,
       pct_reserva: plano.estruturaRecebimentos.pctReserva,
       pct_cpcv: plano.estruturaRecebimentos.pctCpcv,
       pct_durante_construcao: plano.estruturaRecebimentos.pctDuranteConstrucao,

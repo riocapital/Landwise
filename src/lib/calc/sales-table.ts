@@ -156,6 +156,37 @@ export function validarVenda(unidade: UnidadeVenda): ValidacaoVenda {
   return { valido: true };
 }
 
+/**
+ * Data de escritura por defeito de uma unidade: fim de obra + X meses. Só
+ * sugestão — a Sales Table permite sempre sobrepor manualmente por unidade
+ * (campo dataEscritura da própria unidade prevalece quando preenchido).
+ */
+export function calcDataEscrituraDefeito(dataFimConstrucao: string, duracaoMeses: number): string | null {
+  if (!dataFimConstrucao) return null;
+  const [ano, mes, dia] = dataFimConstrucao.split("-").map(Number);
+  if (!ano || !mes || !dia) return null;
+  const d = new Date(Date.UTC(ano, mes - 1 + Math.max(0, Math.floor(duracaoMeses)), dia));
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Sinal + reforços da unidade nunca podem ultrapassar o preço final —
+ * mesmo espírito da validação já aplicada à aquisição (secção 7 do plano).
+ * O valor da escritura é sempre o residual: precoFinal - sinal - reforços.
+ */
+export function validarEscrituraUnidade(unidade: Pick<UnidadeVenda, "sinalValor" | "reforcosValor">, precoFinal: number): ValidacaoVenda {
+  const soma = unidade.sinalValor + unidade.reforcosValor;
+  if (soma - precoFinal > 0.005) {
+    return { valido: false, erro: "Sinal e reforços não podem ultrapassar o preço final da unidade." };
+  }
+  return { valido: true };
+}
+
+/** Valor da escritura — residual, nunca um campo independente que possa divergir do preço final. */
+export function calcValorEscrituraUnidade(unidade: Pick<UnidadeVenda, "sinalValor" | "reforcosValor">, precoFinal: number): number {
+  return Math.max(0, precoFinal - unidade.sinalValor - unidade.reforcosValor);
+}
+
 export type LinhaSalesTableResolvida = UnidadeVenda & {
   abdFisica: number;
   abdVendavel: number;

@@ -63,6 +63,7 @@ const planoVendas: PlanoVendas = {
   dataInicioConstrucao: "2026-01-01",
   dataFimConstrucao: "2026-12-01",
   dataEscritura: "2027-01-01",
+  duracaoEscrituraAposObraMeses: 2,
   estruturaRecebimentos: { pctReserva: 0.1, pctCpcv: 0.2, pctDuranteConstrucao: 0.3, pctConclusao: 0.2, pctEscritura: 0.2 },
   comissaoMediacaoPct: 0.03,
   comissaoTaxaIva: 0.23,

@@ -9,6 +9,9 @@ import {
   validarVenda,
   resolverSalesTable,
   calcVgvBruto,
+  calcDataEscrituraDefeito,
+  validarEscrituraUnidade,
+  calcValorEscrituraUnidade,
   type UnidadeVenda,
 } from "./sales-table";
 import type { Typology } from "./areas";
@@ -163,5 +166,38 @@ describe("calcVgvBruto — fonte única do VGV, nunca quantidade × média", () 
     const somaEsperada = resolvidas.reduce((s, l) => s + l.precoFinal, 0);
     expect(vgv).toBe(somaEsperada);
     expect(resolvidas[0].precoFinal).toBe(999999);
+  });
+});
+
+describe("calcDataEscrituraDefeito — fim de obra + X meses", () => {
+  it("soma corretamente os meses à data de fim de obra", () => {
+    expect(calcDataEscrituraDefeito("2027-06-15", 2)).toBe("2027-08-15");
+  });
+  it("devolve null sem data de fim de obra", () => {
+    expect(calcDataEscrituraDefeito("", 2)).toBeNull();
+  });
+  it("nunca recua no tempo com duração negativa (trata como zero)", () => {
+    expect(calcDataEscrituraDefeito("2027-06-15", -3)).toBe("2027-06-15");
+  });
+});
+
+describe("validarEscrituraUnidade — sinal + reforços nunca ultrapassam o preço final", () => {
+  it("válido quando sinal + reforços é menor ou igual ao preço final", () => {
+    const r = validarEscrituraUnidade({ sinalValor: 20_000, reforcosValor: 10_000 }, 200_000);
+    expect(r.valido).toBe(true);
+  });
+  it("inválido quando sinal + reforços ultrapassa o preço final", () => {
+    const r = validarEscrituraUnidade({ sinalValor: 150_000, reforcosValor: 100_000 }, 200_000);
+    expect(r.valido).toBe(false);
+    expect(r.erro).toBeTruthy();
+  });
+});
+
+describe("calcValorEscrituraUnidade — valor da escritura é sempre o residual", () => {
+  it("preço final menos sinal e reforços", () => {
+    expect(calcValorEscrituraUnidade({ sinalValor: 20_000, reforcosValor: 10_000 }, 200_000)).toBe(170_000);
+  });
+  it("nunca negativo, mesmo que sinal+reforços ultrapasse o preço (situação já assinalada como inválida)", () => {
+    expect(calcValorEscrituraUnidade({ sinalValor: 150_000, reforcosValor: 100_000 }, 200_000)).toBe(0);
   });
 });

@@ -47,6 +47,9 @@ import {
   calcularSincronizacao,
   resolverSalesTable,
   calcVgvBruto,
+  calcDataEscrituraDefeito,
+  validarEscrituraUnidade,
+  calcValorEscrituraUnidade,
   type UnidadeVenda,
   type LinhaSalesTableResolvida,
 } from "@/lib/calc/sales-table";
@@ -1061,6 +1064,8 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 // Etapa 1 — Identificação
 // ============================================================
 function StepIdentificacao({
+  nome,
+  setNome,
   tipoProjeto,
   setTipoProjeto,
   inputs,
@@ -1101,6 +1106,9 @@ function StepIdentificacao({
     <>
       <Card title="Identificação do ativo">
         <Row>
+          <Field label="Nome do projeto">
+            <input className="input-dark" value={nome} onChange={(e) => setNome(e.target.value)} />
+          </Field>
           <Field label="Tipo de projeto">
             <select className="input-dark" value={tipoProjeto} onChange={(e) => setTipoProjeto(e.target.value)}>
               {TIPOS_PROJETO.map((tipo) => (
@@ -1251,32 +1259,34 @@ function StepIdentificacao({
       <Card title="Características">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
           <div>
-            <CheckboxIdent label="Possui garagem" checked={identificacao.temGaragem} onChange={(v) => updateIdentificacao("temGaragem", v)} />
-            {identificacao.temGaragem && (
-              <Field label="Número total de estacionamentos">
-                <input
-                  type="number"
-                  min={0}
-                  className="input-dark mb-3"
-                  value={identificacao.numEstacionamentos}
-                  onChange={(e) => updateIdentificacao("numEstacionamentos", Math.max(0, Number(e.target.value) || 0))}
-                />
-              </Field>
-            )}
+            <Field label="Número de garagens/estacionamentos">
+              <input
+                type="number"
+                min={0}
+                className="input-dark mb-3"
+                value={identificacao.numEstacionamentos}
+                onChange={(e) => {
+                  const n = Math.max(0, Number(e.target.value) || 0);
+                  updateIdentificacao("numEstacionamentos", n);
+                  updateIdentificacao("temGaragem", n > 0);
+                }}
+              />
+            </Field>
           </div>
           <div>
-            <CheckboxIdent label="Possui elevador" checked={identificacao.temElevador} onChange={(v) => updateIdentificacao("temElevador", v)} />
-            {identificacao.temElevador && (
-              <Field label="Número de elevadores">
-                <input
-                  type="number"
-                  min={0}
-                  className="input-dark mb-3"
-                  value={identificacao.numElevadores}
-                  onChange={(e) => updateIdentificacao("numElevadores", Math.max(0, Number(e.target.value) || 0))}
-                />
-              </Field>
-            )}
+            <Field label="Número de elevadores">
+              <input
+                type="number"
+                min={0}
+                className="input-dark mb-3"
+                value={identificacao.numElevadores}
+                onChange={(e) => {
+                  const n = Math.max(0, Number(e.target.value) || 0);
+                  updateIdentificacao("numElevadores", n);
+                  updateIdentificacao("temElevador", n > 0);
+                }}
+              />
+            </Field>
           </div>
           <CheckboxIdent
             label="Possui jardim ou áreas exteriores"
@@ -1433,6 +1443,20 @@ function StepPrograma({
               <input className="input-dark" value={planoVendas.dataFimConstrucao || "—"} disabled />
             </Field>
           </Row>
+          <Row>
+            <Field label="Escritura de cada unidade: meses após fim de obra (sugestão por defeito)">
+              <input
+                type="number"
+                min={0}
+                className="input-dark"
+                value={planoVendas.duracaoEscrituraAposObraMeses}
+                onChange={(e) => updatePlanoVendas("duracaoEscrituraAposObraMeses", Math.max(0, Number(e.target.value) || 0))}
+              />
+            </Field>
+          </Row>
+          <p className="text-xs text-[#59636A] -mt-2 mb-2">
+            Usado só para sugerir a data de escritura de cada unidade na Sales Table — sempre sobreponível linha a linha.
+          </p>
           <p className="text-xs font-semibold text-[#142B3A] mt-3 mb-2">
             Estrutura de recebimentos — {Math.round(somaRecebimentos * 100)}%
             {!recebimentosValidos && <span className="text-[#A13D2E]"> (tem de somar 100%)</span>}
@@ -1780,10 +1804,18 @@ function StepPrograma({
                     <th className="pb-1 pr-2">Preço final</th>
                     <th className="pb-1 pr-2">Estado</th>
                     <th className="pb-1 pr-2">Data venda</th>
+                    <th className="pb-1 pr-2">Sinal</th>
+                    <th className="pb-1 pr-2">Reforços</th>
+                    <th className="pb-1 pr-2">Escritura (residual)</th>
+                    <th className="pb-1 pr-2">Data escritura</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {unidadesDaTipologia.map((u) => (
+                  {unidadesDaTipologia.map((u) => {
+                    const validacaoEscritura = validarEscrituraUnidade(u, u.precoFinal);
+                    const valorEscritura = calcValorEscrituraUnidade(u, u.precoFinal);
+                    const dataEscrituraDefeito = calcDataEscrituraDefeito(planoVendas.dataFimConstrucao, planoVendas.duracaoEscrituraAposObraMeses);
+                    return (
                     <tr key={u.id} className="border-t border-[#E3DACB]">
                       <td className="py-1 pr-2">
                         <input className="input-dark w-20" value={u.bloco ?? ""} onChange={(e) => onAtualizarUnidade(u.id, { bloco: e.target.value })} />
@@ -1837,8 +1869,40 @@ function StepPrograma({
                           {u.dataVenda ? "Override manual" : datasEfetivas.has(u.id) ? "Calculada pela curva" : "Preencha o lançamento e a curva"}
                         </span>
                       </td>
+                      <td className="py-1 pr-2">
+                        <input
+                          type="number"
+                          className="input-dark w-24"
+                          value={u.sinalValor}
+                          onChange={(e) => onAtualizarUnidade(u.id, { sinalValor: Math.max(0, Number(e.target.value) || 0) })}
+                        />
+                      </td>
+                      <td className="py-1 pr-2">
+                        <input
+                          type="number"
+                          className="input-dark w-24"
+                          value={u.reforcosValor}
+                          onChange={(e) => onAtualizarUnidade(u.id, { reforcosValor: Math.max(0, Number(e.target.value) || 0) })}
+                        />
+                      </td>
+                      <td className={`py-1 pr-2 ${validacaoEscritura.valido ? "text-[#142B3A]" : "text-[#A13D2E] font-semibold"}`}>
+                        €{Math.round(valorEscritura).toLocaleString("pt-PT")}
+                        {!validacaoEscritura.valido && <span className="block text-[10px]">{validacaoEscritura.erro}</span>}
+                      </td>
+                      <td className="py-1 pr-2">
+                        <input
+                          type="date"
+                          className="input-dark"
+                          value={u.dataEscritura ?? dataEscrituraDefeito ?? ""}
+                          onChange={(e) => onAtualizarUnidade(u.id, { dataEscritura: e.target.value || null })}
+                        />
+                        <span className="block text-[10px] text-[#59636A] mt-1">
+                          {u.dataEscritura ? "Override manual" : dataEscrituraDefeito ? "Fim de obra + prazo por defeito" : "Preencha o fim de obra"}
+                        </span>
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
