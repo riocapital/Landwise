@@ -87,6 +87,7 @@ import {
 import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
 import { calcularCashFlow, calcularReservaMinimaCustos, type LinhaCashFlowMensal } from "@/lib/calc/cashflow";
+import { calcularImt, FONTE_TABELAS_IMT, type TipoImovelImt } from "@/lib/calc/imt";
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "@/lib/calc/vendas";
 import { gerarComissaoMensal } from "@/lib/calc/sales-commission";
 import {
@@ -2071,6 +2072,17 @@ function StepAquisicaoCustos({
     onAtualizarCusto(custo.id, { dataInicial: dataInicial || null, duracaoMeses: duracaoMeses || null, dataFinal });
   }
 
+  const [imtTipoImovel, setImtTipoImovel] = useState<TipoImovelImt>("outro_urbano_ou_terreno_construcao");
+  const [imtRegiaoAutonoma, setImtRegiaoAutonoma] = useState(false);
+  const [imtJovem, setImtJovem] = useState(false);
+  const [imtOffshore, setImtOffshore] = useState(false);
+  const imtCalculado = calcularImt({ tipoImovel: imtTipoImovel, valor: inputs.custoTerreno || 0, regiaoAutonoma: imtRegiaoAutonoma, jovemAte35: imtJovem, offshore: imtOffshore });
+
+  function aplicarImtCalculado() {
+    atualizarLinha("IMT", { valorInput: Math.round(imtCalculado.imt * 100) / 100 });
+    atualizarLinha("Imposto do selo", { valorInput: Math.round(imtCalculado.impostoSelo * 100) / 100 });
+  }
+
   function renderLinhaAquisicaoCompacta(c: LinhaCusto) {
     return (
       <div key={c.id} className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr] gap-3 items-end border-b border-[#E3DACB] py-3 last:border-b-0">
@@ -2197,6 +2209,51 @@ function StepAquisicaoCustos({
           </div>
         ))}
         <button onClick={() => onAdicionarCusto("aquisicao", `Reforço da aquisição ${reforcos.length + 1}`)} className="text-[#B96343] text-sm font-semibold mt-3">+ Adicionar reforço</button>
+
+        <details className="mt-5 pt-4 border-t border-[#E3DACB]">
+          <summary className="cursor-pointer text-xs font-semibold text-[#142B3A]">Calcular IMT e Imposto do Selo assistidamente</summary>
+          <div className="mt-3">
+            <Row>
+              <Field label="Tipo de imóvel">
+                <select className="input-dark" value={imtTipoImovel} onChange={(e) => setImtTipoImovel(e.target.value as TipoImovelImt)}>
+                  <option value="outro_urbano_ou_terreno_construcao">Terreno para construção / outro prédio urbano</option>
+                  <option value="habitacao_propria_permanente">Habitação própria e permanente</option>
+                  <option value="habitacao_secundaria_ou_arrendamento">Habitação secundária / arrendamento</option>
+                  <option value="predio_rustico">Prédio rústico</option>
+                </select>
+              </Field>
+              <Field label="Região">
+                <select className="input-dark" value={imtRegiaoAutonoma ? "ra" : "continente"} onChange={(e) => setImtRegiaoAutonoma(e.target.value === "ra")}>
+                  <option value="continente">Portugal Continental</option>
+                  <option value="ra">Região Autónoma (Açores/Madeira)</option>
+                </select>
+              </Field>
+            </Row>
+            <Row>
+              <label className="flex items-center gap-2 text-xs text-[#59636A]">
+                <input
+                  type="checkbox"
+                  checked={imtJovem}
+                  disabled={imtTipoImovel !== "habitacao_propria_permanente"}
+                  onChange={(e) => setImtJovem(e.target.checked)}
+                />
+                Adquirente jovem até 35 anos (só HPP)
+              </label>
+              <label className="flex items-center gap-2 text-xs text-[#59636A]">
+                <input type="checkbox" checked={imtOffshore} onChange={(e) => setImtOffshore(e.target.checked)} />
+                Adquirente offshore (paraíso fiscal — taxa agravada de 10%)
+              </label>
+            </Row>
+            <div className="text-xs text-[#142B3A] mt-2 space-y-1">
+              <p>{imtCalculado.escalaoDescricao}</p>
+              <p>IMT: €{imtCalculado.imt.toLocaleString("pt-PT", { minimumFractionDigits: 2 })} · Imposto do selo (0,8%): €{imtCalculado.impostoSelo.toLocaleString("pt-PT", { minimumFractionDigits: 2 })} · Total: €{imtCalculado.total.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}</p>
+              <p className="text-[10px] text-[#59636A]">Fonte: {FONTE_TABELAS_IMT}. Sugestão calculada sobre o preço de aquisição introduzido acima — confirma sempre o VPT antes da escritura, pois o IMT incide sobre o maior dos dois valores.</p>
+            </div>
+            <button onClick={aplicarImtCalculado} className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343] mt-2">
+              Aplicar às linhas &quot;IMT&quot; e &quot;Imposto do selo&quot;
+            </button>
+          </div>
+        </details>
 
         <div className="mt-5 pt-4 border-t border-[#E3DACB]">
           <p className="text-xs font-semibold text-[#142B3A] mb-3">Custos de aquisição</p>
