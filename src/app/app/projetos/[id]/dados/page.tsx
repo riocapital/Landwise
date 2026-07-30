@@ -3156,7 +3156,10 @@ function StepCashFlowResultados({
       )}
 
       {subtab === "Resumo" && resultado && (
-        <Card title="Resumo">
+        <Card
+          title="Resumo"
+          subtitle="Pré-visualização em tempo real, sem fees de promotor nem impostos (só disponíveis depois de guardar) — para o lucro/margem completos, ver o dashboard do projeto."
+        >
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <ResumoItem label="Freguesia / Concelho" valor={[identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || "—"} />
             <ResumoItem label="ABC total" valor={`${Math.round((identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0))} m²`} />
@@ -3166,9 +3169,12 @@ function StepCashFlowResultados({
             <ResumoItem label="Número de unidades" valor={String(resumoPrograma.totalUnidades)} />
             <ResumoItem label="Preço médio por m²" valor={`€${Math.round(resumoPrograma.precoMedioPonderadoM2).toLocaleString("pt-PT")}`} />
             <ResumoItem label="GDV" valor={`€${Math.round(resultado.gdv).toLocaleString("pt-PT")}`} />
-            <ResumoItem label="Custo total do projeto" valor={`€${Math.round(resultado.custoTotal + resultado.custosFinanceiros).toLocaleString("pt-PT")}`} />
-            <ResumoItem label="Lucro do projeto" valor={`€${Math.round(resultado.lucroProjeto).toLocaleString("pt-PT")}`} />
-            <ResumoItem label="Margem do projeto" valor={resultado.margemProjeto !== null ? `${(resultado.margemProjeto * 100).toFixed(1)}%` : "—"} />
+            <ResumoItem
+              label="Custo total (sem fees/impostos)"
+              valor={`€${Math.round(resultado.custoTotal + resultado.custosFinanceiros).toLocaleString("pt-PT")}`}
+            />
+            <ResumoItem label="Lucro do projeto (sem fees/impostos)" valor={`€${Math.round(resultado.lucroProjeto).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Margem (sem fees/impostos)" valor={resultado.margemProjeto !== null ? `${(resultado.margemProjeto * 100).toFixed(1)}%` : "—"} />
             <ResumoItem label="Peak debt" valor={`€${Math.round(resultado.financiamento.peakDebt).toLocaleString("pt-PT")}`} />
             <ResumoItem label="Equity investido" valor={`€${Math.round(resultado.equity.equityContributed).toLocaleString("pt-PT")}`} />
             <ResumoItem label="Distribuições" valor={`€${Math.round(resultado.equity.capitalDevolvidoTotal).toLocaleString("pt-PT")}`} />

@@ -66,6 +66,34 @@ export type LinhaCustoResolvida = LinhaCusto & {
   ivaNaoRecuperavel: number;
 };
 
+// --- Preço de aquisição vs. custos de aquisição (auditoria financeira — nunca voltar a confundir) ---
+//
+// Dentro do grupo 'aquisicao', algumas linhas representam o PREÇO do ativo
+// (sinal, reforços, escritura) — não são um custo acessório, são o próprio
+// preço de compra, repartido por datas de pagamento. As restantes linhas
+// (due diligence, notário, registos, IMT, imposto de selo, comissão de
+// aquisição, outros) são custos acessórios reais. Um bug real (auditoria
+// financeira) misturava as duas coisas: "Aquisição" e "Custos de aquisição"
+// eram ambos calculados como a soma de TODAS as linhas do grupo, mostrando
+// o mesmo valor duas vezes. Esta é a fonte única da distinção — nunca
+// reimplementar este filtro noutro sítio (wizard, dashboard, relatórios).
+const NOMES_LINHAS_PRECO_AQUISICAO = ["Sinal da aquisição", "Escritura da aquisição"];
+
+export function ehLinhaPrecoAquisicao(nome: string): boolean {
+  return NOMES_LINHAS_PRECO_AQUISICAO.includes(nome) || nome.startsWith("Reforço da aquisição");
+}
+
+/**
+ * Custos de aquisição = soma das linhas do grupo 'aquisicao' que NÃO
+ * representam o preço de compra (sinal/reforços/escritura) — nunca inclui
+ * o preço do ativo, nunca o mesmo valor que "Aquisição".
+ */
+export function calcCustosAquisicaoAcessorios(linhasResolvidas: LinhaCustoResolvida[]): number {
+  return linhasResolvidas
+    .filter((l) => l.grupo === "aquisicao" && !ehLinhaPrecoAquisicao(l.nome))
+    .reduce((s, l) => s + l.valorResolvido, 0);
+}
+
 function valorDireto(linha: LinhaCusto, contexto: ContextoCusto): number | null {
   switch (linha.tipoCalculo) {
     case "valor_fixo":

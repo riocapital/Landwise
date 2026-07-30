@@ -254,6 +254,7 @@ describe("Golden Test — projeto de referência completo (secções 46/47/48 do
       comissao: resultado.comissaoComercialTotal,
       fees: 0,
       custosFinanceiros: resultado.financiamento.jurosTotais + resultado.financiamento.feesBancarios + resultado.financiamento.impostoSeloTotal,
+      ivaNaoRecuperavel: 0, // taxaIva: null em todas as linhas do golden project — sem IVA a considerar
       impostoEstimado: 0,
       abcTotal: 300,
       abpTotal: 280,

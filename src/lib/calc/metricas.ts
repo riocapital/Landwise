@@ -35,6 +35,7 @@ export type ParametrosMetricas = {
   comissao: number;
   fees: number;
   custosFinanceiros: number; // juros + fees bancários + imposto de selo do empréstimo
+  ivaNaoRecuperavel: number; // IVA suportado que não é recuperável — já contado no custo total do cash flow (cashflow.ts), tem de estar aqui também, senão o lucro desta tabela não reconcilia com o Resumo
   impostoEstimado: number;
   abcTotal: number;
   abpTotal: number;
@@ -46,16 +47,28 @@ export type MetricasPorM2 = {
   lucro: number;
 };
 
-/** Métricas por m² (secção 35) — cada categoria com €/ABC e €/ABP, nunca um valor solto sem base. */
+/**
+ * Métricas por m² (secção 35) — cada categoria com €/ABC e €/ABP, nunca um
+ * valor solto sem base.
+ *
+ * Lucro = VGV BRUTO − custo total (o custo total já inclui a comissão
+ * comercial, uma única vez). Nunca partir de vgvLiquido (= vgvBruto −
+ * comissão) para depois subtrair um custoTotal que TAMBÉM já inclui a
+ * comissão — isso descontava a comissão duas vezes (bug real, auditoria
+ * financeira). "Venda líquida"/vgvLiquido é só uma linha informativa nesta
+ * tabela, nunca a base do lucro.
+ */
 export function calcMetricasPorM2(p: ParametrosMetricas): MetricasPorM2 {
-  const custoTotal = p.aquisicao + p.custosAquisicao + p.hardCosts + p.softCosts + p.comissao + p.fees + p.custosFinanceiros + p.impostoEstimado;
-  const lucro = p.vgvLiquido - custoTotal;
+  const custoTotal =
+    p.aquisicao + p.custosAquisicao + p.hardCosts + p.softCosts + p.comissao + p.fees + p.custosFinanceiros + p.ivaNaoRecuperavel + p.impostoEstimado;
+  const lucro = p.vgvBruto - custoTotal;
 
   const linhas = [
     calcLinhaMetrica("Compra", p.aquisicao, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
     calcLinhaMetrica("Custos de aquisição", p.custosAquisicao, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
     calcLinhaMetrica("Construção", p.hardCosts, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
     calcLinhaMetrica("Soft costs", p.softCosts, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
+    calcLinhaMetrica("IVA não recuperável", p.ivaNaoRecuperavel, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
     calcLinhaMetrica("Total", custoTotal, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
     calcLinhaMetrica("Venda bruta", p.vgvBruto, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
     calcLinhaMetrica("Venda líquida", p.vgvLiquido, p.vgvBruto, p.abcTotal, p.abpTotal, p.numeroUnidades),
@@ -96,6 +109,7 @@ export function calcEstruturaSobreVgv(p: ParametrosMetricas): EstruturaSobreVgv 
     ["Comissão", p.comissao],
     ["Fees", p.fees],
     ["Custos financeiros", p.custosFinanceiros],
+    ["IVA não recuperável", p.ivaNaoRecuperavel],
     ["Imposto", p.impostoEstimado],
   ];
 

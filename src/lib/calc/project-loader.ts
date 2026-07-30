@@ -17,7 +17,7 @@ import { calcularDatasEfetivas } from "./sales-curve";
 import { resolverMesInicioCashSweep } from "./financiamento";
 import { calcularResultadosComWaterfall, type ResultadosInvestidorPromotor } from "./estrutura-capital";
 import { agregarFees } from "./fees";
-import type { ContextoCusto } from "./custos";
+import { resolverCustos, calcCustosAquisicaoAcessorios, type ContextoCusto } from "./custos";
 import {
   calcLucroTributavelEstimado,
   calcLucroTributavel,
@@ -55,6 +55,18 @@ export type ResultadoProjetoCompleto = {
   metricasPorM2: MetricasPorM2 | null;
   estruturaSobreVgv: EstruturaSobreVgv | null;
   alertas: Alerta[];
+
+  // Lucro/margem do projeto — fonte única para TODAS as telas (Resumo,
+  // Estrutura sobre VGV, Métricas por m²). Diferente de
+  // resultado.lucroProjeto (cashflow.ts): esse é só o nível "core" (receita
+  // − custos operacionais − custos financeiros), porque cashflow.ts não
+  // conhece fees nem impostos (calculados aqui, fora do motor de cash
+  // flow). lucroProjetoTotal soma tudo — é exatamente igual a
+  // estruturaSobreVgv.lucro, exposto aqui com nome claro para nunca mais
+  // haver dois números de "lucro" a divergir entre telas (auditoria
+  // financeira: a diferença era exatamente fees + impostoEstimado).
+  lucroProjetoTotal: number | null;
+  margemProjetoTotal: number | null;
 };
 
 export async function carregarResultadoProjeto(supabase: SupabaseClient, projectId: string): Promise<ResultadoProjetoCompleto> {
@@ -103,6 +115,8 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       metricasPorM2: null,
       estruturaSobreVgv: null,
       alertas: [],
+      lucroProjetoTotal: null,
+      margemProjetoTotal: null,
     };
   }
 
@@ -120,11 +134,20 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       metricasPorM2: null,
       estruturaSobreVgv: null,
       alertas: [],
+      lucroProjetoTotal: null,
+      margemProjetoTotal: null,
     };
   }
 
+  // O preço de aquisição vem de projects.inputs.custoTerreno (campo próprio,
+  // editável na etapa de Aquisição) — NUNCA da soma das linhas de custo do
+  // grupo 'aquisicao', que inclui as próprias linhas "Sinal"/"Escritura" (o
+  // preço, repartido por datas) mais os custos acessórios. Somar essas
+  // linhas para "Aquisição" é exatamente o bug que fazia "Aquisição" e
+  // "Custos de aquisição" mostrarem o mesmo valor (auditoria financeira).
+  // Esta é a mesma fonte que o wizard já usa localmente (StepAquisicaoCustos).
   const contextoCusto: ContextoCusto = {
-    valorAquisicao: custos.filter((c) => c.grupo === "aquisicao").reduce((s, c) => s + c.valorInput, 0),
+    valorAquisicao: projetoRow?.inputs?.custoTerreno || 0,
     abcAcimaSolo: abcAcimaSolo ?? 0,
     abcAbaixoSolo: abcAbaixoSolo ?? 0,
     abdTotal: resumoPrograma.areaDependenteTotal,
@@ -225,9 +248,19 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   }
 
   const custosFinanceiros = resultado.financiamento.jurosTotais + resultado.financiamento.feesBancarios + resultado.financiamento.impostoSeloTotal;
-  const custosAquisicaoAuxiliares = resultado.linhas.reduce((s, l) => s + l.custosAquisicao, 0);
+  // Custos de aquisição = só as linhas acessórias (DD, notário, registos,
+  // IMT, imposto de selo, comissão de aquisição, outros) — NUNCA as linhas
+  // "Sinal da aquisição"/"Escritura da aquisição"/"Reforço da aquisição",
+  // que já são o preço de aquisição (contextoCusto.valorAquisicao), contado
+  // ali uma única vez. Ver calcCustosAquisicaoAcessorios em custos.ts.
+  const linhasCustoResolvidas = resolverCustos(custos, contextoCusto);
+  const custosAquisicaoAuxiliares = calcCustosAquisicaoAcessorios(linhasCustoResolvidas);
   const hardCostsTotal = resultado.linhas.reduce((s, l) => s + l.hardCosts, 0);
   const softCostsTotal = resultado.linhas.reduce((s, l) => s + l.softCosts + l.outrosCustos, 0);
+  // IVA não recuperável já entra no custo total do cash flow (cashflow.ts) —
+  // faltava aqui, e essa omissão fazia "Estrutura sobre VGV"/"Métricas por
+  // m²" mostrarem um lucro maior do que o do Resumo (auditoria financeira).
+  const ivaNaoRecuperavelTotal = resultado.linhas.reduce((s, l) => s + l.ivaNaoRecuperavel, 0);
 
   const parametrosMetricas = {
     vgvBruto: resultado.gdv,
@@ -239,6 +272,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     comissao: resultado.comissaoComercialTotal,
     fees: feesTotais,
     custosFinanceiros,
+    ivaNaoRecuperavel: ivaNaoRecuperavelTotal,
     impostoEstimado: impostoEstimadoTotal,
     abcTotal: abcTotal ?? 0,
     abpTotal: resumoPrograma.abpTotal,
@@ -320,6 +354,8 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     metricasPorM2,
     estruturaSobreVgv,
     alertas,
+    lucroProjetoTotal: estruturaSobreVgv.lucro,
+    margemProjetoTotal: resultado.gdv > 0 ? estruturaSobreVgv.lucro / resultado.gdv : null,
   };
 }
 

@@ -12,6 +12,7 @@ function parametros(overrides: Partial<ParametrosMetricas> = {}): ParametrosMetr
     comissao: 120_000,
     fees: 50_000,
     custosFinanceiros: 100_000,
+    ivaNaoRecuperavel: 30_000,
     impostoEstimado: 150_000,
     abcTotal: 2000,
     abpTotal: 1600,
@@ -35,11 +36,17 @@ describe("calcMetricasPorM2 — nunca €/m² sem base explícita", () => {
     expect(compra.eurPorAbp).toBeNull();
   });
 
-  it("lucro = venda líquida − custo total", () => {
+  it("lucro = VGV bruto − custo total (custo total já inclui a comissão) — nunca vgvLiquido − custoTotal, que descontaria a comissão duas vezes", () => {
     const p = parametros();
     const r = calcMetricasPorM2(p);
-    const custoTotal = p.aquisicao + p.custosAquisicao + p.hardCosts + p.softCosts + p.comissao + p.fees + p.custosFinanceiros + p.impostoEstimado;
-    expect(r.lucro).toBeCloseTo(p.vgvLiquido - custoTotal, 6);
+    const custoTotal =
+      p.aquisicao + p.custosAquisicao + p.hardCosts + p.softCosts + p.comissao + p.fees + p.custosFinanceiros + p.ivaNaoRecuperavel + p.impostoEstimado;
+    expect(r.lucro).toBeCloseTo(p.vgvBruto - custoTotal, 6);
+    // Assertion negativa: a fórmula antiga (buggy) e a nova só coincidiriam
+    // se a comissão fosse zero — aqui não é, por isso têm de divergir
+    // exatamente pelo valor da comissão.
+    expect(r.lucro).not.toBeCloseTo(p.vgvLiquido - custoTotal, 6);
+    expect((p.vgvLiquido - custoTotal) - r.lucro).toBeCloseTo(-p.comissao, 6);
   });
 });
 
@@ -62,6 +69,27 @@ describe("calcEstruturaSobreVgv", () => {
   it("rácio aquisição/VGV calculado corretamente", () => {
     const r = calcEstruturaSobreVgv(parametros());
     expect(r.racioAquisicaoVgv).toBeCloseTo(1_000_000 / 4_000_000, 6); // 25%
+  });
+});
+
+describe("Auditoria financeira — Estrutura sobre VGV e Métricas por m² usam sempre o mesmo lucro", () => {
+  // Bug real: "Estrutura sobre VGV" mostrava lucro ≈ -€7.153 e "Métricas por
+  // m²" mostrava ≈ -€458.326 para os MESMOS dados — a segunda descontava a
+  // comissão duas vezes (vgvLiquido já sem comissão, custoTotal com
+  // comissão outra vez). Nunca mais podem divergir.
+  it("calcEstruturaSobreVgv().lucro === calcMetricasPorM2().lucro, sempre, para os mesmos parâmetros", () => {
+    const p = parametros();
+    const estrutura = calcEstruturaSobreVgv(p);
+    const metricas = calcMetricasPorM2(p);
+    expect(metricas.lucro).toBeCloseTo(estrutura.lucro, 6);
+    expect(metricas.linhas.find((l) => l.categoria === "Total")!.euros).toBeCloseTo(estrutura.totalCustos, 6);
+  });
+
+  it("o lucro reconcilia com VGV bruto menos a soma de todas as categorias de custo (incl. IVA não recuperável)", () => {
+    const p = parametros();
+    const estrutura = calcEstruturaSobreVgv(p);
+    const somaCategorias = p.aquisicao + p.custosAquisicao + p.hardCosts + p.softCosts + p.comissao + p.fees + p.custosFinanceiros + p.ivaNaoRecuperavel + p.impostoEstimado;
+    expect(estrutura.lucro).toBeCloseTo(p.vgvBruto - somaCategorias, 6);
   });
 });
 

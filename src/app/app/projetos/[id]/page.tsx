@@ -68,13 +68,13 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         <div>
           <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Recomendação</div>
           <div className="text-lg font-bold text-[#142B3A]">
-            {resultado.lucroProjeto > 0 ? "Avançar com condições" : "Não avançar sem rever premissas"}
+            {(r.lucroProjetoTotal ?? 0) > 0 ? "Avançar com condições" : "Não avançar sem rever premissas"}
           </div>
         </div>
         <div className="text-right">
           <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Margem do projeto</div>
-          <div className="text-lg font-bold" style={{ color: (resultado.margemProjeto ?? 0) > 0 ? "#4E7A5C" : "#A13D2E" }}>
-            {resultado.margemProjeto !== null ? fmtPct(resultado.margemProjeto) : "—"}
+          <div className="text-lg font-bold" style={{ color: (r.margemProjetoTotal ?? 0) > 0 ? "#4E7A5C" : "#A13D2E" }}>
+            {r.margemProjetoTotal !== null ? fmtPct(r.margemProjetoTotal) : "—"}
           </div>
         </div>
       </div>
@@ -106,9 +106,10 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
       <div className="grid grid-cols-5 gap-4 mb-8">
         <Kpi label="VGV Bruto" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
         <Kpi label="Receita operacional" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
-        <Kpi label="Custo total do projeto" value={fmtEUR(resultado.custoTotal + resultado.custosFinanceiros)} color="#B96343" />
-        <Kpi label="Lucro do projeto" value={fmtEUR(resultado.lucroProjeto)} color="#4E7A5C" />
-        <Kpi label="Margem do projeto" value={resultado.margemProjeto !== null ? fmtPct(resultado.margemProjeto) : "—"} color="#4E7A5C" />
+        {/* gdv - lucroProjetoTotal, nunca resultado.custoTotal sozinho: esse não inclui fees nem impostos (calculados fora de cashflow.ts) — teria de reconciliar sempre com "Lucro do projeto" ao lado. */}
+        <Kpi label="Custo total do projeto" value={fmtEUR(resultado.gdv - (r.lucroProjetoTotal ?? 0))} color="#B96343" />
+        <Kpi label="Lucro do projeto" value={fmtEUR(r.lucroProjetoTotal ?? 0)} color="#4E7A5C" />
+        <Kpi label="Margem do projeto" value={r.margemProjetoTotal !== null ? fmtPct(r.margemProjetoTotal) : "—"} color="#4E7A5C" />
       </div>
 
       <SectionLabel>Retorno do equity</SectionLabel>

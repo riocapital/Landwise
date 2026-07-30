@@ -6,6 +6,8 @@ import {
   agregarCustos,
   calcDataFinal,
   calcDuracaoMeses,
+  ehLinhaPrecoAquisicao,
+  calcCustosAquisicaoAcessorios,
   type LinhaCusto,
   type ContextoCusto,
 } from "./custos";
@@ -183,5 +185,47 @@ describe("Calendário — início + duração = fim", () => {
     const inicio = "2026-09-01";
     const fim = calcDataFinal(inicio, 24);
     expect(calcDuracaoMeses(inicio, fim)).toBe(24);
+  });
+});
+
+describe("Aquisição vs. Custos de aquisição (auditoria financeira) — teste de regressão obrigatório", () => {
+  // Bug real: "Aquisição" e "Custos de aquisição" eram ambos calculados como
+  // a soma de TODAS as linhas do grupo 'aquisicao' — incluindo as linhas
+  // "Sinal da aquisição"/"Escritura da aquisição" que são o PREÇO, não um
+  // custo acessório. Resultado: as duas linhas mostravam sempre o mesmo
+  // valor (ex.: €1.611.000 nas duas), mesmo havendo custos acessórios reais
+  // muito menores.
+  it("ehLinhaPrecoAquisicao reconhece sinal/reforços/escritura, nunca custos acessórios", () => {
+    expect(ehLinhaPrecoAquisicao("Sinal da aquisição")).toBe(true);
+    expect(ehLinhaPrecoAquisicao("Escritura da aquisição")).toBe(true);
+    expect(ehLinhaPrecoAquisicao("Reforço da aquisição 1")).toBe(true);
+    expect(ehLinhaPrecoAquisicao("Reforço da aquisição 2")).toBe(true);
+    expect(ehLinhaPrecoAquisicao("Due diligence técnica")).toBe(false);
+    expect(ehLinhaPrecoAquisicao("Notário")).toBe(false);
+    expect(ehLinhaPrecoAquisicao("IMT")).toBe(false);
+    expect(ehLinhaPrecoAquisicao("Registos")).toBe(false);
+  });
+
+  it("preço de aquisição €1.611.000, custos acessórios simulados €100.000 — nunca €1.611.000 nas duas linhas", () => {
+    // Preço repartido por sinal (10%) + escritura (90%), exatamente como o
+    // wizard gera — mais 2 linhas de custos acessórios reais.
+    const linhasCusto: LinhaCusto[] = [
+      linha({ grupo: "aquisicao", nome: "Sinal da aquisição", categoria: "Sinal da aquisição", valorInput: 161_100 }),
+      linha({ grupo: "aquisicao", nome: "Escritura da aquisição", categoria: "Escritura da aquisição", valorInput: 1_449_900 }),
+      linha({ grupo: "aquisicao", nome: "Due diligence técnica", categoria: "Due diligence técnica", valorInput: 40_000 }),
+      linha({ grupo: "aquisicao", nome: "Notário", categoria: "Notário", valorInput: 60_000 }),
+    ];
+    const contextoComPreco: ContextoCusto = { ...contexto, valorAquisicao: 1_611_000 };
+    const resolvidas = resolverCustos(linhasCusto, contextoComPreco);
+
+    const aquisicao = contextoComPreco.valorAquisicao; // fonte única do preço — nunca derivada das linhas de custo
+    const custosDeAquisicao = calcCustosAquisicaoAcessorios(resolvidas);
+
+    expect(aquisicao).toBeCloseTo(1_611_000, 2);
+    expect(custosDeAquisicao).toBeCloseTo(100_000, 2);
+
+    // A asserção que haveria de falhar com o bug antigo (soma de tudo = 1.611.000 nas duas linhas):
+    expect(custosDeAquisicao).not.toBeCloseTo(1_611_000, 2);
+    expect(custosDeAquisicao).not.toBeCloseTo(aquisicao, 2);
   });
 });
