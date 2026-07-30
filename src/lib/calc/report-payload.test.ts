@@ -47,6 +47,9 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   cashSweepInicioTipo: "primeira_escritura",
   cashSweepInicioValorPct: null,
   cashSweepInicioData: null,
+  carenciaAtiva: false,
+  carenciaAnos: 0,
+  prazoAnos: 0,
 };
 
 describe("montarReportPayload", () => {

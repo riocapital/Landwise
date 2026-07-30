@@ -52,7 +52,7 @@ export const CUSTOS_PADRAO: CustoPadrao[] = [
   { grupo: "aquisicao", nome: "Due diligence técnica", tipoCalculo: "valor_fixo" },
   { grupo: "aquisicao", nome: "Due diligence legal", tipoCalculo: "valor_fixo" },
   { grupo: "aquisicao", nome: "Notário", tipoCalculo: "valor_fixo", valorInput: 1000 },
-  { grupo: "aquisicao", nome: "Registos", tipoCalculo: "valor_fixo" },
+  { grupo: "aquisicao", nome: "Registos", tipoCalculo: "valor_fixo", valorInput: 1000 },
   { grupo: "aquisicao", nome: "IMT", tipoCalculo: "valor_fixo" },
   { grupo: "aquisicao", nome: "Imposto do selo", tipoCalculo: "valor_fixo" },
   { grupo: "aquisicao", nome: "Comissão de aquisição", tipoCalculo: "valor_fixo" },

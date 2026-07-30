@@ -116,6 +116,9 @@ const FINANCIAMENTO: ParametrosFinanciamento = {
   cashSweepInicioTipo: "primeira_escritura",
   cashSweepInicioValorPct: null,
   cashSweepInicioData: null,
+  carenciaAtiva: false,
+  carenciaAnos: 0,
+  prazoAnos: 0,
 };
 
 const HURDLES: NivelHurdle[] = [{ hurdleIRR: 0.08, promotePctAcima: 0.2 }];

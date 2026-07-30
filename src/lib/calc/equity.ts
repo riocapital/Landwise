@@ -104,6 +104,7 @@ export type ResultadosEquity = {
   lucroEquity: number; // distribuições totais − equity investido
   moic: number | null; // distribuições totais ÷ equity investido
   irr: number | null; // XIRR sobre os fluxos datados do investidor
+  fluxosInvestidor: FluxoDatado[]; // os mesmos fluxos usados no XIRR — capital call negativo, distribuição positiva
 };
 
 export function calcResultadosEquity(linhas: LinhaEquityMensal[]): ResultadosEquity {
@@ -137,5 +138,6 @@ export function calcResultadosEquity(linhas: LinhaEquityMensal[]): ResultadosEqu
     lucroEquity: capitalDevolvidoTotal - equityContributed,
     moic: equityContributed > 0 ? capitalDevolvidoTotal / equityContributed : null,
     irr: calcXIRR(fluxosInvestidor),
+    fluxosInvestidor,
   };
 }

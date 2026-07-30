@@ -38,6 +38,7 @@ export type ProjectFinancingRow = {
   capitalizacao_juros: boolean;
   saldo_minimo_caixa: number;
   saldo_minimo_meses_reserva: number;
+  prazo_anos: number;
 };
 
 export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
@@ -64,6 +65,9 @@ export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
   cashSweepInicioTipo: "primeira_escritura",
   cashSweepInicioValorPct: null,
   cashSweepInicioData: null,
+  carenciaAtiva: false,
+  carenciaAnos: 0,
+  prazoAnos: 0,
 };
 
 export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanciamento {
@@ -91,6 +95,11 @@ export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanci
     cashSweepInicioTipo: row.cash_sweep_inicio_tipo,
     cashSweepInicioValorPct: row.cash_sweep_inicio_valor_pct,
     cashSweepInicioData: row.cash_sweep_inicio_data,
+    // carenciaAtiva é derivada de periodo_carencia_meses > 0 — coluna já
+    // existia desde a 0005, nunca tinha sido ligada a nenhum cálculo.
+    carenciaAtiva: (row.periodo_carencia_meses ?? 0) > 0,
+    carenciaAnos: (row.periodo_carencia_meses ?? 0) / 12,
+    prazoAnos: row.prazo_anos ?? 0,
   };
 }
 
@@ -128,6 +137,8 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
       cash_sweep_inicio_tipo: parametros.cashSweepInicioTipo,
       cash_sweep_inicio_valor_pct: parametros.cashSweepInicioValorPct,
       cash_sweep_inicio_data: parametros.cashSweepInicioData,
+      periodo_carencia_meses: parametros.carenciaAtiva ? Math.max(0, Math.round(parametros.carenciaAnos * 12)) : 0,
+      prazo_anos: parametros.prazoAnos,
     },
     { onConflict: "project_id" }
   );

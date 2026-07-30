@@ -86,7 +86,7 @@ import {
 } from "@/lib/supabase/project-timeline";
 import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
-import { calcularCashFlow, calcularReservaMinimaCustos } from "@/lib/calc/cashflow";
+import { calcularCashFlow, calcularReservaMinimaCustos, type LinhaCashFlowMensal } from "@/lib/calc/cashflow";
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "@/lib/calc/vendas";
 import { gerarComissaoMensal } from "@/lib/calc/sales-commission";
 import {
@@ -2233,6 +2233,61 @@ function StepAquisicaoCustos({
   );
 }
 
+// Gráfico SVG simples, sem dependências externas: saldo de caixa acumulado
+// (linha) + cash flow levered mensal (barras positivas/negativas).
+function CashFlowChart({ linhas }: { linhas: LinhaCashFlowMensal[] }) {
+  if (linhas.length === 0) return <p className="text-xs text-[#59636A]">Sem dados para mostrar.</p>;
+
+  const largura = 900;
+  const altura = 260;
+  const margem = { top: 10, right: 10, bottom: 24, left: 10 };
+  const w = largura - margem.left - margem.right;
+  const h = altura - margem.top - margem.bottom;
+
+  const saldos = linhas.map((l) => l.saldoCaixaAcumulado);
+  const cfs = linhas.map((l) => l.cashFlowLevered);
+  const minY = Math.min(0, ...saldos, ...cfs);
+  const maxY = Math.max(0, ...saldos, ...cfs);
+  const rangeY = maxY - minY || 1;
+
+  const x = (i: number) => margem.left + (linhas.length <= 1 ? 0 : (i / (linhas.length - 1)) * w);
+  const y = (v: number) => margem.top + h - ((v - minY) / rangeY) * h;
+  const yZero = y(0);
+
+  const pontosSaldo = saldos.map((v, i) => `${x(i)},${y(v)}`).join(" ");
+  const larguraBarra = Math.max(1, (w / linhas.length) * 0.6);
+
+  return (
+    <div className="overflow-x-auto">
+      <svg viewBox={`0 0 ${largura} ${altura}`} className="w-full" style={{ minWidth: 600 }}>
+        <line x1={margem.left} y1={yZero} x2={largura - margem.right} y2={yZero} stroke="#E3DACB" strokeWidth={1} />
+        {cfs.map((v, i) => (
+          <rect
+            key={i}
+            x={x(i) - larguraBarra / 2}
+            y={v >= 0 ? y(v) : yZero}
+            width={larguraBarra}
+            height={Math.abs(y(v) - yZero)}
+            fill={v >= 0 ? "#4E7A5C" : "#B96343"}
+            opacity={0.6}
+          />
+        ))}
+        <polyline points={pontosSaldo} fill="none" stroke="#3E6E8E" strokeWidth={2} />
+        {[0, Math.floor(linhas.length / 2), linhas.length - 1].map((i) => (
+          <text key={i} x={x(i)} y={altura - 6} fontSize={10} fill="#59636A" textAnchor="middle">
+            {linhas[i].mes}
+          </text>
+        ))}
+      </svg>
+      <div className="flex gap-4 text-[10px] text-[#59636A] mt-1">
+        <span><span className="inline-block w-3 h-0.5 bg-[#3E6E8E] align-middle mr-1" />Saldo de caixa acumulado</span>
+        <span><span className="inline-block w-3 h-3 bg-[#4E7A5C] opacity-60 align-middle mr-1" />CF levered positivo</span>
+        <span><span className="inline-block w-3 h-3 bg-[#B96343] opacity-60 align-middle mr-1" />CF levered negativo</span>
+      </div>
+    </div>
+  );
+}
+
 function StepFinanciamento({
   financiamento,
   onToggleComFinanciamento,
@@ -2431,6 +2486,47 @@ function StepFinanciamento({
             </span>
           </Field>
         </Row>
+        <Row>
+          <Field label="Prazo total do empréstimo (anos)">
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              className="input-dark"
+              value={financiamento.prazoAnos}
+              onChange={(e) => updateFinanciamento("prazoAnos", Number(e.target.value))}
+              disabled={desativado}
+            />
+          </Field>
+          <Field label="Há período de carência de capital?">
+            <select
+              className="input-dark"
+              value={financiamento.carenciaAtiva ? "sim" : "nao"}
+              onChange={(e) => updateFinanciamento("carenciaAtiva", e.target.value === "sim")}
+              disabled={desativado}
+            >
+              <option value="nao">Não</option>
+              <option value="sim">Sim</option>
+            </select>
+          </Field>
+          <Field label="Carência (anos)">
+            <input
+              type="number"
+              min={0}
+              step={0.5}
+              className="input-dark"
+              value={financiamento.carenciaAnos}
+              onChange={(e) => updateFinanciamento("carenciaAnos", Number(e.target.value))}
+              disabled={desativado || !financiamento.carenciaAtiva}
+            />
+          </Field>
+        </Row>
+        {financiamento.carenciaAtiva && (
+          <p className="text-xs text-[#59636A] mb-3">
+            Durante a carência só se pagam juros — sem amortização de capital e sem cash sweep. A amortização do capital
+            começa a seguir à carência, em linha reta até ao fim do prazo total (com liquidação final na maturidade).
+          </p>
+        )}
       </Card>
 
       <Card
@@ -3114,6 +3210,7 @@ function StepCashFlowResultados({
   onRemoverCenario: (cenario: Cenario) => void;
 }) {
   const [subtab, setSubtab] = useState<(typeof SUBTABS_RESULTADOS)[number]>("Resumo");
+  const [mostrarCapexZero, setMostrarCapexZero] = useState(false);
   const [sensMatriz, setSensMatriz] = useState<MatrizSensibilidade>("aquisicao_vs_custo_construcao");
   const [sensIndicador, setSensIndicador] = useState<IndicadorSensibilidade>("margem");
 
@@ -3193,6 +3290,12 @@ function StepCashFlowResultados({
       )}
 
       {subtab === "Cash flow" && resultado && (
+        <Card title="Gráfico do cash flow" subtitle="Saldo de caixa acumulado e cash flow levered mensal">
+          <CashFlowChart linhas={resultado.linhas} />
+        </Card>
+      )}
+
+      {subtab === "Cash flow" && resultado && (
         <Card title="Cash flow mensal" subtitle={`${resultado.linhas.length} meses`}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
@@ -3205,6 +3308,8 @@ function StepCashFlowResultados({
                   <th className="pb-2 pr-2">CF unlevered</th>
                   <th className="pb-2 pr-2">Drawdown</th>
                   <th className="pb-2 pr-2">Juros+fees</th>
+                  <th className="pb-2 pr-2">Amortização</th>
+                  <th className="pb-2 pr-2">Saldo devedor</th>
                   <th className="pb-2 pr-2">CF levered</th>
                   <th className="pb-2 pr-2">Equity call</th>
                   <th className="pb-2 pr-2">Distribuições</th>
@@ -3221,6 +3326,8 @@ function StepCashFlowResultados({
                     <td className="py-1 pr-2">€{Math.round(l.cashFlowUnlevered).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.drawdown).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.jurosEFees).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.amortizacao).toLocaleString("pt-PT")}</td>
+                    <td className="py-1 pr-2">€{Math.round(l.saldoDivida).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.cashFlowLevered).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.equityCall).toLocaleString("pt-PT")}</td>
                     <td className="py-1 pr-2">€{Math.round(l.distribuicoes).toLocaleString("pt-PT")}</td>
@@ -3235,6 +3342,10 @@ function StepCashFlowResultados({
 
       {subtab === "Capex" && resultado && (
         <Card title="Capex por categoria">
+          <label className="flex items-center gap-2 text-xs text-[#59636A] mb-3">
+            <input type="checkbox" checked={mostrarCapexZero} onChange={(e) => setMostrarCapexZero(e.target.checked)} />
+            Mostrar linhas com valor zero
+          </label>
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-[#59636A] uppercase text-xs">
@@ -3252,7 +3363,9 @@ function StepCashFlowResultados({
                   acc[c.categoria] = (acc[c.categoria] ?? 0) + resolvido.valorResolvido;
                   return acc;
                 }, {})
-              ).map(([categoria, valor]) => (
+              )
+                .filter(([, valor]) => mostrarCapexZero || Math.abs(valor) > 0.005)
+                .map(([categoria, valor]) => (
                 <tr key={categoria} className="border-t border-[#E3DACB]">
                   <td className="py-1.5">{categoria}</td>
                   <td className="py-1.5">€{Math.round(valor).toLocaleString("pt-PT")}</td>

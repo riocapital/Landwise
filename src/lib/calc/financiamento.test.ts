@@ -33,6 +33,9 @@ const parametrosBase: ParametrosFinanciamento = {
   cashSweepInicioTipo: "primeira_escritura",
   cashSweepInicioValorPct: null,
   cashSweepInicioData: null,
+  carenciaAtiva: false,
+  carenciaAnos: 0,
+  prazoAnos: 0,
 };
 
 describe("Taxas", () => {
@@ -240,5 +243,67 @@ describe("simularFinanciamento com cash sweep — nunca deixa o projeto sem caix
     const linhas = simularFinanciamento(necessidades, pComSaldoAlto, "2026-02");
     // caixa livre = 800_000 - 790_000 = 10_000, muito menor que a dívida
     expect(linhas[1].amortizacao).toBeCloseTo(10_000, 2);
+  });
+});
+
+describe("Carência do principal (auditoria — secção 15)", () => {
+  // Prazo total: 5 anos (60 meses). Carência: 2 anos (24 meses), contados a
+  // partir do primeiro drawdown (mês 1). Um único drawdown no mês 1,
+  // sem mais necessidades depois — isola o comportamento da carência.
+  const prazoTotalMeses = 60;
+  function gerarNecessidades(): NecessidadeMensal[] {
+    const linhas: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 1_200_000, saldoCaixaAntesFinanciamento: -1_200_000 },
+    ];
+    for (let i = 1; i < prazoTotalMeses; i++) {
+      const ano = 2026 + Math.floor(i / 12);
+      const mes = (i % 12) + 1;
+      linhas.push({ mes: `${ano}-${String(mes).padStart(2, "0")}`, custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 });
+    }
+    return linhas;
+  }
+
+  const pCarencia: ParametrosFinanciamento = {
+    ...parametrosBase,
+    percentagemHardCostsFinanciada: 1,
+    limiteCredito: 2_000_000,
+    carenciaAtiva: true,
+    carenciaAnos: 2,
+    prazoAnos: 5,
+  };
+
+  it("meses 1 a 24: juros ≥ 0, amortização de principal sempre igual a zero", () => {
+    const linhas = simularFinanciamento(gerarNecessidades(), pCarencia);
+    for (let i = 0; i < 24; i++) {
+      expect(linhas[i].juros).toBeGreaterThanOrEqual(0);
+      expect(linhas[i].amortizacao).toBe(0);
+    }
+    // o saldo devedor nunca desce durante a carência (só sobe, com os juros capitalizados)
+    expect(linhas[23].saldoFinal).toBeGreaterThanOrEqual(linhas[0].saldoFinal);
+  });
+
+  it("mês 25 em diante: começa a amortizar, saldo devedor reduz progressivamente", () => {
+    const linhas = simularFinanciamento(gerarNecessidades(), pCarencia);
+    expect(linhas[24].amortizacao).toBeGreaterThan(0); // mês 25 (índice 24) — primeiro mês fora da carência
+    // progressivamente decrescente: cada mês seguinte tem saldo devedor menor
+    for (let i = 25; i < prazoTotalMeses; i++) {
+      expect(linhas[i].saldoFinal).toBeLessThanOrEqual(linhas[i - 1].saldoFinal + 1e-6);
+    }
+    expect(linhas[prazoTotalMeses - 1].saldoFinal).toBeCloseTo(0, 2); // liquidado na maturidade, nunca negativo
+    expect(linhas[prazoTotalMeses - 1].saldoFinal).toBeGreaterThanOrEqual(-1e-6);
+  });
+
+  it("sem carência (carenciaAtiva: false), comportamento antigo inalterado — nunca amortiza sozinho sem cash sweep", () => {
+    const pSemCarencia = { ...pCarencia, carenciaAtiva: false };
+    const linhas = simularFinanciamento(gerarNecessidades(), pSemCarencia);
+    expect(linhas.every((l) => l.amortizacao === 0)).toBe(true); // sem carência E sem cash sweep — nunca amortiza (regra pré-existente)
+  });
+
+  it("cash sweep nunca amortiza durante a carência, mesmo que ativo", () => {
+    const pComSweep = { ...pCarencia, cashSweepAtivo: true, cashSweepPctCaixaLivre: 1 };
+    const linhas = simularFinanciamento(gerarNecessidades(), pComSweep, "2026-01");
+    for (let i = 0; i < 24; i++) {
+      expect(linhas[i].amortizacao).toBe(0);
+    }
   });
 });

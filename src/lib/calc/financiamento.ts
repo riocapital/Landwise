@@ -33,6 +33,18 @@ export type ParametrosFinanciamento = {
   cashSweepInicioTipo: "primeira_escritura" | "pct_vendido" | "pct_vgv_recebido" | "data";
   cashSweepInicioValorPct: number | null; // decimal, quando início = pct_vendido ou pct_vgv_recebido
   cashSweepInicioData: string | null; // "YYYY-MM-DD", quando início = data
+
+  // Carência do principal (secção 15 da auditoria). Conta a partir do
+  // primeiro drawdown (não há ainda uma "data inicial do financiamento"
+  // dedicada — usar o primeiro mês com drawdown > 0 como âncora, conforme
+  // a regra explícita de fallback). Durante a carência: paga juros, nunca
+  // amortiza capital (nem por cash sweep). Depois da carência: amortização
+  // linear mensal do saldo então existente, distribuída pelo prazo
+  // restante (prazoAnos − carenciaAnos), somada a qualquer amortização por
+  // cash sweep que também esteja ativa.
+  carenciaAtiva: boolean;
+  carenciaAnos: number; // 0 quando carenciaAtiva = false — projetos antigos ficam sempre sem carência
+  prazoAnos: number; // prazo total do empréstimo, em anos — tem de ser > carenciaAnos
 };
 
 export type NecessidadeMensal = {
@@ -115,6 +127,8 @@ const PARAMETROS_ZERO: Pick<
   | "cashSweepPctCaixaLivre"
   | "cashSweepMesesCustosFuturos"
   | "saldoMinimoMesesReserva"
+  | "carenciaAtiva"
+  | "carenciaAnos"
 > = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
@@ -132,6 +146,8 @@ const PARAMETROS_ZERO: Pick<
   cashSweepPctCaixaLivre: 0,
   cashSweepMesesCustosFuturos: 0,
   saldoMinimoMesesReserva: 0,
+  carenciaAtiva: false,
+  carenciaAnos: 0,
 };
 
 /** Aplica a regra "financiamento bancário = Não zera e desativa todos os campos bancários" (secção 7). */
@@ -174,6 +190,12 @@ export function simularFinanciamento(
   const linhas: LinhaFinanciamentoMensal[] = [];
   let saldo = 0;
   let feesSetupLancados = false;
+  // Carência (secção 15): contada a partir do primeiro mês com drawdown >
+  // 0 — null até lá, nunca assume um início por omissão.
+  let mesesDesdeInicioFinanciamento: number | null = null;
+  // Saldo no exato mês em que a carência termina, congelado uma única vez
+  // — é a base da prestação linear constante (nunca recalculada a cada mês).
+  let saldoBaseAmortizacaoLinear: number | null = null;
 
   for (let i = 0; i < necessidades.length; i++) {
     const n = necessidades[i];
@@ -205,12 +227,23 @@ export function simularFinanciamento(
 
     let saldoFinal = saldoInicial + juros + drawdown;
 
+    // Atualiza a contagem de meses desde o início do financiamento — âncora
+    // da carência, definida no mês do primeiro drawdown.
+    if (drawdown > 0 && mesesDesdeInicioFinanciamento === null) {
+      mesesDesdeInicioFinanciamento = 0;
+    } else if (mesesDesdeInicioFinanciamento !== null) {
+      mesesDesdeInicioFinanciamento += 1;
+    }
+    const mesesCarencia = parametros.carenciaAtiva ? Math.max(0, Math.round(parametros.carenciaAnos * 12)) : 0;
+    const dentroCarencia = parametros.carenciaAtiva && mesesDesdeInicioFinanciamento !== null && mesesDesdeInicioFinanciamento < mesesCarencia;
+
     // Cash sweep (secção 24): a partir do mês de início, usa o caixa livre
     // para amortizar dívida — nunca abaixo do saldo mínimo, nunca sem
     // reservar os próximos N meses de custos, nunca mais do que a dívida
-    // restante (nunca deixa o projeto sem caixa).
+    // restante (nunca deixa o projeto sem caixa). Nunca durante a carência
+    // (secção 15) — só paga juros nesse período.
     let amortizacao = 0;
-    const sweepAtivoNesteMes = parametros.cashSweepAtivo && mesInicioCashSweep !== null && n.mes >= mesInicioCashSweep;
+    const sweepAtivoNesteMes = parametros.cashSweepAtivo && mesInicioCashSweep !== null && n.mes >= mesInicioCashSweep && !dentroCarencia;
     if (sweepAtivoNesteMes && saldoFinal > 0) {
       const caixaDisponivel = n.saldoCaixaAntesFinanciamento + drawdown;
       const reservaFutura = necessidades
@@ -219,6 +252,26 @@ export function simularFinanciamento(
       const caixaLivre = Math.max(0, caixaDisponivel - parametros.saldoMinimoCaixa - reservaFutura);
       amortizacao = Math.min(saldoFinal, caixaLivre * parametros.cashSweepPctCaixaLivre);
       saldoFinal -= amortizacao;
+    }
+
+    // Amortização programada (secção 15): só depois da carência terminar.
+    // Prestação linear constante (capital ÷ meses restantes de prazo),
+    // calculada uma única vez sobre o saldo no momento em que a carência
+    // acaba — nunca recalculada a cada mês. Na maturidade (ou além),
+    // liquida integralmente o que resta, nunca deixa saldo por pagar.
+    if (parametros.carenciaAtiva && !dentroCarencia && mesesDesdeInicioFinanciamento !== null && saldoFinal > 0) {
+      const prazoTotalMeses = Math.max(1, Math.round(parametros.prazoAnos * 12));
+      const naMaturidadeOuAlem = mesesDesdeInicioFinanciamento >= prazoTotalMeses - 1;
+      let amortizacaoProgramada: number;
+      if (naMaturidadeOuAlem) {
+        amortizacaoProgramada = saldoFinal;
+      } else {
+        if (saldoBaseAmortizacaoLinear === null) saldoBaseAmortizacaoLinear = saldoInicial;
+        const mesesAmortizacao = Math.max(1, prazoTotalMeses - mesesCarencia);
+        amortizacaoProgramada = Math.min(saldoFinal, Math.max(0, saldoBaseAmortizacaoLinear / mesesAmortizacao));
+      }
+      saldoFinal -= amortizacaoProgramada;
+      amortizacao += amortizacaoProgramada;
     }
 
     linhas.push({

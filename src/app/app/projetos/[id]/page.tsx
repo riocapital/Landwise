@@ -133,6 +133,36 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         <Kpi label="MOIC" value={fmtIndicador(moic, (v) => v.toFixed(2) + "x")} color="#4E7A5C" />
       </div>
 
+      {resultado.equity.fluxosInvestidor.length > 0 && (
+        <details className="mb-8 border border-[#E3DACB] rounded-lg px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-[#142B3A]">
+            Ver fluxos usados no cálculo de IRR e MOIC ({resultado.equity.fluxosInvestidor.length})
+          </summary>
+          <table className="w-full text-xs mt-3">
+            <thead>
+              <tr className="text-left text-[#59636A] border-b border-[#E3DACB]">
+                <th className="py-1 pr-4">Data</th>
+                <th className="py-1 pr-4">Tipo</th>
+                <th className="py-1 text-right">Valor</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resultado.equity.fluxosInvestidor.map((f, i) => (
+                <tr key={i} className="border-b border-[#F0EBE0]">
+                  <td className="py-1 pr-4">{f.data}</td>
+                  <td className="py-1 pr-4">{f.valor < 0 ? "Capital call" : "Distribuição"}</td>
+                  <td className={`py-1 text-right ${f.valor < 0 ? "text-[#B96343]" : "text-[#4E7A5C]"}`}>{fmtEUR(f.valor)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p className="text-[10px] text-[#59636A] mt-2">
+            IRR = XIRR destes fluxos datados. MOIC = soma das distribuições ÷ soma dos capital calls. Nenhum outro fluxo (receita de vendas, drawdowns,
+            amortização de dívida) entra neste cálculo.
+          </p>
+        </details>
+      )}
+
       <SectionLabel>Áreas e programa</SectionLabel>
       <div className="grid grid-cols-3 gap-4 mb-8">
         <Kpi label="ABC Total" value={`${Math.round(r.abcTotal ?? 0)} m²`} color="#3E6E8E" />
@@ -159,6 +189,11 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
           color="#C08A3E"
         />
       </div>
+      <p className="text-xs text-[#59636A] -mt-5 mb-8">
+        Ponte de financiamento: o custo total do projeto ({fmtEUR(resultado.gdv - (r.lucroProjetoTotal ?? 0))}) é coberto por dívida bancária no pico
+        ({fmtEUR(resultado.financiamento.peakDebt)}), equity no pico ({fmtEUR(resultado.equity.peakCashExposure)}) e caixa gerado pelas próprias vendas do
+        projeto ao longo do tempo. Dívida e equity nunca são receita nem custo — só financiam a necessidade de caixa até as vendas cobrirem o resto.
+      </p>
 
       {r.temInvestidorExterno && r.investidorPromotor && (
         <>
