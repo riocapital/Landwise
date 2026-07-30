@@ -76,7 +76,7 @@ export type PremissasCashFlow = {
 };
 
 /** Distribui cada linha de custo pelos meses entre a sua data inicial e final, segundo o perfil de desembolso escolhido. */
-function distribuirCustosPorMes(linhasResolvidas: LinhaCustoResolvida[]): Map<string, { aquisicao: number; hard: number; soft: number; outro: number; ivaNaoRecuperavel: number }> {
+export function distribuirCustosPorMes(linhasResolvidas: LinhaCustoResolvida[]): Map<string, { aquisicao: number; hard: number; soft: number; outro: number; ivaNaoRecuperavel: number }> {
   const porMes = new Map<string, { aquisicao: number; hard: number; soft: number; outro: number; ivaNaoRecuperavel: number }>();
 
   const soma = (mes: string, campo: "aquisicao" | "hard" | "soft" | "outro" | "ivaNaoRecuperavel", valor: number) => {
@@ -87,7 +87,7 @@ function distribuirCustosPorMes(linhasResolvidas: LinhaCustoResolvida[]): Map<st
 
   for (const linha of linhasResolvidas) {
     if (!linha.dataInicial || !linha.dataFinal) continue; // sem calendário definido — não entra no cash flow (fica só no capex agregado)
-    const distribuicao = distribuirValorPorPerfil(linha.valorResolvido + linha.ivaSuportado - linha.ivaRecuperavel, linha.dataInicial, linha.dataFinal, linha.perfilDesembolso ?? "linear");
+    const distribuicao = distribuirValorPorPerfil(linha.valorResolvido, linha.dataInicial, linha.dataFinal, linha.perfilDesembolso ?? "linear");
     const campo = linha.grupo === "aquisicao" ? "aquisicao" : linha.grupo === "hard_cost" ? "hard" : linha.grupo === "soft_cost" ? "soft" : "outro";
 
     const distribuicaoIvaNaoRecuperavel = distribuirValorPorPerfil(linha.ivaNaoRecuperavel, linha.dataInicial, linha.dataFinal, linha.perfilDesembolso ?? "linear");
@@ -101,6 +101,59 @@ function distribuirCustosPorMes(linhasResolvidas: LinhaCustoResolvida[]): Map<st
   }
 
   return porMes;
+}
+
+
+export type ReservaMinimaCustos = {
+  mesesReserva: number;
+  valor: number;
+  mesInicio: string | null;
+  mesFim: string | null;
+};
+
+/**
+ * Calcula a maior janela móvel de custos operacionais futuros necessária
+ * para manter o projeto durante N meses. Exclui aquisição, dívida, impostos
+ * sobre lucro e distribuições porque estes fluxos são tratados fora das
+ * linhas de custos operacionais. Inclui hard costs, soft costs, outros custos
+ * e IVA não recuperável exatamente uma vez.
+ */
+export function calcularReservaMinimaCustos(
+  linhasCusto: LinhaCusto[],
+  contextoCusto: ContextoCusto,
+  mesesReserva: number
+): ReservaMinimaCustos {
+  const meses = Math.max(0, Math.floor(mesesReserva));
+  if (meses === 0) return { mesesReserva: 0, valor: 0, mesInicio: null, mesFim: null };
+
+  const resolvidas = resolverCustos(linhasCusto, contextoCusto);
+  const porMes = distribuirCustosPorMes(resolvidas);
+  const mesesOrdenados = [...porMes.keys()].sort();
+  if (mesesOrdenados.length === 0) return { mesesReserva: meses, valor: 0, mesInicio: null, mesFim: null };
+
+  const calendario = gerarMesesEntre(mesesOrdenados[0], mesesOrdenados[mesesOrdenados.length - 1]);
+  const operacionais = calendario.map((mes) => {
+    const c = porMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, ivaNaoRecuperavel: 0 };
+    return c.hard + c.soft + c.outro + c.ivaNaoRecuperavel;
+  });
+
+  let melhorValor = 0;
+  let melhorInicio = 0;
+  for (let i = 0; i < calendario.length; i += 1) {
+    const valor = operacionais.slice(i, i + meses).reduce((soma, atual) => soma + atual, 0);
+    if (valor > melhorValor) {
+      melhorValor = valor;
+      melhorInicio = i;
+    }
+  }
+
+  const fimIdx = Math.min(calendario.length - 1, melhorInicio + meses - 1);
+  return {
+    mesesReserva: meses,
+    valor: melhorValor,
+    mesInicio: calendario[melhorInicio] ?? null,
+    mesFim: calendario[fimIdx] ?? null,
+  };
 }
 
 /**

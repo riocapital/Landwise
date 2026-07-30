@@ -25,6 +25,11 @@ describe("gerarAgendaAbsorcao — nunca fraciona unidades, nunca excede o stock"
     expect(gerarAgendaAbsorcao(10, 0, 0, "2026-01-01")).toHaveLength(0);
   });
 
+  it("sem data de lançamento válida devolve vazio e não quebra o calendário", () => {
+    expect(gerarAgendaAbsorcao(10, 2, 1, "")).toEqual([]);
+    expect(gerarAgendaAbsorcao(10, 2, 1, "2026-99-01")).toEqual([]);
+  });
+
   it("nunca entra em ciclo infinito, mesmo com velocidade quase zero", () => {
     const agenda = gerarAgendaAbsorcao(10, 0, 0.001, "2026-01-01");
     expect(agenda.length).toBeLessThanOrEqual(601);

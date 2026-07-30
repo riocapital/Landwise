@@ -118,8 +118,47 @@ export function calcLucroTributavel(lucroContabilistico: number, prejuizosFiscai
   return Math.max(0, lucroContabilistico - Math.max(0, prejuizosFiscaisAcumulados));
 }
 
+export type RegimeIRC = "geral" | "pme_small_mid_cap";
+
+export type ResultadoIRCRegime = {
+  imposto: number;
+  parcelaTaxaReduzida: number;
+  parcelaTaxaGeral: number;
+  taxaReduzida: number | null;
+  taxaGeral: number;
+};
+
+/** Calcula o IRC por regime sem aplicar a taxa reduzida ao lucro inteiro. */
+export function calcIRCComRegime(
+  lucroTributavel: number,
+  taxaGeral: number,
+  regime: RegimeIRC,
+  taxaPrimeiros50k = 0.15,
+  limiteTaxaReduzida = 50_000
+): ResultadoIRCRegime {
+  const lucro = Math.max(0, lucroTributavel);
+  if (regime !== "pme_small_mid_cap") {
+    return {
+      imposto: lucro * taxaGeral,
+      parcelaTaxaReduzida: 0,
+      parcelaTaxaGeral: lucro,
+      taxaReduzida: null,
+      taxaGeral,
+    };
+  }
+  const parcelaTaxaReduzida = Math.min(lucro, limiteTaxaReduzida);
+  const parcelaTaxaGeral = Math.max(0, lucro - limiteTaxaReduzida);
+  return {
+    imposto: parcelaTaxaReduzida * taxaPrimeiros50k + parcelaTaxaGeral * taxaGeral,
+    parcelaTaxaReduzida,
+    parcelaTaxaGeral,
+    taxaReduzida: taxaPrimeiros50k,
+    taxaGeral,
+  };
+}
+
 export function calcIRC(lucroTributavel: number, taxa: number): number {
-  return Math.max(0, lucroTributavel) * taxa;
+  return calcIRCComRegime(lucroTributavel, taxa, "geral").imposto;
 }
 
 // --- Derrama municipal (independente da derrama estadual e da taxa-base de IRC) ---

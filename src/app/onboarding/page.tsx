@@ -9,7 +9,7 @@ import { PrimaryButton } from "@/components/ui";
 const TIPOS_EMPRESA = ["Mediação imobiliária", "Promoção imobiliária", "Consultoria", "Outro"];
 const OBJETIVOS = [
   { id: "terreno", label: "Analisar um terreno" },
-  { id: "predio", label: "Analisar um prédio aprovado" },
+  { id: "predio", label: "Analisar um terreno com projeto aprovado" },
   { id: "remodelacao", label: "Analisar uma remodelação" },
   { id: "demo", label: "Explorar um projeto demonstrativo" },
 ];
@@ -54,13 +54,13 @@ export default function OnboardingPage() {
     }
 
     const tipoMap: Record<string, string> = {
-      terreno: "Terreno para construir",
-      predio: "Prédio aprovado",
-      remodelacao: "Apartamento para remodelar",
+      terreno: "Terreno para Construção",
+      predio: "Terreno com Projeto Aprovado",
+      remodelacao: "Apartamento para Remodelar",
     };
     const { data: novoProjeto } = await supabase
       .from("projects")
-      .insert({ user_id: user.id, tipo_projeto: tipoMap[objetivo] ?? "Terreno para construir" })
+      .insert({ user_id: user.id, tipo_projeto: tipoMap[objetivo] ?? "Terreno para Construção" })
       .select()
       .single();
 

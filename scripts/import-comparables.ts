@@ -2,20 +2,26 @@
  * Importador de comparáveis de mercado — Landwise
  *
  * Uso:
- *   npx tsx scripts/import-comparables.ts <caminho-para-o-ficheiro.xlsx>
+ *   npx tsx scripts/import-comparables.ts <caminho-para-o-ficheiro.xlsx> [--substituir]
  *
  * Requer, apenas no ambiente do script (nunca no browser):
  *   SUPABASE_URL=...
  *   SUPABASE_SERVICE_ROLE_KEY=...
  *
  * O que faz:
- *   1. Lê a folha "Base Anúncios" do Excel fornecido.
+ *   1. Lê a folha "Base Deduplicada" (formato consolidado atual) ou, em
+ *      alternativa, "Base Anúncios" (formato mais antigo) do Excel fornecido.
  *   2. Normaliza cada linha para o esquema de `market_comparables`.
  *   3. Calcula preço/m² sempre a partir de price/área (nunca confia em
  *      fórmulas do Excel).
- *   4. Faz upsert por (source, external_id) — correr o mesmo ficheiro duas
- *      vezes NÃO duplica linhas, atualiza-as.
- *   5. Regista um lote em `comparable_import_batches` com o relatório.
+ *   4. Com --substituir: desativa (active=false) todos os comparáveis
+ *      atualmente ativos antes de importar — nunca apaga nada, só deixam de
+ *      contar para novas sugestões de preço. Sem esta flag, o ficheiro
+ *      importado só acrescenta/atualiza, sem tocar no que já lá está.
+ *   5. Faz upsert por (source, external_id) — correr o mesmo ficheiro duas
+ *      vezes NÃO duplica linhas, atualiza-as (e reativa-as, se tinham sido
+ *      desativadas por um --substituir anterior).
+ *   6. Regista um lote em `comparable_import_batches` com o relatório.
  *
  * Este script usa a service role key — corre SÓ localmente/CI, nunca no
  * browser nem em código "use client".
@@ -24,7 +30,7 @@
 import { createClient } from "@supabase/supabase-js";
 import ExcelJS from "exceljs";
 
-const SHEET_NAME = "Base Anúncios";
+const NOMES_FOLHA_POSSIVEIS = ["Base Deduplicada", "Base Anúncios"];
 
 type LinhaNormalizada = {
   source: string;
@@ -59,6 +65,7 @@ type LinhaNormalizada = {
   collection_date: string | null;
   is_probable_duplicate: boolean;
   duplicate_group_id: string | null;
+  active: boolean; // sempre true nesta importação — a desativação do lote anterior acontece à parte, nunca aqui
   raw_data: Record<string, unknown>;
 };
 
@@ -85,7 +92,11 @@ function normalizarLinha(row: Record<string, unknown>): LinhaNormalizada {
   const tipoArea = row["Tipo de área"] as string | undefined;
 
   const areaBasis: LinhaNormalizada["area_basis"] =
-    tipoArea === "Bruta" ? "area_bruta" : tipoArea === "Área indicada pelo portal" ? "area_total" : "nao_identificada";
+    tipoArea === "Bruta" || tipoArea === "Área bruta indicada pelo portal"
+      ? "area_bruta"
+      : tipoArea === "Área indicada pelo portal"
+        ? "area_total"
+        : "nao_identificada";
   const grossArea = areaBasis === "area_bruta" || areaBasis === "area_total" ? area : null;
   const precoPorM2 = preco && area ? Number((preco / area).toFixed(2)) : null;
 
@@ -123,16 +134,22 @@ function normalizarLinha(row: Record<string, unknown>): LinhaNormalizada {
     floor: (row["Piso"] as string) ?? null,
     listing_date: null, // a fonte só regista a data de recolha, não a data de publicação
     collection_date: row["Data recolha"] ? new Date(row["Data recolha"] as string).toISOString().slice(0, 10) : null,
-    is_probable_duplicate: row["Status duplicado"] !== "Único na amostra",
+    is_probable_duplicate: !["Único na amostra", "Único na base consolidada"].includes(String(row["Status duplicado"] ?? "")),
     duplicate_group_id: (row["Grupo duplicado"] as string) ?? null,
+    active: true, // reativa explicitamente — importante quando um comparável já tinha sido desativado num lote anterior
     raw_data: row,
   };
 }
 
 async function main() {
   const caminho = process.argv[2];
+  const substituirLoteAnterior = process.argv.includes("--substituir");
   if (!caminho) {
-    console.error("Uso: npx tsx scripts/import-comparables.ts <ficheiro.xlsx>");
+    console.error("Uso: npx tsx scripts/import-comparables.ts <ficheiro.xlsx> [--substituir]");
+    console.error("  --substituir: desativa (active=false) todos os comparáveis atualmente ativos antes de");
+    console.error("  importar este ficheiro. Nunca apaga nada — os registos antigos ficam preservados,");
+    console.error("  só deixam de contar para novas sugestões de preço. Os que também estiverem neste");
+    console.error("  ficheiro voltam a ficar ativos automaticamente pelo upsert.");
     process.exit(1);
   }
 
@@ -147,11 +164,20 @@ async function main() {
 
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(caminho);
-  const sheet = workbook.getWorksheet(SHEET_NAME);
+  let sheet;
+  let nomeFolhaEncontrada: string | null = null;
+  for (const nome of NOMES_FOLHA_POSSIVEIS) {
+    sheet = workbook.getWorksheet(nome);
+    if (sheet) {
+      nomeFolhaEncontrada = nome;
+      break;
+    }
+  }
   if (!sheet) {
-    console.error(`A folha "${SHEET_NAME}" não foi encontrada em ${caminho}.`);
+    console.error(`Nenhuma das folhas esperadas (${NOMES_FOLHA_POSSIVEIS.join(", ")}) foi encontrada em ${caminho}.`);
     process.exit(1);
   }
+  console.log(`A ler a folha "${nomeFolhaEncontrada}"...`);
 
   const cabecalho: string[] = [];
   sheet.getRow(1).eachCell({ includeEmpty: true }, (cell, colNumber) => {
@@ -214,6 +240,24 @@ async function main() {
   if (erroLote || !lote) {
     console.error("Falha ao criar o lote de importação:", erroLote);
     process.exit(1);
+  }
+
+  if (substituirLoteAnterior) {
+    const { count: totalAntesDeDesativar } = await supabase
+      .from("market_comparables")
+      .select("id", { count: "exact", head: true })
+      .eq("active", true);
+    const { error: erroDesativar, count: desativados } = await supabase
+      .from("market_comparables")
+      .update({ active: false }, { count: "exact" })
+      .eq("active", true);
+    if (erroDesativar) {
+      console.error("Falha ao desativar o lote anterior — a importação NÃO continua, para nunca deixar dados a meio:", erroDesativar.message);
+      process.exit(1);
+    }
+    console.log(
+      `--substituir: ${desativados ?? 0} comparáveis anteriormente ativos (de ${totalAntesDeDesativar ?? 0}) foram desativados (active=false). Nenhum foi apagado — os que também existirem neste ficheiro voltam a ficar ativos a seguir.`
+    );
   }
 
   const registosParaUpsert = normalizadas

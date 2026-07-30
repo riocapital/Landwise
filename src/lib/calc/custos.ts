@@ -10,6 +10,7 @@ export type GrupoCusto = "aquisicao" | "hard_cost" | "soft_cost" | "outro";
 
 export type TipoCalculoCusto =
   | "valor_fixo"
+  | "valor_mensal"
   | "percentagem_aquisicao"
   | "percentagem_hard_costs"
   | "percentagem_capex"
@@ -69,6 +70,8 @@ function valorDireto(linha: LinhaCusto, contexto: ContextoCusto): number | null 
   switch (linha.tipoCalculo) {
     case "valor_fixo":
       return linha.valorInput;
+    case "valor_mensal":
+      return linha.valorInput * Math.max(0, linha.duracaoMeses ?? 0);
     case "percentagem_aquisicao":
       return linha.valorInput * contexto.valorAquisicao;
     case "eur_m2_abc_acima":
@@ -91,7 +94,7 @@ function valorDireto(linha: LinhaCusto, contexto: ContextoCusto): number | null 
 /**
  * Resolve o valor absoluto (€) de cada linha de custo, em estágios:
  *
- * A) Bases diretas: valor_fixo, percentagem_aquisicao, eur_m2_abc_acima, eur_m2_abc_abaixo, eur_m2_abd, eur_m2_abc_principal, eur_m2_abc_total, eur_unidade.
+ * A) Bases diretas: valor_fixo, valor_mensal, percentagem_aquisicao, eur_m2_abc_acima, eur_m2_abc_abaixo, eur_m2_abd, eur_m2_abc_principal, eur_m2_abc_total, eur_unidade.
  * B) percentagem_hard_costs: soma dos hard costs já resolvidos no estágio A (nunca inclui a própria linha).
  * C) percentagem_capex / percentagem_custo_total: soma de aquisição + hard costs (A+B) + soft costs
  *    já resolvidos nos estágios A/B (exclui a própria linha e outras ainda não resolvidas nesta fase).

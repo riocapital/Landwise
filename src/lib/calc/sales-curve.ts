@@ -26,8 +26,10 @@ export function gerarAgendaAbsorcao(
   dataLancamentoComercial: string
 ): MesAbsorcao[] {
   if (unidadesPorMes <= 0 || totalUnidades <= 0) return [];
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataLancamentoComercial)) return [];
 
   const [ano, mes] = dataLancamentoComercial.split("-").map(Number);
+  if (!ano || !mes || mes < 1 || mes > 12) return [];
   const resultado: MesAbsorcao[] = [];
   let vendidoAcumulado = 0;
   let mesIndex = 0;

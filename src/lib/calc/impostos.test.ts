@@ -8,6 +8,7 @@ import {
   resolverTaxaIRC,
   calcLucroTributavel,
   calcIRC,
+  calcIRCComRegime,
   calcDerramaMunicipal,
   calcDerramaEstadual,
   calcImpostosAquisicao,
@@ -86,6 +87,21 @@ describe("Lucro tributável e IRC", () => {
 
   it("IRC = lucro tributável × taxa", () => {
     expect(calcIRC(100_000, 0.19)).toBe(19_000);
+  });
+});
+
+describe("IRC por regime — correções 29/07", () => {
+  it("PME/Small Mid Cap aplica 15% apenas aos primeiros 50 mil e 19% ao excedente", () => {
+    const r = calcIRCComRegime(55_000, 0.19, "pme_small_mid_cap");
+    expect(r.parcelaTaxaReduzida).toBe(50_000);
+    expect(r.parcelaTaxaGeral).toBe(5_000);
+    expect(r.imposto).toBeCloseTo(50_000 * 0.15 + 5_000 * 0.19, 6);
+  });
+
+  it("regime geral aplica a taxa geral a todo o lucro tributável", () => {
+    const r = calcIRCComRegime(55_000, 0.19, "geral");
+    expect(r.imposto).toBeCloseTo(55_000 * 0.19, 6);
+    expect(r.parcelaTaxaReduzida).toBe(0);
   });
 });
 

@@ -17,11 +17,13 @@ export type ParametrosFinanciamento = {
   euriborFonte: string | null; // nome da fonte, null quando manual
   spread: number; // decimal, ex. 0.02
   structuringFeePct: number; // % do limite, decimal
-  setupCosts: number; // valor fixo €
+  setupCosts: number; // valor fixo legado €
+  setupCostsPct?: number; // % do limite/contratado, decimal — premissa inicial 0,30%
   impostoSeloEmprestimoPct: number; // decimal, sobre o valor do limite/contratado
   impostoSeloJurosPct: number; // decimal, sobre juros de cada mês
   limiteCredito: number | null; // null = sem limite explícito
   saldoMinimoCaixa: number;
+  saldoMinimoMesesReserva?: number; // meses de custos futuros cobertos pela reserva automática
   metodoTaxaMensal: "nominal_anual_div_12" | "mensal_equivalente";
 
   // Cash sweep (secção 24 do plano)
@@ -106,11 +108,13 @@ const PARAMETROS_ZERO: Pick<
   | "spread"
   | "structuringFeePct"
   | "setupCosts"
+  | "setupCostsPct"
   | "impostoSeloEmprestimoPct"
   | "impostoSeloJurosPct"
   | "cashSweepAtivo"
   | "cashSweepPctCaixaLivre"
   | "cashSweepMesesCustosFuturos"
+  | "saldoMinimoMesesReserva"
 > = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
@@ -121,11 +125,13 @@ const PARAMETROS_ZERO: Pick<
   spread: 0,
   structuringFeePct: 0,
   setupCosts: 0,
+  setupCostsPct: 0,
   impostoSeloEmprestimoPct: 0,
   impostoSeloJurosPct: 0,
   cashSweepAtivo: false,
   cashSweepPctCaixaLivre: 0,
   cashSweepMesesCustosFuturos: 0,
+  saldoMinimoMesesReserva: 0,
 };
 
 /** Aplica a regra "financiamento bancário = Não zera e desativa todos os campos bancários" (secção 7). */
@@ -192,7 +198,7 @@ export function simularFinanciamento(
     let impostoSeloEmprestimo = 0;
     if (!feesSetupLancados && drawdown > 0) {
       const baseFee = parametros.limiteCredito ?? drawdown;
-      fees = parametros.setupCosts + baseFee * parametros.structuringFeePct;
+      fees = parametros.setupCosts + baseFee * (parametros.structuringFeePct + (parametros.setupCostsPct ?? 0));
       impostoSeloEmprestimo = baseFee * parametros.impostoSeloEmprestimoPct;
       feesSetupLancados = true;
     }
