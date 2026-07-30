@@ -21,23 +21,42 @@ describe("simularEquity — capital calls cobrem exatamente o défice de caixa",
 });
 
 describe("Devolução de capital", () => {
-  it("devolve capital aos investidores quando há caixa livre a mais, até ao limite do que foi aportado", () => {
+  it("a meio do projeto, devolve capital aos investidores até ao limite do que foi aportado — o resto fica em reserva, nunca distribuído antes de tempo", () => {
     const necessidades: NecessidadeMensalEquity[] = [
       { mes: "2026-01", saldoCaixaAposFinanciamento: -100_000, recebimentosClientes: 0 }, // capital call 100k
-      { mes: "2026-02", saldoCaixaAposFinanciamento: 150_000, recebimentosClientes: 150_000 }, // devolve até 100k, resto fica em caixa livre
+      { mes: "2026-02", saldoCaixaAposFinanciamento: 150_000, recebimentosClientes: 150_000 }, // devolve até 100k, resto fica em caixa livre (não é o último mês)
+      { mes: "2026-03", saldoCaixaAposFinanciamento: 0, recebimentosClientes: 0 }, // mês neutro, só para 2026-02 não ser o último mês do projeto
     ];
     const linhas = simularEquity(necessidades);
     expect(linhas[1].capitalDevolvido).toBe(100_000);
     expect(linhas[1].netEquityOutstanding).toBe(0);
   });
 
-  it("nunca devolve mais do que o net equity outstanding em risco", () => {
+  it("a meio do projeto, nunca devolve mais do que o net equity outstanding em risco — o excedente fica retido para o fim", () => {
     const necessidades: NecessidadeMensalEquity[] = [
       { mes: "2026-01", saldoCaixaAposFinanciamento: -50_000, recebimentosClientes: 0 },
       { mes: "2026-02", saldoCaixaAposFinanciamento: 500_000, recebimentosClientes: 500_000 },
+      { mes: "2026-03", saldoCaixaAposFinanciamento: 0, recebimentosClientes: 0 }, // mês neutro, só para 2026-02 não ser o último mês do projeto
     ];
     const linhas = simularEquity(necessidades);
-    expect(linhas[1].capitalDevolvido).toBe(50_000); // nunca mais do que os 50k aportados
+    expect(linhas[1].capitalDevolvido).toBe(50_000); // nunca mais do que os 50k aportados, a meio do projeto
+    expect(linhas[2].capitalDevolvido).toBe(450_000); // o excedente (lucro) só sai no último mês
+  });
+
+  it("no ÚLTIMO mês do projeto, distribui TUDO o que sobra — capital + lucro — nunca deixa lucro por distribuir sem dono (bug real: MOIC/IRR do equity ficavam sempre em 1,0x/0% porque o lucro nunca saía do caixaLivre interno)", () => {
+    const necessidades: NecessidadeMensalEquity[] = [
+      { mes: "2026-01", saldoCaixaAposFinanciamento: -100_000, recebimentosClientes: 0 }, // capital call 100k
+      { mes: "2026-02", saldoCaixaAposFinanciamento: 250_000, recebimentosClientes: 250_000 }, // último mês: devolve 100k de capital + 150k de lucro
+    ];
+    const linhas = simularEquity(necessidades);
+    expect(linhas[1].capitalDevolvido).toBe(250_000); // capital (100k) + lucro (150k), tudo distribuído
+    expect(linhas[1].netEquityOutstanding).toBe(-150_000); // negativo = mais devolvido do que investido (lucro líquido)
+
+    const resultados = calcResultadosEquity(linhas);
+    expect(resultados.equityContributed).toBe(100_000);
+    expect(resultados.capitalDevolvidoTotal).toBe(250_000);
+    expect(resultados.lucroEquity).toBe(150_000); // 250k distribuídos − 100k investidos
+    expect(resultados.moic).toBeCloseTo(2.5, 6); // 250k / 100k — nunca 1,0x quando há lucro real
   });
 });
 

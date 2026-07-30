@@ -8,6 +8,8 @@
 // mensal real, nunca assumido como "custos até o início das vendas" (pode
 // ocorrer antes, durante ou depois das vendas, ou perto da conclusão).
 
+import { calcXIRR, type FluxoDatado } from "./xirr";
+
 export type NecessidadeMensalEquity = {
   mes: string;
   saldoCaixaAposFinanciamento: number; // saldo do mês depois de aplicado o drawdown do motor de financiamento (pode continuar negativo)
@@ -36,7 +38,8 @@ export function simularEquity(necessidades: NecessidadeMensalEquity[]): LinhaEqu
   let devolvidoAcumulado = 0;
   let caixaLivre = 0; // caixa acumulado disponível para devolver capital, fora da conta do défice mensal
 
-  for (const n of necessidades) {
+  for (let i = 0; i < necessidades.length; i++) {
+    const n = necessidades[i];
     let capitalCall = 0;
     let capitalDevolvido = 0;
 
@@ -46,12 +49,27 @@ export function simularEquity(necessidades: NecessidadeMensalEquity[]): LinhaEqu
       capitalCall = -saldoComCaixaLivre;
       caixaLivre = 0;
     } else {
-      // Sobra de caixa: devolve capital aos investidores até ao limite do
-      // que ainda está por devolver (net outstanding), o resto acumula
-      // como caixa livre do projeto (ex.: para o lucro do promotor).
-      const aindaPorDevolver = contribuidoAcumulado - devolvidoAcumulado;
-      capitalDevolvido = Math.min(saldoComCaixaLivre, Math.max(0, aindaPorDevolver));
-      caixaLivre = saldoComCaixaLivre - capitalDevolvido;
+      const ehUltimoMes = i === necessidades.length - 1;
+      if (ehUltimoMes) {
+        // Último mês: distribui TUDO o que sobra — capital + lucro. Antes
+        // deste ponto, correto reter (a "caixa livre" serve de reserva
+        // contra défices futuros); no último mês já não há "futuro" a
+        // reservar, por isso reter aqui era exatamente o bug que fazia o
+        // lucro do promotor desaparecer silenciosamente do MOIC/IRR do
+        // equity — nunca é distribuído, nunca é apagado, mas também nunca
+        // chegava a `capitalDevolvido`. Corrigido: sem lucro por distribuir
+        // sem dono no fim do projeto.
+        capitalDevolvido = saldoComCaixaLivre;
+        caixaLivre = 0;
+      } else {
+        // Sobra de caixa: devolve capital aos investidores até ao limite do
+        // que ainda está por devolver (net outstanding), o resto acumula
+        // como caixa livre do projeto (reserva, não é lucro perdido — só
+        // ainda não distribuído).
+        const aindaPorDevolver = contribuidoAcumulado - devolvidoAcumulado;
+        capitalDevolvido = Math.min(saldoComCaixaLivre, Math.max(0, aindaPorDevolver));
+        caixaLivre = saldoComCaixaLivre - capitalDevolvido;
+      }
     }
 
     contribuidoAcumulado += capitalCall;
@@ -74,10 +92,18 @@ export type ResultadosEquity = {
   equityContributed: number;
   peakCashExposure: number;
   mesPico: string | null;
-  capitalDevolvidoTotal: number;
+  capitalDevolvidoTotal: number; // capital + lucro efetivamente distribuído — nunca só o capital (ver simularEquity, último mês)
   equityAindaEmRisco: number;
   dataPrimeiroRetorno: string | null;
   dataRecuperacaoIntegral: string | null;
+
+  // Retorno do equity (nunca confundir com o resultado do projeto — secção
+  // 2/9 do plano). Calculados exclusivamente a partir dos fluxos do
+  // investidor (capital calls negativos, distribuições positivas) — nunca
+  // a partir de drawdowns, receita de vendas ou saldo de caixa do projeto.
+  lucroEquity: number; // distribuições totais − equity investido
+  moic: number | null; // distribuições totais ÷ equity investido
+  irr: number | null; // XIRR sobre os fluxos datados do investidor
 };
 
 export function calcResultadosEquity(linhas: LinhaEquityMensal[]): ResultadosEquity {
@@ -96,6 +122,10 @@ export function calcResultadosEquity(linhas: LinhaEquityMensal[]): ResultadosEqu
   const primeiroRetorno = linhas.find((l) => l.capitalDevolvido > 0);
   const recuperacaoIntegral = linhas.find((l) => l.netEquityOutstanding <= 0 && l.equityContribuidoAcumulado > 0);
 
+  const fluxosInvestidor: FluxoDatado[] = linhas
+    .filter((l) => l.capitalCall > 0.005 || l.capitalDevolvido > 0.005)
+    .map((l) => ({ data: `${l.mes}-01`, valor: -l.capitalCall + l.capitalDevolvido }));
+
   return {
     equityContributed,
     peakCashExposure,
@@ -104,5 +134,8 @@ export function calcResultadosEquity(linhas: LinhaEquityMensal[]): ResultadosEqu
     equityAindaEmRisco: linhas.length > 0 ? linhas[linhas.length - 1].netEquityOutstanding : 0,
     dataPrimeiroRetorno: primeiroRetorno?.mes ?? null,
     dataRecuperacaoIntegral: recuperacaoIntegral?.mes ?? null,
+    lucroEquity: capitalDevolvidoTotal - equityContributed,
+    moic: equityContributed > 0 ? capitalDevolvidoTotal / equityContributed : null,
+    irr: calcXIRR(fluxosInvestidor),
   };
 }

@@ -236,7 +236,11 @@ describe("Golden Test — projeto de referência completo (secções 46/47/48 do
     );
     const celulaBase = matriz.celulas.flat().find((c) => c.variacaoLinha === 0 && c.variacaoColuna === 0);
     expect(celulaBase).toBeDefined();
-    expect(celulaBase!.valor).toBeCloseTo(resultado.margem, 6);
+    // "margem" (via extrairIndicador) é sempre a margem do PROJETO
+    // (margemProjeto) — nunca a antiga resultado.margem (= lucroUnlevered/gdv,
+    // que ignora custos financeiros e não reconcilia com "Lucro do projeto"
+    // mostrado no dashboard). Ver auditoria financeira desta entrega.
+    expect(celulaBase!.valor).toBeCloseTo(resultado.margemProjeto ?? 0, 6);
   });
 
   it("14) Métricas por m² e Estrutura sobre VGV reconciliam com o cash flow (mesmo custo total, mesmo VGV)", () => {

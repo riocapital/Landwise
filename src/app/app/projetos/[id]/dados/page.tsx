@@ -3166,19 +3166,22 @@ function StepCashFlowResultados({
             <ResumoItem label="Número de unidades" valor={String(resumoPrograma.totalUnidades)} />
             <ResumoItem label="Preço médio por m²" valor={`€${Math.round(resumoPrograma.precoMedioPonderadoM2).toLocaleString("pt-PT")}`} />
             <ResumoItem label="GDV" valor={`€${Math.round(resultado.gdv).toLocaleString("pt-PT")}`} />
-            <ResumoItem label="Custo total" valor={`€${Math.round(resultado.custoTotal).toLocaleString("pt-PT")}`} />
-            <ResumoItem label="Lucro" valor={`€${Math.round(resultado.lucroLevered).toLocaleString("pt-PT")}`} />
-            <ResumoItem label="Margem" valor={`${(resultado.margem * 100).toFixed(1)}%`} />
-            <ResumoItem label="Peak cash exposure" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Custo total do projeto" valor={`€${Math.round(resultado.custoTotal + resultado.custosFinanceiros).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Lucro do projeto" valor={`€${Math.round(resultado.lucroProjeto).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Margem do projeto" valor={resultado.margemProjeto !== null ? `${(resultado.margemProjeto * 100).toFixed(1)}%` : "—"} />
             <ResumoItem label="Peak debt" valor={`€${Math.round(resultado.financiamento.peakDebt).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Equity investido" valor={`€${Math.round(resultado.equity.equityContributed).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Distribuições" valor={`€${Math.round(resultado.equity.capitalDevolvidoTotal).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Lucro do equity" valor={`€${Math.round(resultado.equity.lucroEquity).toLocaleString("pt-PT")}`} />
+            <ResumoItem label="Peak equity exposure" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
             <ResumoItem
-              label="IRR (levered)"
+              label="IRR do equity"
               valor={(() => {
                 const irr = extrairIndicador(resultado, "irr_levered");
                 return irr !== null ? `${(irr * 100).toFixed(1)}%` : "Não calculável";
               })()}
             />
-            <ResumoItem label="MOIC" valor={`${(extrairIndicador(resultado, "moic") ?? 0).toFixed(2)}x`} />
+            <ResumoItem label="MOIC do equity" valor={`${(extrairIndicador(resultado, "moic") ?? 0).toFixed(2)}x`} />
           </div>
         </Card>
       )}
@@ -3330,8 +3333,8 @@ function StepCashFlowResultados({
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                 <ResumoItem label="Equity contributed" valor={`€${Math.round(resultado.equity.equityContributed).toLocaleString("pt-PT")}`} />
                 <ResumoItem label="Peak cash exposure" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
-                <ResumoItem label="Capital devolvido" valor={`€${Math.round(resultado.equity.capitalDevolvidoTotal).toLocaleString("pt-PT")}`} />
-                <ResumoItem label="Lucro" valor={`€${Math.round(resultado.lucroLevered).toLocaleString("pt-PT")}`} />
+                <ResumoItem label="Capital + lucro devolvido" valor={`€${Math.round(resultado.equity.capitalDevolvidoTotal).toLocaleString("pt-PT")}`} />
+                <ResumoItem label="Lucro do equity" valor={`€${Math.round(resultado.equity.lucroEquity).toLocaleString("pt-PT")}`} />
                 <ResumoItem label="MOIC" valor={`${(extrairIndicador(resultado, "moic") ?? 0).toFixed(2)}x`} />
                 <ResumoItem
                   label="IRR"

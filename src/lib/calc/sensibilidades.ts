@@ -115,36 +115,44 @@ export function calcularCenarioComVariacoes(
 /**
  * Extrai o indicador pedido de um resultado de cash flow já calculado.
  *
- * IRR/MOIC/ROE "do investidor"/"do promotor" — quando não há investidor
- * externo (caso mais comum, secção 9 do plano) — coincidem com o IRR/MOIC
- * levered do projeto, porque todo o lucro é do promotor. Com investidor
- * externo e waterfall ativa, estes indicadores exigem ligar
- * distribuirCascata (waterfall.ts) ao ledger mensal — integração ainda por
- * fazer; por agora o motor documenta esta limitação em vez de aproximar
- * silenciosamente.
+ * IMPORTANTE (auditoria financeira — nunca voltar a misturar isto):
+ * - "lucro"/"margem" são SEMPRE o resultado do PROJETO (lucroProjeto/
+ *   margemProjeto de cashflow.ts — receita menos custos económicos reais,
+ *   nunca inclui drawdowns, amortização de capital, equity calls ou
+ *   distribuições).
+ * - "irr_levered"/"moic"/"roe" são SEMPRE o retorno do EQUITY
+ *   (resultado.equity.irr/moic/lucroEquity de equity.ts — calculados só a
+ *   partir dos fluxos datados do investidor: capital calls negativos,
+ *   distribuições positivas). Nunca a partir do cash flow do projeto —
+ *   esse cash flow inclui receita de vendas e drawdowns que o investidor
+ *   nunca recebe diretamente, e produzia IRR/MOIC absurdamente inflados.
+ *
+ * Quando não há investidor externo (caso mais comum, secção 9 do plano),
+ * o equity aqui É o do promotor — todo o lucro do projeto que sobra depois
+ * de custos e dívida é dele. Com investidor externo e waterfall ativa,
+ * estes indicadores continuam a ser os do promotor (ver
+ * estrutura-capital.ts para os do investidor externo separadamente) —
+ * integração completa com a cascata ainda por fazer aqui.
  */
 export function extrairIndicador(resultado: ResultadoCashFlow, indicador: IndicadorSensibilidade): number | null {
   const datasBase = resultado.linhas.map((l) => `${l.mes}-01`);
   const fluxosUnlevered: FluxoDatado[] = resultado.linhas.map((l, i) => ({ data: datasBase[i], valor: l.cashFlowUnlevered }));
-  const fluxosLevered: FluxoDatado[] = resultado.linhas.map((l, i) => ({ data: datasBase[i], valor: l.cashFlowLevered }));
-
-  const equityContributed = resultado.equity.equityContributed;
 
   switch (indicador) {
     case "irr_unlevered":
       return calcXIRR(fluxosUnlevered);
     case "irr_levered":
-      return calcXIRR(fluxosLevered);
+      return resultado.equity.irr;
     case "moic":
-      return equityContributed > 0 ? (equityContributed + resultado.lucroLevered) / equityContributed : null;
+      return resultado.equity.moic;
     case "roe":
-      return equityContributed > 0 ? resultado.lucroLevered / equityContributed : null;
+      return resultado.equity.equityContributed > 0 ? resultado.equity.lucroEquity / resultado.equity.equityContributed : null;
     case "lucro":
-      return resultado.lucroLevered;
+      return resultado.lucroProjeto;
     case "margem":
-      return resultado.margem;
+      return resultado.margemProjeto;
     case "equity_contributed":
-      return equityContributed;
+      return resultado.equity.equityContributed;
     case "peak_cash_exposure":
       return resultado.equity.peakCashExposure;
     case "peak_debt":
@@ -202,9 +210,9 @@ export function calcularMatrizSensibilidade(
         variacaoColuna,
         valor,
         gdv: resultado.gdv,
-        custoTotal: resultado.custoTotal,
-        lucro: resultado.lucroLevered,
-        margem: resultado.margem,
+        custoTotal: resultado.custoTotal + resultado.custosFinanceiros,
+        lucro: resultado.lucroProjeto,
+        margem: resultado.margemProjeto ?? 0,
       };
     })
   );

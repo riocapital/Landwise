@@ -68,13 +68,13 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         <div>
           <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Recomendação</div>
           <div className="text-lg font-bold text-[#142B3A]">
-            {resultado.lucroLevered > 0 ? "Avançar com condições" : "Não avançar sem rever premissas"}
+            {resultado.lucroProjeto > 0 ? "Avançar com condições" : "Não avançar sem rever premissas"}
           </div>
         </div>
         <div className="text-right">
-          <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Margem</div>
-          <div className="text-lg font-bold" style={{ color: resultado.margem > 0 ? "#4E7A5C" : "#A13D2E" }}>
-            {fmtPct(resultado.margem)}
+          <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Margem do projeto</div>
+          <div className="text-lg font-bold" style={{ color: (resultado.margemProjeto ?? 0) > 0 ? "#4E7A5C" : "#A13D2E" }}>
+            {resultado.margemProjeto !== null ? fmtPct(resultado.margemProjeto) : "—"}
           </div>
         </div>
       </div>
@@ -98,17 +98,38 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         </div>
       )}
 
-      <SectionLabel>Indicadores de retorno</SectionLabel>
-      <div className="grid grid-cols-4 gap-4 mb-5">
+      <SectionLabel>Resultado do projeto</SectionLabel>
+      <p className="text-xs text-[#59636A] -mt-3 mb-3">
+        Receita menos custos económicos reais do projeto (inclui juros e fees de financiamento) — nunca inclui drawdowns, amortização de capital, equity
+        calls ou distribuições, que são movimentos de financiamento, não lucro.
+      </p>
+      <div className="grid grid-cols-5 gap-4 mb-8">
         <Kpi label="VGV Bruto" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
-        <Kpi label="Custo total" value={fmtEUR(resultado.custoTotal)} color="#B96343" />
-        <Kpi label="Lucro (levered)" value={fmtEUR(resultado.lucroLevered)} color="#4E7A5C" />
-        <Kpi label="Margem" value={fmtPct(resultado.margem)} color="#4E7A5C" />
+        <Kpi label="Receita operacional" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
+        <Kpi label="Custo total do projeto" value={fmtEUR(resultado.custoTotal + resultado.custosFinanceiros)} color="#B96343" />
+        <Kpi label="Lucro do projeto" value={fmtEUR(resultado.lucroProjeto)} color="#4E7A5C" />
+        <Kpi label="Margem do projeto" value={resultado.margemProjeto !== null ? fmtPct(resultado.margemProjeto) : "—"} color="#4E7A5C" />
+      </div>
+
+      <SectionLabel>Retorno do equity</SectionLabel>
+      <p className="text-xs text-[#59636A] -mt-3 mb-3">
+        Calculado exclusivamente a partir dos fluxos datados do investidor (capital calls negativos, distribuições positivas) — nunca a partir do cash
+        flow do projeto, que inclui receita de vendas e drawdowns que o investidor nunca recebe diretamente.
+      </p>
+      <div className="grid grid-cols-3 gap-4 mb-5">
+        <Kpi label="Equity investido" value={fmtEUR(resultado.equity.equityContributed)} color="#3E6E8E" />
+        <Kpi label="Distribuições" value={fmtEUR(resultado.equity.capitalDevolvidoTotal)} color="#3E6E8E" />
+        <Kpi label="Lucro do equity" value={fmtEUR(resultado.equity.lucroEquity)} color="#4E7A5C" />
       </div>
       <div className="grid grid-cols-3 gap-4 mb-8">
-        <Kpi label="IRR (levered)" value={fmtIndicador(irr, fmtPct)} color="#4E7A5C" />
+        <Kpi
+          label="Peak equity exposure"
+          value={fmtEUR(resultado.equity.peakCashExposure)}
+          sub={resultado.equity.mesPico ? `Mês ${resultado.equity.mesPico}` : undefined}
+          color="#C08A3E"
+        />
+        <Kpi label="IRR" value={fmtIndicador(irr, fmtPct)} color="#4E7A5C" />
         <Kpi label="MOIC" value={fmtIndicador(moic, (v) => v.toFixed(2) + "x")} color="#4E7A5C" />
-        <Kpi label="Lucro unlevered" value={fmtEUR(resultado.lucroUnlevered)} color="#4E7A5C" />
       </div>
 
       <SectionLabel>Áreas e programa</SectionLabel>
@@ -123,14 +144,8 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         <Kpi label="Área vendável equivalente" value={`${Math.round(r.resumoPrograma?.areaVendavelEquivalenteTotal ?? 0)} m²`} color="#3E6E8E" />
       </div>
 
-      <SectionLabel>Financiamento e exposição de capital</SectionLabel>
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <Kpi
-          label="Peak cash exposure"
-          value={fmtEUR(resultado.equity.peakCashExposure)}
-          sub={resultado.equity.mesPico ? `Mês ${resultado.equity.mesPico}` : undefined}
-          color="#C08A3E"
-        />
+      <SectionLabel>Financiamento</SectionLabel>
+      <div className="grid grid-cols-2 gap-4 mb-8">
         <Kpi
           label="Peak debt"
           value={fmtEUR(resultado.financiamento.peakDebt)}

@@ -202,3 +202,83 @@ describe("correções 29/07 — IVA e reserva mínima", () => {
     expect(reserva.mesFim).toBe("2026-03");
   });
 });
+
+describe("Auditoria financeira (inconsistência crítica reportada em preview) — teste de regressão obrigatório", () => {
+  // Reproduz exatamente o caso reportado: VGV €7.336.140, custo total
+  // €4.835.191, sem outras receitas. O dashboard mostrava "Lucro" =
+  // €4.988.212 (resultado.lucroLevered — inclui drawdown de dívida como se
+  // fosse lucro, sem a contrapartida da dívida por pagar) ao lado de
+  // "Margem" 34,1% (derivada de resultado.margem = lucroUnlevered/gdv) —
+  // dois campos com fontes diferentes, mostrados como se reconciliassem.
+  // Este teste falha se "Lucro do projeto" alguma vez voltar a divergir de
+  // (receita − custo total).
+  it("lucroProjeto = receita − custoTotal exatamente, mesmo com os valores reais reportados", () => {
+    const custoTotalAlvo = 4_835_191;
+    const receitaAlvo = 7_336_140;
+
+    const resultado = calcularCashFlow({
+      linhasCusto: [
+        custo({ grupo: "hard_cost", valorInput: custoTotalAlvo, taxaIva: null, dataInicial: "2026-01-01", dataFinal: "2026-01-31", duracaoMeses: 1 }),
+      ],
+      contextoCusto: contexto,
+      recebimentos: [receber("2026-06", receitaAlvo)],
+      parametrosFinanciamento: parametrosSemFinanciamento, // sem financiamento => custosFinanceiros = 0, custoTotal já inclui tudo
+      saldoMinimoCaixa: 0,
+    });
+
+    expect(resultado.gdv).toBeCloseTo(receitaAlvo, 2);
+    expect(resultado.custoTotal).toBeCloseTo(custoTotalAlvo, 2);
+    expect(resultado.custosFinanceiros).toBe(0);
+
+    // O número exato que o bug mostrava errado — nunca mais pode aparecer aqui.
+    expect(resultado.lucroProjeto).not.toBeCloseTo(4_988_212, 0);
+
+    expect(resultado.lucroProjeto).toBeCloseTo(2_500_949, 0);
+    expect(resultado.margemProjeto).not.toBeNull();
+    expect(resultado.margemProjeto!).toBeCloseTo(0.341, 3); // 34,1% após arredondamento visual
+
+    // Assertion estrutural (secção 6): lucro = receita − custo total, margem = lucro / receita — sempre, por construção.
+    expect(resultado.lucroProjeto).toBeCloseTo(resultado.gdv - resultado.custoTotal - resultado.custosFinanceiros, 6);
+    expect(resultado.margemProjeto!).toBeCloseTo(resultado.lucroProjeto / resultado.gdv, 10);
+  });
+
+  it("assertion: drawdowns e equity calls nunca aumentam o lucro do projeto; amortização e distribuições nunca o diminuem", () => {
+    // Mesmo caso, mas COM financiamento a cobrir parte dos custos — lucroProjeto
+    // tem de ficar EXATAMENTE igual (só muda quem financiou o custo, nunca o
+    // lucro económico do projeto), independentemente de quanta dívida foi
+    // levantada, amortizada, ou quanto equity foi chamado/devolvido.
+    const custoTotalAlvo = 1_000_000;
+    const receitaAlvo = 1_500_000;
+
+    const parametrosComFinanciamento: ParametrosFinanciamento = {
+      ...parametrosSemFinanciamento,
+      comFinanciamento: true,
+      percentagemHardCostsFinanciada: 0.8,
+      limiteCredito: 900_000,
+    };
+
+    const semFinanciamento = calcularCashFlow({
+      linhasCusto: [custo({ grupo: "hard_cost", valorInput: custoTotalAlvo, dataInicial: "2026-01-01", dataFinal: "2026-03-31", duracaoMeses: 3 })],
+      contextoCusto: contexto,
+      recebimentos: [receber("2026-06", receitaAlvo)],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+
+    const comFinanciamento = calcularCashFlow({
+      linhasCusto: [custo({ grupo: "hard_cost", valorInput: custoTotalAlvo, dataInicial: "2026-01-01", dataFinal: "2026-03-31", duracaoMeses: 3 })],
+      contextoCusto: contexto,
+      recebimentos: [receber("2026-06", receitaAlvo)],
+      parametrosFinanciamento: parametrosComFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+
+    // Houve mesmo dívida desta vez — confirma que o cenário não é trivial.
+    expect(comFinanciamento.financiamento.dividaTotalLevantada).toBeGreaterThan(0);
+
+    // custoTotal (operacional) é idêntico — financiar não muda o custo do projeto.
+    expect(comFinanciamento.custoTotal).toBeCloseTo(semFinanciamento.custoTotal, 6);
+    // lucroProjeto só pode diferir pelos juros/fees reais da dívida (custo económico), nunca pelo drawdown/amortização em si.
+    expect(comFinanciamento.lucroProjeto).toBeCloseTo(semFinanciamento.lucroProjeto - comFinanciamento.custosFinanceiros, 2);
+  });
+});

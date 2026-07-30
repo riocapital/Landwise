@@ -56,11 +56,30 @@ export type LinhaCashFlowMensal = {
 export type ResultadoCashFlow = {
   linhas: LinhaCashFlowMensal[];
   gdv: number;
-  custoTotal: number; // inclui comissão comercial (é um custo real do projeto)
+  custoTotal: number; // custos operacionais (inclui comissão comercial) — NUNCA inclui juros/fees/impostos de financiamento nem movimentos de dívida/equity
   comissaoComercialTotal: number;
+  custosFinanceiros: number; // juros + fees + imposto de selo do financiamento (soma de linhas[].jurosEFees) — custo económico real, nunca confundido com drawdown/amortização (que são movimentos de balanço, não de P&L)
+
+  // Resultado do projeto (secção 2/9 do plano) — nunca inclui drawdowns,
+  // amortização de capital, equity calls nem distribuições: esses são
+  // movimentos de financiamento/balanço, não lucro. lucroProjeto é o nível
+  // "core" (receita − custos operacionais − custos financeiros), calculado
+  // aqui porque é a única camada que já tem os dois primeiros; fees de
+  // promotor e impostos sobre o lucro são adicionados por cima, fora deste
+  // motor (project-loader.ts), porque dependem de dados que cashflow.ts não
+  // conhece — ver ResultadoProjetoCompleto.lucroProjetoTotal.
+  lucroProjeto: number; // gdv − custoTotal − custosFinanceiros
+  margemProjeto: number | null; // lucroProjeto ÷ gdv, null quando gdv = 0 (nunca 0% nem Infinity)
+
+  // Campos legados — cash flow mensal acumulado, incluindo drawdowns/
+  // amortização de capital. Úteis para mecânica de caixa mês a mês
+  // (equity calls, saldo de caixa), mas NUNCA usar como "o lucro do
+  // projeto": sobrestimam o lucro sempre que a dívida ainda não foi
+  // totalmente amortizada no fim do período modelado (o drawdown entra
+  // como se fosse lucro, sem a contrapartida da dívida por pagar).
   lucroUnlevered: number;
   lucroLevered: number;
-  margem: number; // lucro do projeto ÷ GDV
+  margem: number; // = lucroUnlevered ÷ gdv — mantido por compatibilidade, mas ver margemProjeto
   financiamento: ReturnType<typeof calcResultadosFinanciamento>;
   equity: ReturnType<typeof calcResultadosEquity>;
 };
@@ -177,6 +196,9 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       gdv: 0,
       custoTotal: 0,
       comissaoComercialTotal: 0,
+      custosFinanceiros: 0,
+      lucroProjeto: 0,
+      margemProjeto: null,
       lucroUnlevered: 0,
       lucroLevered: 0,
       margem: 0,
@@ -255,8 +277,10 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   const gdv = linhas.reduce((s, l) => s + l.receitaVendas, 0);
   const comissaoComercialTotal = linhas.reduce((s, l) => s + l.comissaoComercial, 0);
   const custoTotal = linhas.reduce((s, l) => s + l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos + l.ivaNaoRecuperavel + l.comissaoComercial, 0);
+  const custosFinanceiros = linhas.reduce((s, l) => s + l.jurosEFees, 0);
   const lucroUnlevered = linhas.reduce((s, l) => s + l.cashFlowUnlevered, 0);
   const lucroLevered = linhas.reduce((s, l) => s + l.cashFlowLevered, 0);
+  const lucroProjeto = gdv - custoTotal - custosFinanceiros;
 
   const custosElegiveisTotal = linhas.reduce((s, l) => s + l.custosAquisicao + l.hardCosts, 0);
   const resultadosFinanciamento = calcResultadosFinanciamento(linhasFinanciamento, gdv, custosElegiveisTotal);
@@ -267,6 +291,9 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
     gdv,
     custoTotal,
     comissaoComercialTotal,
+    custosFinanceiros,
+    lucroProjeto,
+    margemProjeto: gdv > 0 ? lucroProjeto / gdv : null,
     lucroUnlevered,
     lucroLevered,
     margem: gdv > 0 ? lucroUnlevered / gdv : 0,

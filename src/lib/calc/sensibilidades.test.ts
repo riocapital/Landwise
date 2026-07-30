@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   calcularMatrizSensibilidade,
   calcularCenarioComVariacoes,
+  extrairIndicador,
   VARIACOES_SENSIBILIDADE,
   type PremissasBaseSensibilidade,
 } from "./sensibilidades";
@@ -129,5 +130,40 @@ describe("calcularMatrizSensibilidade", () => {
     const margemPrecoBaixo = matriz.celulas[2][0].margem; // aquisição 0%, preço -10%
     const margemPrecoAlto = matriz.celulas[2][4].margem; // aquisição 0%, preço +10%
     expect(margemPrecoAlto).toBeGreaterThan(margemPrecoBaixo);
+  });
+});
+
+describe("Auditoria financeira — IRR/MOIC vêm sempre do equity, nunca do cash flow do projeto", () => {
+  // Bug real corrigido nesta entrega: "irr_levered"/"moic" usavam
+  // resultado.cashFlowLevered/lucroLevered (o cash flow do PROJETO, que
+  // inclui receita de vendas e drawdowns de dívida) em vez dos fluxos do
+  // INVESTIDOR (capital calls/distribuições). Nunca voltar a isto — este
+  // teste falha se "irr_levered"/"moic" deixarem de vir de resultado.equity.
+  const baseComFinanciamento: PremissasBaseSensibilidade = {
+    ...base,
+    parametrosFinanciamento: { ...parametrosSemFinanciamento, comFinanciamento: true, percentagemHardCostsFinanciada: 0.5, limiteCredito: 600_000 },
+  };
+
+  it("irr_levered é exatamente resultado.equity.irr — nunca um XIRR sobre o cash flow do projeto", () => {
+    const resultado = calcularCenarioComVariacoes(baseComFinanciamento, 0, 0, 0);
+    expect(extrairIndicador(resultado, "irr_levered")).toBe(resultado.equity.irr);
+  });
+
+  it("moic é exatamente resultado.equity.moic (distribuições ÷ equity investido) — nunca (equity + lucroLevered) ÷ equity", () => {
+    const resultado = calcularCenarioComVariacoes(baseComFinanciamento, 0, 0, 0);
+    expect(extrairIndicador(resultado, "moic")).toBe(resultado.equity.moic);
+    // A fórmula é sempre capitalDevolvidoTotal ÷ equityContributed — nunca
+    // deriva de lucroLevered (que sobrestima quando a dívida não é
+    // totalmente amortizada dentro do período modelado; ver reprodução com
+    // dados reais em cashflow.test.ts, "Auditoria financeira").
+    if (resultado.equity.equityContributed > 0) {
+      expect(resultado.equity.moic).toBeCloseTo(resultado.equity.capitalDevolvidoTotal / resultado.equity.equityContributed, 6);
+    }
+  });
+
+  it("lucro/margem (via extrairIndicador) são sempre os do PROJETO (lucroProjeto/margemProjeto), nunca lucroLevered/margem antigos", () => {
+    const resultado = calcularCenarioComVariacoes(baseComFinanciamento, 0, 0, 0);
+    expect(extrairIndicador(resultado, "lucro")).toBe(resultado.lucroProjeto);
+    expect(extrairIndicador(resultado, "margem")).toBe(resultado.margemProjeto);
   });
 });
