@@ -3631,7 +3631,10 @@ function StepCashFlowResultados({
       )}
 
       {subtab === "Sensibilidades" && prontoParaCalcular && (
-        <Card title="Sensibilidades" subtitle="Cada célula recalcula o modelo completo — a célula central (0%×0%) é sempre igual ao cenário-base.">
+        <Card
+          title="Sensibilidades"
+          subtitle="Cada célula recalcula o modelo completo — a célula central (0%×0%) é sempre igual ao cenário-base. Indicadores Lucro/Margem aqui são sem fees de promotor nem impostos (mesmo critério do Resumo) — para o lucro/margem completos, ver o dashboard do projeto."
+        >
           <Row>
             <Field label="Matriz">
               <select className="input-dark" value={sensMatriz} onChange={(e) => setSensMatriz(e.target.value as MatrizSensibilidade)}>
@@ -3680,7 +3683,7 @@ function StepCashFlowResultados({
       {subtab === "Cenários" && prontoParaCalcular && (
         <Card
           title="Cenários"
-          subtitle="Cada cenário recalcula o modelo completo com as suas próprias variações — o cenário-base nunca pode ser apagado ou duplicado por cima."
+          subtitle="Cada cenário recalcula o modelo completo com as suas próprias variações — o cenário-base nunca pode ser apagado ou duplicado por cima. Lucro/margem aqui são sem fees de promotor nem impostos (mesmo critério do Resumo) — para os valores completos, ver o dashboard do projeto."
         >
           <div className="flex gap-2 mb-4">
             <button onClick={onAdicionarCenarioConservador} className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343]">
@@ -3732,9 +3735,9 @@ function StepCashFlowResultados({
                   <th className="pb-2 pr-4">Cenário</th>
                   <th className="pb-2 pr-4">GDV</th>
                   <th className="pb-2 pr-4">Custo total</th>
-                  <th className="pb-2 pr-4">Lucro</th>
-                  <th className="pb-2 pr-4">Margem</th>
-                  <th className="pb-2 pr-4">IRR</th>
+                  <th className="pb-2 pr-4">Lucro*</th>
+                  <th className="pb-2 pr-4">Margem*</th>
+                  <th className="pb-2 pr-4">TIR (equity)</th>
                   <th className="pb-2 pr-4">MOIC</th>
                   <th className="pb-2 pr-4">Peak exposure</th>
                 </tr>
