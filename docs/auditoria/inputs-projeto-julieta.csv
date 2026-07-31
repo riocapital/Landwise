@@ -1,0 +1,78 @@
+Modulo,Campo,Valor,Unidade,Origem,Editavel_ou_Calculado,Persistido,Tabela_BD,Override,Observacao
+Identificacao,Nome do projeto,pendente login,texto,utilizador,editavel,sim,projects.nome,-,Campo corrigido nesta sessao (nao aparecia no step Identificar antes)
+Identificacao,Tipo do projeto,pendente login,enum,utilizador,editavel,sim,projects.inputs,-,
+Identificacao,Localizacao (rua/freguesia/concelho/distrito),pendente login,texto,utilizador ou codigo postal,editavel,sim,project_identificacao,manual,Auto-preenchido por codigo postal mas sempre editavel
+Identificacao,Codigo postal,pendente login,texto,utilizador,editavel,sim,project_identificacao,-,
+Identificacao,Area do lote,pendente login,m2,utilizador,editavel,sim,projects.inputs.areaLote,-,
+Identificacao,Possui garagem,pendente login,boolean,derivado,calculado,sim,project_identificacao.tem_garagem,-,"Corrigido nesta sessao: agora derivado de numEstacionamentos>0, sempre visivel"
+Identificacao,Numero de estacionamentos,pendente login,unidades,utilizador,editavel,sim,project_identificacao.num_estacionamentos,-,Campo sempre visivel desde esta sessao (antes exigia checkbox previo)
+Identificacao,Possui elevador,pendente login,boolean,derivado,calculado,sim,project_identificacao.tem_elevador,-,Derivado de numElevadores>0
+Identificacao,Numero de elevadores,pendente login,unidades,utilizador,editavel,sim,project_identificacao.num_elevadores,-,Campo sempre visivel desde esta sessao
+Identificacao,Caracteristicas (jardim/ocupado),pendente login,boolean,utilizador,editavel,sim,project_identificacao,-,
+Areas,ABC acima do solo,pendente login,m2,utilizador,editavel,sim,project_identificacao.abc_acima_solo,-,
+Areas,ABC abaixo do solo,pendente login,m2,utilizador,editavel,sim,project_identificacao.abc_abaixo_solo,-,
+Areas,ABD (area dependente),pendente login,m2,calculado,calculado,nao (derivado),-,-,calcAbdFisica/calcAbdVendavel por unidade
+Areas,ABP (area bruta privativa) estimada,pendente login,m2,utilizador,editavel,sim,project_identificacao.abp_estimada,-,Comparada com ABP programada (tipologias) para divergencia
+Areas,Area vendavel,pendente login,m2,calculado,calculado,nao (derivado),-,-,calcAreaVendavel = ABP + ABD vendavel
+Areas,Area vendavel equivalente,pendente login,m2,calculado,calculado,nao (derivado),-,-,resumoPrograma.areaVendavelEquivalenteTotal
+Areas,Eficiencia,pendente login,%,calculado,calculado,nao (derivado),-,-,ABP programada / ABC Total
+Areas,Numero de unidades,pendente login,unidades,calculado (soma tipologias),calculado,sim (via tipologias),project_typologies,-,
+Vendas,Tipologias (nome/quantidade/area),pendente login,-,utilizador,editavel,sim,project_typologies,-,
+Vendas,Preco por m2,pendente login,eur/m2,utilizador ou sugestao de mercado,editavel,sim,project_typologies.preco_base_m2,manual,Pode vir de comparaveis (StepPrograma)
+Vendas,Preco por unidade (preco final),pendente login,eur,calculado,calculado,nao (derivado por unidade),-,manual (overrideManualValor),calcPrecoFinalUnidade - hierarquia: base+ajuste+premio, ou override
+Vendas,Descontos/premios por unidade,pendente login,eur,utilizador,editavel,sim,project_units.premio_desconto_unidade,-,
+Vendas,VGV,pendente login,eur,calculado,calculado,nao (derivado),-,-,calcVgvBruto = soma precoFinal - fonte unica confirmada
+Vendas,Data de lancamento comercial,pendente login,data,utilizador,editavel,sim,project_sales_assumptions.data_lancamento_comercial,-,
+Vendas,Curva de vendas (meses para 1a venda / unidades por mes),pendente login,meses/un,utilizador,editavel,sim,project_typologies,-,por tipologia
+Vendas,Data do CPCV / data de venda,pendente login,data,utilizador ou curva,editavel,sim,project_units.data_venda,manual,Override manual sobrepoe a data calculada pela curva
+Vendas,Data da escritura (por unidade),pendente login,data,derivado (fim de obra + X meses) ou manual,editavel,sim,project_units.data_escritura,manual,"NOVO nesta sessao - antes existia no motor/BD mas sem UI"
+Vendas,Sinal (por unidade),pendente login,eur,utilizador,editavel,sim,project_units.sinal_valor,-,NOVO UI nesta sessao
+Vendas,Reforcos (por unidade),pendente login,eur,utilizador,editavel,sim,project_units.reforcos_valor,-,NOVO UI nesta sessao
+Vendas,Comissao (mediacao),pendente login,% e eur,utilizador,editavel,sim,project_sales_assumptions.comissao_mediacao_pct,-,Sempre saida separada - nunca desconta VGV diretamente
+Vendas,VGV bruto (dashboard),pendente login,eur,calculado (com cancelamentos),calculado,nao (derivado),-,-,"gdv = receita pos-cancelamentosEstimadosPct, ver nota P2 em 07-cash-flow.md"
+Vendas,VGV liquido,pendente login,eur,calculado,calculado,nao (derivado),-,-,vgvBruto - comissaoComercialTotal (so informativo, nunca subtraido 2x)
+Aquisicao,Preco de aquisicao,pendente login,eur,utilizador,editavel,sim,projects.inputs.custoTerreno,-,Fonte unica - nunca somado com custos de aquisicao
+Aquisicao,Sinal da aquisicao,pendente login,eur,calculado (% do preco),editavel (via %),sim,project_costs (linha "Sinal da aquisicao"),-,
+Aquisicao,Reforcos da aquisicao,pendente login,eur,utilizador,editavel,sim,project_costs (linhas "Reforco da aquisicao N"),-,
+Aquisicao,Escritura da aquisicao,pendente login,eur,calculado (residual),calculado,sim,project_costs (linha "Escritura da aquisicao"),-,preco - sinal - reforcos
+Aquisicao,Data da escritura de aquisicao,pendente login,data,utilizador,editavel,sim,project_costs,-,
+Aquisicao,Due diligence tecnica/legal,pendente login,eur,utilizador,editavel,sim,project_costs,-,
+Aquisicao,IMT,pendente login,eur,calculadora assistida ou manual,editavel,sim,project_costs (linha "IMT"),manual,"Calculadora unica, tabelas oficiais 2026 - ver 05-imt-e-aquisicao.md"
+Aquisicao,Imposto do selo,pendente login,eur,calculadora assistida (0.8%) ou manual,editavel,sim,project_costs (linha "Imposto do selo"),manual,
+Aquisicao,Notario,pendente login,eur,utilizador (default 1000),editavel,sim,project_costs,-,
+Aquisicao,Registos,pendente login,eur,utilizador (default 1000),editavel,sim,project_costs,-,Default corrigido nesta sessao
+Aquisicao,Comissao de aquisicao,pendente login,eur,utilizador,editavel,sim,project_costs,-,
+Aquisicao,Outros custos de aquisicao,pendente login,eur,utilizador,editavel,sim,project_costs,-,
+HardCosts,Nome/area-base/tipo de calculo/valor,pendente login,-,utilizador,editavel,sim,project_costs,-,
+HardCosts,IVA / IVA recuperavel,pendente login,%,utilizador,editavel,sim,project_costs.taxa_iva / iva_recuperavel_pct,-,
+HardCosts,Data inicial/duracao/perfil,pendente login,-,utilizador,editavel,sim,project_costs,-,Perfil de desembolso: linear/unico/custom
+HardCosts,Valor resolvido,pendente login,eur,calculado,calculado,nao (derivado),-,-,resolverCustos()
+SoftCosts,Arquitetura/Engenharia/Fiscalizacao/Licenciamento/Seguros/Marketing/Outros,pendente login,eur,utilizador,editavel,sim,project_costs,-,
+Financiamento,Valor maximo (limite de credito),pendente login,eur,utilizador,editavel,sim,project_financing.limite_credito,-,null = sem limite explicito
+Financiamento,LTC,pendente login,%,calculado,calculado,nao (derivado),-,-,peakDebt / custosElegiveisTotal
+Financiamento,LTV,pendente login,%,calculado,calculado,nao (derivado),-,-,peakDebt / gdv
+Financiamento,Euribor,pendente login,%,utilizador ou BCE,editavel,sim,project_financing.euribor,manual,Pode vir de fonte BCE (6M/12M) com rastreabilidade
+Financiamento,Spread,pendente login,%,utilizador,editavel,sim,project_financing.spread,-,
+Financiamento,Taxa total,pendente login,%,calculado,calculado,nao (derivado),-,-,euribor+spread
+Financiamento,Fees (structuring/setup),pendente login,eur e %,utilizador,editavel,sim,project_financing,-,
+Financiamento,Impostos (selo emprestimo/juros),pendente login,%,utilizador,editavel,sim,project_financing,-,
+Financiamento,Prazo,pendente login,anos,utilizador,editavel,sim,project_financing.prazo_anos,-,NOVO nesta sessao (migration 0021)
+Financiamento,Carencia,pendente login,anos (guardado em meses),utilizador,editavel,sim,project_financing.periodo_carencia_meses,-,"NOVO nesta sessao - ver BUG P0 em 03-motor-financeiro.md se desativada"
+Financiamento,Drawdowns,pendente login - VERIFICAR SALDO FINAL,eur/mes,calculado,calculado,nao (derivado),-,-,ver 06-financiamento.md
+Financiamento,Juros,pendente login,eur/mes,calculado,calculado,nao (derivado),-,-,"BUG P0 dupla contabilizacao - ver 03-motor-financeiro.md"
+Financiamento,Amortizacoes,pendente login - VERIFICAR SE ZERO SEMPRE,eur/mes,calculado,calculado,nao (derivado),-,-,"BUG P0 se carencia/sweep desativados - ver 03-motor-financeiro.md"
+Financiamento,Cash sweep,pendente login,boolean+%,utilizador,editavel,sim,project_financing.cash_sweep,-,
+Financiamento,Reserva minima,pendente login,eur,calculado (meses de custo),calculado,sim (parametro),project_financing.saldo_minimo_meses_reserva,-,"Nao respeitada pelas distribuicoes de equity - BUG P1"
+Financiamento,Saldo devedor (final),pendente login - CHAVE PARA O GAP,eur,calculado,calculado,nao (derivado),-,-,Ultima linha do cash flow mensal - decisivo para o Achado #1
+Resultados,Receita,pendente login,eur,calculado,calculado,nao (derivado),-,-,= VGV bruto (pos-cancelamentos)
+Resultados,Custo total,pendente login,eur,calculado,calculado,nao (derivado),-,-,ver 03-motor-financeiro.md para divergencias entre ecras
+Resultados,Lucro,pendente login,eur,calculado,calculado,nao (derivado),-,-,lucroProjetoTotal (dashboard) != lucroProjeto (sensibilidades/cenarios) - ver 03
+Resultados,Margem,pendente login,%,calculado,calculado,nao (derivado),-,-,mesma ressalva acima
+Resultados,Equity,pendente login,eur,calculado,calculado,nao (derivado),-,-,equityContributed
+Resultados,Divida,pendente login,eur,calculado,calculado,nao (derivado),-,-,peakDebt
+Resultados,Distribuicoes,pendente login - CONTAMINADAS,eur,calculado,calculado,nao (derivado),-,-,"BUG P0 - inclui divida nao amortizada, ver 03-motor-financeiro.md"
+Resultados,IRR,pendente login,%,calculado (XIRR),calculado,nao (derivado),-,-,"Matematicamente correto, economicamente contaminado - ver 02-projeto-julieta.md"
+Resultados,MOIC,pendente login,x,calculado,calculado,nao (derivado),-,-,mesma ressalva acima
+Resultados,Peak debt,pendente login,eur,calculado,calculado,nao (derivado),-,-,
+Resultados,Peak equity exposure,pendente login,eur,calculado,calculado,nao (derivado),-,-,
+Resultados,Saldo final,pendente login,eur,calculado,calculado,nao (derivado),-,-,saldoCaixaAcumulado - reconciliacao mensal confirmada correta
