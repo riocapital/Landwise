@@ -290,3 +290,50 @@ describe("Auditoria financeira (inconsistência crítica reportada em preview) �
     expect(comFinanciamento.lucroProjeto).toBeCloseTo(semFinanciamento.lucroProjeto - comFinanciamento.custosFinanceiros, 2);
   });
 });
+
+describe("irrProjeto — TIR desalavancada do projeto (secção 17/24 da auditoria, distinta da TIR do equity)", () => {
+  it("calcula a XIRR sobre o cash flow unlevered mensal, nunca sobre drawdowns/amortização/equity", () => {
+    const premissas: PremissasCashFlow = {
+      linhasCusto: [custo({ grupo: "hard_cost", tipoCalculo: "valor_fixo", valorInput: 1_000_000, dataInicial: "2026-01-01", duracaoMeses: 1, dataFinal: "2026-01-31" })],
+      contextoCusto: contexto,
+      recebimentos: [receber("2027-01", 1_500_000)],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    };
+    const resultado = calcularCashFlow(premissas);
+    expect(resultado.irrProjeto).not.toBeNull();
+    expect(resultado.irrProjeto).toBeGreaterThan(0); // projeto lucrativo, sem dívida — TIR positiva
+  });
+
+  it("é null quando não há linhas de cash flow", () => {
+    const resultado = calcularCashFlow({
+      linhasCusto: [],
+      contextoCusto: contexto,
+      recebimentos: [],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+    expect(resultado.irrProjeto).toBeNull();
+  });
+
+  it("nunca é igual à TIR do equity quando há financiamento — são grandezas diferentes (desalavancada vs. alavancada)", () => {
+    const linhasCusto = [custo({ grupo: "hard_cost", valorInput: 1_000_000, dataInicial: "2026-01-01", duracaoMeses: 1, dataFinal: "2026-01-31" })];
+    const parametrosComFinanciamento: ParametrosFinanciamento = {
+      ...parametrosSemFinanciamento,
+      comFinanciamento: true,
+      percentagemHardCostsFinanciada: 0.6,
+      euribor: 0.03,
+      spread: 0.02,
+    };
+    const resultado = calcularCashFlow({
+      linhasCusto,
+      contextoCusto: contexto,
+      recebimentos: [receber("2027-06", 1_600_000)],
+      parametrosFinanciamento: parametrosComFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+    expect(resultado.irrProjeto).not.toBeNull();
+    expect(resultado.equity.irr).not.toBeNull();
+    expect(resultado.irrProjeto).not.toBeCloseTo(resultado.equity.irr!, 4);
+  });
+});

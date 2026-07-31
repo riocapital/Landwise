@@ -16,6 +16,7 @@ import { gerarMesesEntre, distribuirValorPorPerfil } from "./perfil-desembolso";
 import { resolverCustos, type LinhaCusto, type ContextoCusto, type LinhaCustoResolvida } from "./custos";
 import { simularFinanciamento, calcResultadosFinanciamento, type ParametrosFinanciamento, type NecessidadeMensal } from "./financiamento";
 import { simularEquity, calcResultadosEquity, type NecessidadeMensalEquity } from "./equity";
+import { calcXIRR } from "./xirr";
 import type { LinhaRecebimentoMensal } from "./vendas";
 
 export type LinhaCashFlowMensal = {
@@ -70,6 +71,14 @@ export type ResultadoCashFlow = {
   // conhece — ver ResultadoProjetoCompleto.lucroProjetoTotal.
   lucroProjeto: number; // gdv − custoTotal − custosFinanceiros
   margemProjeto: number | null; // lucroProjeto ÷ gdv, null quando gdv = 0 (nunca 0% nem Infinity)
+
+  // TIR do projeto — desalavancada (secção 17/24 da auditoria de
+  // 2026-07-31): XIRR sobre o cash flow unlevered mensal (sem dívida nem
+  // equity). Fonte única, partilhada com o dashboard e as sensibilidades
+  // (sensibilidades.ts:"irr_unlevered" usa o mesmo cashFlowUnlevered) —
+  // nunca confundir com `equity.irr` (alavancada, só fluxos do investidor).
+  // Mostrar sempre as duas lado a lado, nunca "IRR" sozinho sem qualificação.
+  irrProjeto: number | null;
 
   // Campos legados — cash flow mensal acumulado, incluindo drawdowns/
   // amortização de capital. Úteis para mecânica de caixa mês a mês
@@ -199,6 +208,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       custosFinanceiros: 0,
       lucroProjeto: 0,
       margemProjeto: null,
+      irrProjeto: null,
       lucroUnlevered: 0,
       lucroLevered: 0,
       margem: 0,
@@ -281,6 +291,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   const lucroUnlevered = linhas.reduce((s, l) => s + l.cashFlowUnlevered, 0);
   const lucroLevered = linhas.reduce((s, l) => s + l.cashFlowLevered, 0);
   const lucroProjeto = gdv - custoTotal - custosFinanceiros;
+  const irrProjeto = calcXIRR(linhas.map((l) => ({ data: `${l.mes}-01`, valor: l.cashFlowUnlevered })));
 
   const custosElegiveisTotal = linhas.reduce((s, l) => s + l.custosAquisicao + l.hardCosts, 0);
   const resultadosFinanciamento = calcResultadosFinanciamento(linhasFinanciamento, gdv, custosElegiveisTotal);
@@ -294,6 +305,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
     custosFinanceiros,
     lucroProjeto,
     margemProjeto: gdv > 0 ? lucroProjeto / gdv : null,
+    irrProjeto,
     lucroUnlevered,
     lucroLevered,
     margem: gdv > 0 ? lucroUnlevered / gdv : 0,

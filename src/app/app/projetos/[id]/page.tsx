@@ -103,13 +103,20 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         Receita menos custos económicos reais do projeto (inclui juros e fees de financiamento) — nunca inclui drawdowns, amortização de capital, equity
         calls ou distribuições, que são movimentos de financiamento, não lucro.
       </p>
-      <div className="grid grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-3 gap-4 mb-4">
         <Kpi label="VGV Bruto" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
         <Kpi label="Receita operacional" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
         {/* gdv - lucroProjetoTotal, nunca resultado.custoTotal sozinho: esse não inclui fees nem impostos (calculados fora de cashflow.ts) — teria de reconciliar sempre com "Lucro do projeto" ao lado. */}
         <Kpi label="Custo total do projeto" value={fmtEUR(resultado.gdv - (r.lucroProjetoTotal ?? 0))} color="#B96343" />
+      </div>
+      <div className="grid grid-cols-3 gap-4 mb-8">
         <Kpi label="Lucro do projeto" value={fmtEUR(r.lucroProjetoTotal ?? 0)} color="#4E7A5C" />
         <Kpi label="Margem do projeto" value={r.margemProjetoTotal !== null ? fmtPct(r.margemProjetoTotal) : "—"} color="#4E7A5C" />
+        <Kpi
+          label="TIR do projeto (desalavancada)"
+          value={fmtIndicador(resultado.irrProjeto, fmtPct)}
+          color="#4E7A5C"
+        />
       </div>
 
       <SectionLabel>Retorno do equity</SectionLabel>
@@ -129,8 +136,8 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
           sub={resultado.equity.mesPico ? `Mês ${resultado.equity.mesPico}` : undefined}
           color="#C08A3E"
         />
-        <Kpi label="IRR" value={fmtIndicador(irr, fmtPct)} color="#4E7A5C" />
-        <Kpi label="MOIC" value={fmtIndicador(moic, (v) => v.toFixed(2) + "x")} color="#4E7A5C" />
+        <Kpi label="TIR do equity (alavancada)" value={fmtIndicador(irr, fmtPct)} color="#4E7A5C" />
+        <Kpi label="MOIC do equity" value={fmtIndicador(moic, (v) => v.toFixed(2) + "x")} color="#4E7A5C" />
       </div>
 
       {resultado.equity.fluxosInvestidor.length > 0 && (
