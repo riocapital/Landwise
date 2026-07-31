@@ -1889,20 +1889,10 @@ function StepPrograma({
                         <td colSpan={9} className="p-3">
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                             <Field label="Sinal">
-                              <input
-                                type="number"
-                                className="input-dark"
-                                value={u.sinalValor}
-                                onChange={(e) => onAtualizarUnidade(u.id, { sinalValor: Math.max(0, Number(e.target.value) || 0) })}
-                              />
+                              <NumeroInput value={u.sinalValor} onChange={(v) => onAtualizarUnidade(u.id, { sinalValor: v })} />
                             </Field>
                             <Field label="Reforços">
-                              <input
-                                type="number"
-                                className="input-dark"
-                                value={u.reforcosValor}
-                                onChange={(e) => onAtualizarUnidade(u.id, { reforcosValor: Math.max(0, Number(e.target.value) || 0) })}
-                              />
+                              <NumeroInput value={u.reforcosValor} onChange={(v) => onAtualizarUnidade(u.id, { reforcosValor: v })} />
                             </Field>
                             <Field label="Escritura (residual)">
                               <input className="input-dark" disabled value={`€${Math.round(valorEscritura).toLocaleString("pt-PT")}`} />
@@ -2191,11 +2181,9 @@ function StepAquisicaoCustos({
           <input className="input-dark" value={c.nome} disabled />
         </Field>
         <Field label="Valor (€)">
-          <input
-            type="number"
-            className="input-dark"
+          <NumeroInput
             value={c.valorInput}
-            onChange={(e) => onAtualizarCusto(c.id, { valorInput: Number(e.target.value), tipoCalculo: "valor_fixo", taxaIva: null, ivaRecuperavelPct: 0 })}
+            onChange={(v) => onAtualizarCusto(c.id, { valorInput: v, tipoCalculo: "valor_fixo", taxaIva: null, ivaRecuperavelPct: 0 })}
           />
         </Field>
         <Field label="Data">
@@ -2241,7 +2229,7 @@ function StepAquisicaoCustos({
             {c.tipoCalculo.startsWith("percentagem") ? (
               <PercentInput value={c.valorInput} onChange={(v) => onAtualizarCusto(c.id, { valorInput: v })} />
             ) : (
-              <input type="number" className="input-dark" value={c.valorInput} onChange={(e) => onAtualizarCusto(c.id, { valorInput: Number(e.target.value) })} />
+              <NumeroInput value={c.valorInput} onChange={(v) => onAtualizarCusto(c.id, { valorInput: v })} />
             )}
           </Field>
         </Row>
@@ -2279,7 +2267,7 @@ function StepAquisicaoCustos({
     <>
       <Card title="Aquisição" subtitle={`Subtotal: €${Math.round(resumo.totalAquisicao).toLocaleString("pt-PT")}. A aquisição é preenchida aqui e não na Identificação.`}>
         <Row>
-          <Field label="Preço total"><input type="number" className="input-dark" value={inputs.custoTerreno || 0} onChange={(e) => alterarInput("custoTerreno", Number(e.target.value))} /></Field>
+          <Field label="Preço total"><NumeroInput value={inputs.custoTerreno || 0} onChange={(v) => alterarInput("custoTerreno", v)} /></Field>
           <Field label="Sinal (%)"><PercentInput value={inputs.sinalAquisicaoPct} onChange={(v) => alterarInput("sinalAquisicaoPct", v)} /></Field>
           <Field label="Valor do sinal"><input className="input-dark" value={`€${Math.round(sinalValor).toLocaleString("pt-PT")}`} disabled /></Field>
           <Field label="Data do sinal"><input type="date" className="input-dark" value={inputs.dataSinalAquisicao} onChange={(e) => alterarInput("dataSinalAquisicao", e.target.value)} /></Field>
@@ -2296,8 +2284,7 @@ function StepAquisicaoCustos({
 
         {reforcos.map((c, idx) => (
           <div key={c.id} className="grid grid-cols-4 gap-3 border-t border-[#E3DACB] pt-3 mt-3">
-            <Field label={`Reforço ${idx + 1} (€)`}><input type="number" className="input-dark" value={c.valorInput} onChange={(e) => {
-              const novoValor = Number(e.target.value);
+            <Field label={`Reforço ${idx + 1} (€)`}><NumeroInput value={c.valorInput} onChange={(novoValor) => {
               onAtualizarCusto(c.id, { valorInput: novoValor });
               atualizarLinha("Escritura da aquisição", { valorInput: Math.max(0, (inputs.custoTerreno || 0) - sinalValor - (somaReforcos - c.valorInput + novoValor)) });
             }} /></Field>
@@ -2594,7 +2581,7 @@ function StepFinanciamento({
             <PercentInput value={financiamento.setupCostsPct ?? 0.003} onChange={(v) => updateFinanciamento("setupCostsPct", v)} disabled={desativado} />
           </Field>
           <Field label="Setup costs fixos adicionais (€)">
-            <input type="number" className="input-dark" value={financiamento.setupCosts} onChange={(e) => updateFinanciamento("setupCosts", Number(e.target.value))} disabled={desativado} />
+            <NumeroInput value={financiamento.setupCosts} onChange={(v) => updateFinanciamento("setupCosts", v)} disabled={desativado} />
           </Field>
         </Row>
         <Row>
@@ -3048,7 +3035,7 @@ function StepImpostos({
             )}
             <Row>
               <Field label="Ajustes fiscais estimados (€)"><input type="number" className="input-dark" value={impostos.ircAjustesFiscais} onChange={(e) => updateImpostos("ircAjustesFiscais", Number(e.target.value))} /></Field>
-              <Field label="Prejuízos fiscais acumulados (€)"><input type="number" className="input-dark" value={impostos.ircPrejuizosFiscaisAcumulados} onChange={(e) => updateImpostos("ircPrejuizosFiscaisAcumulados", Number(e.target.value))} /></Field>
+              <Field label="Prejuízos fiscais acumulados (€)"><NumeroInput value={impostos.ircPrejuizosFiscaisAcumulados} onChange={(v) => updateImpostos("ircPrejuizosFiscaisAcumulados", v)} /></Field>
               <Field label="Derrama municipal (%)"><PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} /></Field>
             </Row>
             <p className="text-xs text-[#59636A] mt-2">Derrama municipal estimada: €{Math.round(derramaMunicipal).toLocaleString("pt-PT")} · Derrama estadual progressiva estimada: €{Math.round(derramaEstadual).toLocaleString("pt-PT")}.</p>
@@ -3879,6 +3866,48 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </div>
   );
 }
+// Campo de valor em euros com separador de milhares (ex.: "1.234.567") —
+// mostra os dígitos "em bruto" enquanto o campo está focado (mais fácil de
+// editar) e formata com separadores assim que perde o foco. Evita o
+// problema clássico de reformatar a cada tecla (o cursor salta de posição).
+function NumeroInput({
+  value,
+  onChange,
+  disabled,
+  placeholder,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  disabled?: boolean;
+  placeholder?: string;
+}) {
+  const [editando, setEditando] = useState(false);
+  const [texto, setTexto] = useState("");
+
+  const exibido = editando ? texto : value ? value.toLocaleString("pt-PT") : "";
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      className="input-dark"
+      placeholder={placeholder}
+      value={exibido}
+      disabled={disabled}
+      onFocus={() => {
+        setEditando(true);
+        setTexto(value ? String(value) : "");
+      }}
+      onChange={(e) => {
+        const somenteDigitos = e.target.value.replace(/[^\d]/g, "");
+        setTexto(somenteDigitos);
+        onChange(somenteDigitos === "" ? 0 : Number(somenteDigitos));
+      }}
+      onBlur={() => setEditando(false)}
+    />
+  );
+}
+
 function PercentInput({
   value,
   onChange,
