@@ -795,7 +795,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     setInputs((prev) => ({ ...prev, [key]: value }));
   }
 
-  if (loading) return <div className="p-8 text-sm text-[#8FA6AF]">A carregar…</div>;
+  if (loading) return <div className="p-8 text-sm text-[#59636A]">A carregar…</div>;
 
   const resumoProgramaAtual = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const contextoCustoAtual: ContextoCusto = {
@@ -1130,10 +1130,10 @@ function StepIdentificacao({
     <>
       <Card title="Identificação do ativo">
         <Row>
-          <Field label="Nome do projeto">
+          <FieldGroup label="Nome do projeto">
             <input className="input-dark" value={nome} onChange={(e) => setNome(e.target.value)} />
-          </Field>
-          <Field label="Tipo de projeto">
+          </FieldGroup>
+          <FieldGroup label="Tipo de projeto">
             <select className="input-dark" value={tipoProjeto} onChange={(e) => setTipoProjeto(e.target.value)}>
               {TIPOS_PROJETO.map((tipo) => (
                 <option key={tipo} value={tipo}>
@@ -1141,15 +1141,15 @@ function StepIdentificacao({
                 </option>
               ))}
             </select>
-          </Field>
-          <Field label="Área do lote (m²)">
+          </FieldGroup>
+          <FieldGroup label="Área do lote (m²)">
             <input
               type="number"
               className="input-dark"
               value={inputs.areaLote ?? ""}
               onChange={(e) => updateInput("areaLote", e.target.value ? Number(e.target.value) : null)}
             />
-          </Field>
+          </FieldGroup>
         </Row>
       </Card>
 
@@ -1158,7 +1158,7 @@ function StepIdentificacao({
         subtitle="Introduza o código postal — a rua, freguesia, concelho e distrito são sugeridos automaticamente, mas continuam editáveis."
       >
         <Row>
-          <Field label="Código postal">
+          <FieldGroup label="Código postal">
             <input
               className="input-dark"
               placeholder="0000-000"
@@ -1166,10 +1166,10 @@ function StepIdentificacao({
               onChange={(e) => updateIdentificacao("codigoPostal", e.target.value)}
               onBlur={onCodigoPostalBlur}
             />
-          </Field>
-          <Field label="Rua">
+          </FieldGroup>
+          <FieldGroup label="Rua">
             <input className="input-dark" value={identificacao.rua} onChange={(e) => updateIdentificacao("rua", e.target.value)} />
-          </Field>
+          </FieldGroup>
         </Row>
         {aLoadearCp && <p className="text-xs text-[#8FA6AF] mb-3">A procurar o código postal…</p>}
         {erroCp && <p className="text-xs text-[#A13D2E] mb-3">{erroCp}</p>}
@@ -1188,36 +1188,36 @@ function StepIdentificacao({
           </div>
         )}
         <Row>
-          <Field label="Freguesia">
+          <FieldGroup label="Freguesia">
             <input
               className="input-dark"
               value={identificacao.freguesia}
               onChange={(e) => updateIdentificacao("freguesia", e.target.value)}
             />
-          </Field>
-          <Field label="Concelho">
+          </FieldGroup>
+          <FieldGroup label="Concelho">
             <input
               className="input-dark"
               value={identificacao.concelho}
               onChange={(e) => updateIdentificacao("concelho", e.target.value)}
             />
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Distrito">
+          <FieldGroup label="Distrito">
             <input
               className="input-dark"
               value={identificacao.distrito}
               onChange={(e) => updateIdentificacao("distrito", e.target.value)}
             />
-          </Field>
-          <Field label="Localidade">
+          </FieldGroup>
+          <FieldGroup label="Localidade">
             <input
               className="input-dark"
               value={identificacao.localidade}
               onChange={(e) => updateIdentificacao("localidade", e.target.value)}
             />
-          </Field>
+          </FieldGroup>
         </Row>
       </Card>
 
@@ -1226,40 +1226,40 @@ function StepIdentificacao({
         subtitle="ABC Total e eficiência são calculados automaticamente a partir destes valores e do programa de tipologias."
       >
         <Row>
-          <Field label="ABC acima do solo (m²)">
+          <FieldGroup label="ABC acima do solo (m²)">
             <input
               type="number"
               className="input-dark"
               value={identificacao.abcAcimaSolo ?? ""}
               onChange={(e) => updateIdentificacao("abcAcimaSolo", e.target.value ? Number(e.target.value) : null)}
             />
-          </Field>
-          <Field label="ABC abaixo do solo (m²)">
+          </FieldGroup>
+          <FieldGroup label="ABC abaixo do solo (m²)">
             <input
               type="number"
               className="input-dark"
               value={identificacao.abcAbaixoSolo ?? ""}
               onChange={(e) => updateIdentificacao("abcAbaixoSolo", e.target.value ? Number(e.target.value) : null)}
             />
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Área dependente estimada (m²)">
+          <FieldGroup label="Área dependente estimada (m²)">
             <input
               type="number"
               className="input-dark"
               value={identificacao.areaDependenteEstimada ?? ""}
               onChange={(e) => updateIdentificacao("areaDependenteEstimada", e.target.value ? Number(e.target.value) : null)}
             />
-          </Field>
-          <Field label="ABP estimada (m²)">
+          </FieldGroup>
+          <FieldGroup label="ABP estimada (m²)">
             <input
               type="number"
               className="input-dark"
               value={identificacao.abpEstimada ?? ""}
               onChange={(e) => updateIdentificacao("abpEstimada", e.target.value ? Number(e.target.value) : null)}
             />
-          </Field>
+          </FieldGroup>
         </Row>
         <div className="flex gap-6 mt-2 text-sm">
           <div>
@@ -1283,7 +1283,7 @@ function StepIdentificacao({
       <Card title="Características">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
           <div>
-            <Field label="Número de garagens/estacionamentos">
+            <FieldGroup label="Número de garagens/estacionamentos">
               <input
                 type="number"
                 min={0}
@@ -1295,10 +1295,10 @@ function StepIdentificacao({
                   updateIdentificacao("temGaragem", n > 0);
                 }}
               />
-            </Field>
+            </FieldGroup>
           </div>
           <div>
-            <Field label="Número de elevadores">
+            <FieldGroup label="Número de elevadores">
               <input
                 type="number"
                 min={0}
@@ -1310,7 +1310,7 @@ function StepIdentificacao({
                   updateIdentificacao("temElevador", n > 0);
                 }}
               />
-            </Field>
+            </FieldGroup>
           </div>
           <CheckboxIdent
             label="Possui jardim ou áreas exteriores"
@@ -1410,20 +1410,20 @@ function StepPrograma({
         subtitle="A data de lançamento governa a curva, as datas projetadas da Sales Table, os sinais do CPCV, as comissões e o cash flow."
       >
         <Row>
-          <Field label="Data de lançamento comercial">
+          <FieldGroup label="Data de lançamento comercial">
             <input
               type="date"
               className="input-dark"
               value={planoVendas.dataLancamentoComercial}
               onChange={(e) => updatePlanoVendas("dataLancamentoComercial", e.target.value)}
             />
-          </Field>
-          <Field label="Comissão comercial (%)">
+          </FieldGroup>
+          <FieldGroup label="Comissão comercial (%)">
             <PercentInput value={planoVendas.comissaoMediacaoPct} onChange={(v) => updatePlanoVendas("comissaoMediacaoPct", v)} />
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="IVA da comissão">
+          <FieldGroup label="IVA da comissão">
             <select
               className="input-dark"
               value={planoVendas.comissaoTaxaIva}
@@ -1433,16 +1433,16 @@ function StepPrograma({
               <option value={0.06}>6%</option>
               <option value={0.23}>23%</option>
             </select>
-          </Field>
-          <Field label="Comissão paga no sinal (%)">
+          </FieldGroup>
+          <FieldGroup label="Comissão paga no sinal (%)">
             <PercentInput value={planoVendas.comissaoPctPagoSinal} onChange={(v) => updatePlanoVendas("comissaoPctPagoSinal", v)} />
-          </Field>
-          <Field label="Comissão paga na escritura (%)">
+          </FieldGroup>
+          <FieldGroup label="Comissão paga na escritura (%)">
             <PercentInput value={planoVendas.comissaoPctPagoEscritura} onChange={(v) => updatePlanoVendas("comissaoPctPagoEscritura", v)} />
-          </Field>
-          <Field label="IVA recuperável da comissão (%)">
+          </FieldGroup>
+          <FieldGroup label="IVA recuperável da comissão (%)">
             <PercentInput value={planoVendas.comissaoIvaRecuperavelPct} onChange={(v) => updatePlanoVendas("comissaoIvaRecuperavelPct", v)} />
-          </Field>
+          </FieldGroup>
         </Row>
         {!comissaoSplitValido && (
           <p className="text-xs text-[#A13D2E] mt-2">A comissão paga no sinal e na escritura deve somar 100%.</p>
@@ -1454,26 +1454,26 @@ function StepPrograma({
         <div className="mt-5 pt-4 border-t border-[#E3DACB]">
           <p className="text-xs font-semibold text-[#142B3A] mb-3">Calendário e recebimentos comerciais</p>
           <Row>
-            <Field label="Data prevista das escrituras">
+            <FieldGroup label="Data prevista das escrituras">
               <input
                 type="date"
                 className="input-dark"
                 value={planoVendas.dataEscritura}
                 onChange={(e) => updatePlanoVendas("dataEscritura", e.target.value)}
               />
-            </Field>
-            <Field label="Cancelamentos estimados (%)">
+            </FieldGroup>
+            <FieldGroup label="Cancelamentos estimados (%)">
               <PercentInput value={planoVendas.cancelamentosEstimadosPct} onChange={(v) => updatePlanoVendas("cancelamentosEstimadosPct", v)} />
-            </Field>
-            <Field label="Início da construção (derivado dos hard costs)">
+            </FieldGroup>
+            <FieldGroup label="Início da construção (derivado dos hard costs)">
               <input className="input-dark" value={planoVendas.dataInicioConstrucao || "—"} disabled />
-            </Field>
-            <Field label="Fim da construção (derivado dos hard costs)">
+            </FieldGroup>
+            <FieldGroup label="Fim da construção (derivado dos hard costs)">
               <input className="input-dark" value={planoVendas.dataFimConstrucao || "—"} disabled />
-            </Field>
+            </FieldGroup>
           </Row>
           <Row>
-            <Field label="Escritura de cada unidade: meses após fim de obra (sugestão por defeito)">
+            <FieldGroup label="Escritura de cada unidade: meses após fim de obra (sugestão por defeito)">
               <input
                 type="number"
                 min={0}
@@ -1481,7 +1481,7 @@ function StepPrograma({
                 value={planoVendas.duracaoEscrituraAposObraMeses}
                 onChange={(e) => updatePlanoVendas("duracaoEscrituraAposObraMeses", Math.max(0, Number(e.target.value) || 0))}
               />
-            </Field>
+            </FieldGroup>
           </Row>
           <p className="text-xs text-[#59636A] -mt-2 mb-2">
             Usado só para sugerir a data de escritura de cada unidade na Sales Table — sempre sobreponível linha a linha.
@@ -1491,24 +1491,24 @@ function StepPrograma({
             {!recebimentosValidos && <span className="text-[#A13D2E]"> (tem de somar 100%)</span>}
           </p>
           <Row>
-            <Field label="Reserva (%)">
+            <FieldGroup label="Reserva (%)">
               <PercentInput value={planoVendas.estruturaRecebimentos.pctReserva} onChange={(v) => updateEstruturaRecebimentos("pctReserva", v)} />
-            </Field>
-            <Field label="CPCV / sinal (%)">
+            </FieldGroup>
+            <FieldGroup label="CPCV / sinal (%)">
               <PercentInput value={planoVendas.estruturaRecebimentos.pctCpcv} onChange={(v) => updateEstruturaRecebimentos("pctCpcv", v)} />
-            </Field>
-            <Field label="Durante a construção (%)">
+            </FieldGroup>
+            <FieldGroup label="Durante a construção (%)">
               <PercentInput
                 value={planoVendas.estruturaRecebimentos.pctDuranteConstrucao}
                 onChange={(v) => updateEstruturaRecebimentos("pctDuranteConstrucao", v)}
               />
-            </Field>
-            <Field label="Na conclusão (%)">
+            </FieldGroup>
+            <FieldGroup label="Na conclusão (%)">
               <PercentInput value={planoVendas.estruturaRecebimentos.pctConclusao} onChange={(v) => updateEstruturaRecebimentos("pctConclusao", v)} />
-            </Field>
-            <Field label="Na escritura (%)">
+            </FieldGroup>
+            <FieldGroup label="Na escritura (%)">
               <PercentInput value={planoVendas.estruturaRecebimentos.pctEscritura} onChange={(v) => updateEstruturaRecebimentos("pctEscritura", v)} />
-            </Field>
+            </FieldGroup>
           </Row>
         </div>
       </Card>
@@ -1681,15 +1681,15 @@ function StepPrograma({
             <div key={t.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
               <p className="text-xs font-semibold text-[#142B3A] mb-2">{t.nome}</p>
               <Row>
-                <Field label="Meses após o lançamento para a primeira venda">
+                <FieldGroup label="Meses após o lançamento para a primeira venda">
                   <input
                     type="number"
                     className="input-dark"
                     value={t.mesesParaPrimeiraVenda}
                     onChange={(e) => onAtualizarTipologiaNova(t.id, { mesesParaPrimeiraVenda: Number(e.target.value) })}
                   />
-                </Field>
-                <Field label="Unidades vendidas por mês">
+                </FieldGroup>
+                <FieldGroup label="Unidades vendidas por mês">
                   <input
                     type="number"
                     step="0.1"
@@ -1697,7 +1697,7 @@ function StepPrograma({
                     value={t.unidadesPorMes}
                     onChange={(e) => onAtualizarTipologiaNova(t.id, { unidadesPorMes: Number(e.target.value) })}
                   />
-                </Field>
+                </FieldGroup>
               </Row>
               {resumoAbsorcao.length > 0 && (
                 <div className="mt-2 text-xs text-[#59636A]">
@@ -1719,7 +1719,7 @@ function StepPrograma({
         {regrasPreco.map((r) => (
           <div key={r.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
             <Row>
-              <Field label="Âmbito">
+              <FieldGroup label="Âmbito">
                 <select
                   className="input-dark"
                   value={r.escopo.tipo === "tipologia" ? r.escopo.tipologiaId : "geral"}
@@ -1736,8 +1736,8 @@ function StepPrograma({
                     </option>
                   ))}
                 </select>
-              </Field>
-              <Field label="Gatilho">
+              </FieldGroup>
+              <FieldGroup label="Gatilho">
                 <select
                   className="input-dark"
                   value={r.gatilho}
@@ -1748,36 +1748,36 @@ function StepPrograma({
                   <option value="pct_vendido_projeto">% do projeto vendido</option>
                   <option value="pct_vendido_tipologia">% da tipologia vendido</option>
                 </select>
-              </Field>
+              </FieldGroup>
             </Row>
             <Row>
               {r.gatilho === "data" ? (
-                <Field label="Data do gatilho">
+                <FieldGroup label="Data do gatilho">
                   <input
                     type="date"
                     className="input-dark"
                     value={r.valorGatilhoData ?? ""}
                     onChange={(e) => onAtualizarRegraPreco(r.id, { valorGatilhoData: e.target.value })}
                   />
-                </Field>
+                </FieldGroup>
               ) : r.gatilho === "meses_apos_lancamento" ? (
-                <Field label="Meses após o lançamento">
+                <FieldGroup label="Meses após o lançamento">
                   <input
                     type="number"
                     className="input-dark"
                     value={r.valorGatilhoNumero ?? 0}
                     onChange={(e) => onAtualizarRegraPreco(r.id, { valorGatilhoNumero: Number(e.target.value) })}
                   />
-                </Field>
+                </FieldGroup>
               ) : (
-                <Field label="% vendido (gatilho)">
+                <FieldGroup label="% vendido (gatilho)">
                   <PercentInput value={r.valorGatilhoNumero ?? 0} onChange={(v) => onAtualizarRegraPreco(r.id, { valorGatilhoNumero: v })} />
-                </Field>
+                </FieldGroup>
               )}
-              <Field label="Ajuste de preço (%)">
+              <FieldGroup label="Ajuste de preço (%)">
                 <PercentInput value={r.ajustePct} onChange={(v) => onAtualizarRegraPreco(r.id, { ajustePct: v })} />
-              </Field>
-              <Field label="Modo">
+              </FieldGroup>
+              <FieldGroup label="Modo">
                 <select
                   className="input-dark"
                   value={r.modo}
@@ -1786,7 +1786,7 @@ function StepPrograma({
                   <option value="cumulativo">Cumulativo (soma-se às anteriores)</option>
                   <option value="substituicao">Substituição (ignora as anteriores)</option>
                 </select>
-              </Field>
+              </FieldGroup>
             </Row>
             <div className="flex justify-end">
               <button onClick={() => onRemoverRegraPreco(r.id)} className="text-[#A13D2E] text-xs">
@@ -1912,23 +1912,23 @@ function StepPrograma({
                       <tr className="bg-[#F5F0E6]">
                         <td colSpan={9} className="p-3">
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-                            <Field label="Sinal">
+                            <FieldGroup label="Sinal">
                               <NumeroInput value={u.sinalValor} onChange={(v) => onAtualizarUnidade(u.id, { sinalValor: v })} />
-                            </Field>
-                            <Field label="Reforços">
+                            </FieldGroup>
+                            <FieldGroup label="Reforços">
                               <NumeroInput value={u.reforcosValor} onChange={(v) => onAtualizarUnidade(u.id, { reforcosValor: v })} />
-                            </Field>
-                            <Field label="Escritura (residual)">
+                            </FieldGroup>
+                            <FieldGroup label="Escritura (residual)">
                               <input className="input-dark" disabled value={`€${Math.round(valorEscritura).toLocaleString("pt-PT")}`} />
-                            </Field>
-                            <Field label="Data escritura">
+                            </FieldGroup>
+                            <FieldGroup label="Data escritura">
                               <input
                                 type="date"
                                 className="input-dark"
                                 value={u.dataEscritura ?? dataEscrituraDefeito ?? ""}
                                 onChange={(e) => onAtualizarUnidade(u.id, { dataEscritura: e.target.value || null })}
                               />
-                            </Field>
+                            </FieldGroup>
                           </div>
                           <p className={`text-[10px] mt-2 ${validacaoEscritura.valido ? "text-[#59636A]" : "text-[#A13D2E] font-semibold"}`}>
                             {!validacaoEscritura.valido
@@ -2201,16 +2201,16 @@ function StepAquisicaoCustos({
   function renderLinhaAquisicaoCompacta(c: LinhaCusto) {
     return (
       <div key={c.id} className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr] gap-3 items-end border-b border-[#E3DACB] py-3 last:border-b-0">
-        <Field label="Custo">
+        <FieldGroup label="Custo">
           <input className="input-dark" value={c.nome} disabled />
-        </Field>
-        <Field label="Valor (€)">
+        </FieldGroup>
+        <FieldGroup label="Valor (€)">
           <NumeroInput
             value={c.valorInput}
             onChange={(v) => onAtualizarCusto(c.id, { valorInput: v, tipoCalculo: "valor_fixo", taxaIva: null, ivaRecuperavelPct: 0 })}
           />
-        </Field>
-        <Field label="Data">
+        </FieldGroup>
+        <FieldGroup label="Data">
           <input
             type="date"
             className="input-dark"
@@ -2224,7 +2224,7 @@ function StepAquisicaoCustos({
               })
             }
           />
-        </Field>
+        </FieldGroup>
       </div>
     );
   }
@@ -2236,10 +2236,10 @@ function StepAquisicaoCustos({
     return (
       <div key={c.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
         <Row>
-          <Field label="Nome">
+          <FieldGroup label="Nome">
             <input className="input-dark" value={c.nome} disabled={fixa} onChange={(e) => onAtualizarCusto(c.id, { nome: e.target.value })} />
-          </Field>
-          <Field label="Tipo de cálculo">
+          </FieldGroup>
+          <FieldGroup label="Tipo de cálculo">
             <select
               className="input-dark"
               value={c.tipoCalculo}
@@ -2248,36 +2248,36 @@ function StepAquisicaoCustos({
             >
               {TIPOS_CALCULO_CUSTO.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
-          </Field>
-          <Field label={mensal ? "Valor por mês" : c.tipoCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
+          </FieldGroup>
+          <FieldGroup label={mensal ? "Valor por mês" : c.tipoCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
             {c.tipoCalculo.startsWith("percentagem") ? (
               <PercentInput value={c.valorInput} onChange={(v) => onAtualizarCusto(c.id, { valorInput: v })} />
             ) : (
               <NumeroInput value={c.valorInput} onChange={(v) => onAtualizarCusto(c.id, { valorInput: v })} />
             )}
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
           {mostrarIva && (
             <>
-              <Field label="Taxa de IVA">
+              <FieldGroup label="Taxa de IVA">
                 <select className="input-dark" value={c.taxaIva ?? ""} onChange={(e) => onAtualizarCusto(c.id, { taxaIva: e.target.value ? Number(e.target.value) : null })}>
                   <option value="">Sem IVA</option><option value={0.06}>6%</option><option value={0.13}>13%</option><option value={0.23}>23%</option>
                 </select>
-              </Field>
-              <Field label="% de IVA recuperável"><PercentInput value={c.ivaRecuperavelPct} onChange={(v) => onAtualizarCusto(c.id, { ivaRecuperavelPct: v })} /></Field>
+              </FieldGroup>
+              <FieldGroup label="% de IVA recuperável"><PercentInput value={c.ivaRecuperavelPct} onChange={(v) => onAtualizarCusto(c.id, { ivaRecuperavelPct: v })} /></FieldGroup>
             </>
           )}
-          <Field label="Perfil de desembolso">
+          <FieldGroup label="Perfil de desembolso">
             <select className="input-dark" value={c.perfilDesembolso} onChange={(e) => onAtualizarCusto(c.id, { perfilDesembolso: e.target.value as LinhaCusto["perfilDesembolso"] })}>
               {PERFIS_DESEMBOLSO.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
             </select>
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Data inicial"><input type="date" className="input-dark" value={c.dataInicial ?? ""} disabled={c.nome === "Fiscalização de obra"} onChange={(e) => handleData(c, e.target.value, c.duracaoMeses ?? 1)} /></Field>
-          <Field label="Duração (meses)"><input type="number" className="input-dark" value={c.duracaoMeses ?? ""} disabled={c.nome === "Fiscalização de obra"} onChange={(e) => handleData(c, c.dataInicial ?? "", Number(e.target.value))} /></Field>
-          <Field label="Data final (calculada)"><input type="date" className="input-dark" value={c.dataFinal ?? ""} disabled /></Field>
+          <FieldGroup label="Data inicial"><input type="date" className="input-dark" value={c.dataInicial ?? ""} disabled={c.nome === "Fiscalização de obra"} onChange={(e) => handleData(c, e.target.value, c.duracaoMeses ?? 1)} /></FieldGroup>
+          <FieldGroup label="Duração (meses)"><input type="number" className="input-dark" value={c.duracaoMeses ?? ""} disabled={c.nome === "Fiscalização de obra"} onChange={(e) => handleData(c, c.dataInicial ?? "", Number(e.target.value))} /></FieldGroup>
+          <FieldGroup label="Data final (calculada)"><input type="date" className="input-dark" value={c.dataFinal ?? ""} disabled /></FieldGroup>
         </Row>
         <div className="flex justify-between items-center mt-1">
           <span className="text-xs text-[#59636A]">Valor resolvido: €{Math.round(resolvidas.find((r) => r.id === c.id)?.valorResolvido ?? 0).toLocaleString("pt-PT")}</span>
@@ -2291,29 +2291,29 @@ function StepAquisicaoCustos({
     <>
       <Card title="Aquisição" subtitle={`Subtotal: €${Math.round(resumo.totalAquisicao).toLocaleString("pt-PT")}. A aquisição é preenchida aqui e não na Identificação.`}>
         <Row>
-          <Field label="Preço total"><NumeroInput value={inputs.custoTerreno || 0} onChange={(v) => alterarInput("custoTerreno", v)} /></Field>
-          <Field label="Sinal (%)"><PercentInput value={inputs.sinalAquisicaoPct} onChange={(v) => alterarInput("sinalAquisicaoPct", v)} /></Field>
-          <Field label="Valor do sinal"><input className="input-dark" value={`€${Math.round(sinalValor).toLocaleString("pt-PT")}`} disabled /></Field>
-          <Field label="Data do sinal"><input type="date" className="input-dark" value={inputs.dataSinalAquisicao} onChange={(e) => alterarInput("dataSinalAquisicao", e.target.value)} /></Field>
+          <FieldGroup label="Preço total"><NumeroInput value={inputs.custoTerreno || 0} onChange={(v) => alterarInput("custoTerreno", v)} /></FieldGroup>
+          <FieldGroup label="Sinal (%)"><PercentInput value={inputs.sinalAquisicaoPct} onChange={(v) => alterarInput("sinalAquisicaoPct", v)} /></FieldGroup>
+          <FieldGroup label="Valor do sinal"><input className="input-dark" value={`€${Math.round(sinalValor).toLocaleString("pt-PT")}`} disabled /></FieldGroup>
+          <FieldGroup label="Data do sinal"><input type="date" className="input-dark" value={inputs.dataSinalAquisicao} onChange={(e) => alterarInput("dataSinalAquisicao", e.target.value)} /></FieldGroup>
         </Row>
         <Row>
-          <Field label="Tempo até à escritura (meses)"><input type="number" className="input-dark" value={inputs.duracaoAteEscrituraMeses} onChange={(e) => { const meses = Number(e.target.value); updateInput("dataEscrituraAquisicao", ""); alterarInput("duracaoAteEscrituraMeses", meses); }} /></Field>
-          <Field label="Data da escritura">
+          <FieldGroup label="Tempo até à escritura (meses)"><input type="number" className="input-dark" value={inputs.duracaoAteEscrituraMeses} onChange={(e) => { const meses = Number(e.target.value); updateInput("dataEscrituraAquisicao", ""); alterarInput("duracaoAteEscrituraMeses", meses); }} /></FieldGroup>
+          <FieldGroup label="Data da escritura">
             <input type="date" className="input-dark" value={dataEscrituraCalculada} onChange={(e) => { const data = e.target.value; updateInput("dataEscrituraAquisicao", data); updateInput("duracaoAteEscrituraMeses", diferencaMesesDatas(inputs.dataSinalAquisicao, data)); sincronizarAquisicao({ dataEscrituraAquisicao: data, duracaoAteEscrituraMeses: diferencaMesesDatas(inputs.dataSinalAquisicao, data) }); }} />
-          </Field>
-          <Field label="Reforços"><input className="input-dark" value={`€${Math.round(somaReforcos).toLocaleString("pt-PT")}`} disabled /></Field>
-          <Field label="Valor residual da escritura"><input className="input-dark" value={`€${Math.round(valorEscritura).toLocaleString("pt-PT")}`} disabled /></Field>
+          </FieldGroup>
+          <FieldGroup label="Reforços"><input className="input-dark" value={`€${Math.round(somaReforcos).toLocaleString("pt-PT")}`} disabled /></FieldGroup>
+          <FieldGroup label="Valor residual da escritura"><input className="input-dark" value={`€${Math.round(valorEscritura).toLocaleString("pt-PT")}`} disabled /></FieldGroup>
         </Row>
         {sinalValor + somaReforcos > (inputs.custoTerreno || 0) && <p className="text-xs text-[#A13D2E]">Sinal e reforços não podem ultrapassar o preço de aquisição.</p>}
 
         {reforcos.map((c, idx) => (
           <div key={c.id} className="grid grid-cols-4 gap-3 border-t border-[#E3DACB] pt-3 mt-3">
-            <Field label={`Reforço ${idx + 1} (€)`}><NumeroInput value={c.valorInput} onChange={(novoValor) => {
+            <FieldGroup label={`Reforço ${idx + 1} (€)`}><NumeroInput value={c.valorInput} onChange={(novoValor) => {
               onAtualizarCusto(c.id, { valorInput: novoValor });
               atualizarLinha("Escritura da aquisição", { valorInput: Math.max(0, (inputs.custoTerreno || 0) - sinalValor - (somaReforcos - c.valorInput + novoValor)) });
-            }} /></Field>
-            <Field label="Data"><input type="date" className="input-dark" value={c.dataInicial ?? ""} onChange={(e) => onAtualizarCusto(c.id, { dataInicial: e.target.value || null, dataFinal: e.target.value || null, duracaoMeses: 1, perfilDesembolso: "unico_inicio" })} /></Field>
-            <Field label="% do preço"><input className="input-dark" value={`${inputs.custoTerreno > 0 ? ((c.valorInput / inputs.custoTerreno) * 100).toFixed(2) : "0.00"}%`} disabled /></Field>
+            }} /></FieldGroup>
+            <FieldGroup label="Data"><input type="date" className="input-dark" value={c.dataInicial ?? ""} onChange={(e) => onAtualizarCusto(c.id, { dataInicial: e.target.value || null, dataFinal: e.target.value || null, duracaoMeses: 1, perfilDesembolso: "unico_inicio" })} /></FieldGroup>
+            <FieldGroup label="% do preço"><input className="input-dark" value={`${inputs.custoTerreno > 0 ? ((c.valorInput / inputs.custoTerreno) * 100).toFixed(2) : "0.00"}%`} disabled /></FieldGroup>
             <div className="flex items-end"><button className="text-[#A13D2E] text-xs pb-2" onClick={() => {
               atualizarLinha("Escritura da aquisição", { valorInput: Math.max(0, (inputs.custoTerreno || 0) - sinalValor - (somaReforcos - c.valorInput)) });
               onRemoverCusto(c.id);
@@ -2326,20 +2326,20 @@ function StepAquisicaoCustos({
           <summary className="cursor-pointer text-xs font-semibold text-[#142B3A]">Calcular IMT e Imposto do Selo assistidamente</summary>
           <div className="mt-3">
             <Row>
-              <Field label="Tipo de imóvel">
+              <FieldGroup label="Tipo de imóvel">
                 <select className="input-dark" value={imtTipoImovel} onChange={(e) => setImtTipoImovel(e.target.value as TipoImovelImt)}>
                   <option value="outro_urbano_ou_terreno_construcao">Terreno para construção / outro prédio urbano</option>
                   <option value="habitacao_propria_permanente">Habitação própria e permanente</option>
                   <option value="habitacao_secundaria_ou_arrendamento">Habitação secundária / arrendamento</option>
                   <option value="predio_rustico">Prédio rústico</option>
                 </select>
-              </Field>
-              <Field label="Região">
+              </FieldGroup>
+              <FieldGroup label="Região">
                 <select className="input-dark" value={imtRegiaoAutonoma ? "ra" : "continente"} onChange={(e) => setImtRegiaoAutonoma(e.target.value === "ra")}>
                   <option value="continente">Portugal Continental</option>
                   <option value="ra">Região Autónoma (Açores/Madeira)</option>
                 </select>
-              </Field>
+              </FieldGroup>
             </Row>
             <Row>
               <label className="flex items-center gap-2 text-xs text-[#59636A]">
@@ -2497,7 +2497,7 @@ function StepFinanciamento({
     <>
       <Card title="Financiamento bancário">
         <Row>
-          <Field label="Este projeto terá financiamento bancário?">
+          <FieldGroup label="Este projeto terá financiamento bancário?">
             <select
               className="input-dark"
               value={financiamento.comFinanciamento ? "sim" : "nao"}
@@ -2506,7 +2506,7 @@ function StepFinanciamento({
               <option value="nao">Não</option>
               <option value="sim">Sim</option>
             </select>
-          </Field>
+          </FieldGroup>
         </Row>
         {desativado && (
           <p className="text-xs text-[#59636A] mb-3">
@@ -2515,23 +2515,23 @@ function StepFinanciamento({
         )}
 
         <Row>
-          <Field label="% dos hard costs financiada">
+          <FieldGroup label="% dos hard costs financiada">
             <PercentInput
               value={financiamento.percentagemHardCostsFinanciada}
               onChange={(v) => updateFinanciamento("percentagemHardCostsFinanciada", v)}
               disabled={desativado}
             />
-          </Field>
-          <Field label="% da aquisição financiada">
+          </FieldGroup>
+          <FieldGroup label="% da aquisição financiada">
             <PercentInput
               value={financiamento.percentagemAquisicaoFinanciada}
               onChange={(v) => updateFinanciamento("percentagemAquisicaoFinanciada", v)}
               disabled={desativado}
             />
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Euribor">
+          <FieldGroup label="Euribor">
             <PercentInput
               value={financiamento.euribor}
               onChange={(v) => {
@@ -2542,13 +2542,13 @@ function StepFinanciamento({
               }}
               disabled={desativado}
             />
-          </Field>
-          <Field label="Spread">
+          </FieldGroup>
+          <FieldGroup label="Spread">
             <PercentInput value={financiamento.spread} onChange={(v) => updateFinanciamento("spread", v)} disabled={desativado} />
-          </Field>
-          <Field label="Taxa anual (calculada)">
+          </FieldGroup>
+          <FieldGroup label="Taxa anual (calculada)">
             <input className="input-dark" value={`${(taxaAnual(financiamento) * 100).toFixed(2)}%`} disabled />
-          </Field>
+          </FieldGroup>
         </Row>
         {!desativado && (
           <Row>
@@ -2582,7 +2582,7 @@ function StepFinanciamento({
           </Row>
         )}
         <Row>
-          <Field label="Metodologia da taxa mensal">
+          <FieldGroup label="Metodologia da taxa mensal">
             <select
               className="input-dark"
               value={financiamento.metodoTaxaMensal}
@@ -2592,40 +2592,40 @@ function StepFinanciamento({
               <option value="nominal_anual_div_12">Taxa nominal anual ÷ 12</option>
               <option value="mensal_equivalente">Taxa mensal equivalente</option>
             </select>
-          </Field>
-          <Field label="Taxa mensal (calculada)">
+          </FieldGroup>
+          <FieldGroup label="Taxa mensal (calculada)">
             <input className="input-dark" value={`${(taxaMensal(financiamento) * 100).toFixed(3)}%`} disabled />
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Structuring fee (% do limite)">
+          <FieldGroup label="Structuring fee (% do limite)">
             <PercentInput value={financiamento.structuringFeePct} onChange={(v) => updateFinanciamento("structuringFeePct", v)} disabled={desativado} />
-          </Field>
-          <Field label="Setup costs (% do limite)">
+          </FieldGroup>
+          <FieldGroup label="Setup costs (% do limite)">
             <PercentInput value={financiamento.setupCostsPct ?? 0.003} onChange={(v) => updateFinanciamento("setupCostsPct", v)} disabled={desativado} />
-          </Field>
-          <Field label="Setup costs fixos adicionais (€)">
+          </FieldGroup>
+          <FieldGroup label="Setup costs fixos adicionais (€)">
             <NumeroInput value={financiamento.setupCosts} onChange={(v) => updateFinanciamento("setupCosts", v)} disabled={desativado} />
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Imposto de selo do empréstimo">
+          <FieldGroup label="Imposto de selo do empréstimo">
             <PercentInput
               value={financiamento.impostoSeloEmprestimoPct}
               onChange={(v) => updateFinanciamento("impostoSeloEmprestimoPct", v)}
               disabled={desativado}
             />
-          </Field>
-          <Field label="Imposto de selo sobre juros">
+          </FieldGroup>
+          <FieldGroup label="Imposto de selo sobre juros">
             <PercentInput
               value={financiamento.impostoSeloJurosPct}
               onChange={(v) => updateFinanciamento("impostoSeloJurosPct", v)}
               disabled={desativado}
             />
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Limite da linha (€) — vazio = sem limite explícito">
+          <FieldGroup label="Limite da linha (€) — vazio = sem limite explícito">
             <input
               type="number"
               className="input-dark"
@@ -2633,8 +2633,8 @@ function StepFinanciamento({
               onChange={(e) => updateFinanciamento("limiteCredito", e.target.value ? Number(e.target.value) : null)}
               disabled={desativado}
             />
-          </Field>
-          <Field label="Meses de custos futuros cobertos pela reserva">
+          </FieldGroup>
+          <FieldGroup label="Meses de custos futuros cobertos pela reserva">
             <select
               className="input-dark"
               value={financiamento.saldoMinimoMesesReserva ?? 6}
@@ -2647,16 +2647,16 @@ function StepFinanciamento({
             >
               {[3, 6, 9, 12].map((m) => <option key={m} value={m}>{m} meses</option>)}
             </select>
-          </Field>
-          <Field label="Saldo mínimo calculado (€)">
+          </FieldGroup>
+          <FieldGroup label="Saldo mínimo calculado (€)">
             <input className="input-dark" value={`€${Math.round(reservaMinima.valor).toLocaleString("pt-PT")}`} disabled />
             <span className="block text-[10px] text-[#59636A] mt-1">
               Janela crítica: {reservaMinima.mesInicio ?? "—"} a {reservaMinima.mesFim ?? "—"}. Exclui aquisição, amortizações, distribuições e imposto sobre lucro.
             </span>
-          </Field>
+          </FieldGroup>
         </Row>
         <Row>
-          <Field label="Prazo total do empréstimo (anos)">
+          <FieldGroup label="Prazo total do empréstimo (anos)">
             <input
               type="number"
               min={0}
@@ -2666,8 +2666,8 @@ function StepFinanciamento({
               onChange={(e) => updateFinanciamento("prazoAnos", Number(e.target.value))}
               disabled={desativado}
             />
-          </Field>
-          <Field label="Há período de carência de capital?">
+          </FieldGroup>
+          <FieldGroup label="Há período de carência de capital?">
             <select
               className="input-dark"
               value={financiamento.carenciaAtiva ? "sim" : "nao"}
@@ -2677,8 +2677,8 @@ function StepFinanciamento({
               <option value="nao">Não</option>
               <option value="sim">Sim</option>
             </select>
-          </Field>
-          <Field label="Carência (anos)">
+          </FieldGroup>
+          <FieldGroup label="Carência (anos)">
             <input
               type="number"
               min={0}
@@ -2688,7 +2688,7 @@ function StepFinanciamento({
               onChange={(e) => updateFinanciamento("carenciaAnos", Number(e.target.value))}
               disabled={desativado || !financiamento.carenciaAtiva}
             />
-          </Field>
+          </FieldGroup>
         </Row>
         {financiamento.carenciaAtiva && (
           <p className="text-xs text-[#59636A] mb-3">
@@ -2703,7 +2703,7 @@ function StepFinanciamento({
         subtitle="A partir de um gatilho, usa o caixa livre para amortizar dívida antecipadamente — nunca abaixo do saldo mínimo, nunca sem reservar os próximos meses de custos."
       >
         <Row>
-          <Field label="Ativar cash sweep?">
+          <FieldGroup label="Ativar cash sweep?">
             <select
               className="input-dark"
               value={financiamento.cashSweepAtivo ? "sim" : "nao"}
@@ -2713,22 +2713,22 @@ function StepFinanciamento({
               <option value="nao">Não</option>
               <option value="sim">Sim</option>
             </select>
-          </Field>
-          <Field label="% do caixa livre usado para amortizar">
+          </FieldGroup>
+          <FieldGroup label="% do caixa livre usado para amortizar">
             <PercentInput
               value={financiamento.cashSweepPctCaixaLivre}
               onChange={(v) => updateFinanciamento("cashSweepPctCaixaLivre", v)}
               disabled={desativado || !financiamento.cashSweepAtivo}
             />
-          </Field>
+          </FieldGroup>
         </Row>
         {financiamento.cashSweepAtivo && (
           <>
             <Row>
-              <Field label="Reserva protegida pelo cash sweep">
+              <FieldGroup label="Reserva protegida pelo cash sweep">
                 <input className="input-dark" value={`${financiamento.saldoMinimoMesesReserva ?? 6} meses · €${Math.round(reservaMinima.valor).toLocaleString("pt-PT")}`} disabled />
-              </Field>
-              <Field label="Início do cash sweep">
+              </FieldGroup>
+              <FieldGroup label="Início do cash sweep">
                 <select
                   className="input-dark"
                   value={financiamento.cashSweepInicioTipo}
@@ -2740,11 +2740,11 @@ function StepFinanciamento({
                   <option value="pct_vgv_recebido">% do VGV recebido</option>
                   <option value="data">Data específica</option>
                 </select>
-              </Field>
+              </FieldGroup>
             </Row>
             <Row>
               {financiamento.cashSweepInicioTipo === "data" ? (
-                <Field label="Data de início">
+                <FieldGroup label="Data de início">
                   <input
                     type="date"
                     className="input-dark"
@@ -2752,16 +2752,16 @@ function StepFinanciamento({
                     onChange={(e) => updateFinanciamento("cashSweepInicioData", e.target.value)}
                     disabled={desativado}
                   />
-                </Field>
+                </FieldGroup>
               ) : (
                 financiamento.cashSweepInicioTipo !== "primeira_escritura" && (
-                  <Field label="% gatilho">
+                  <FieldGroup label="% gatilho">
                     <PercentInput
                       value={financiamento.cashSweepInicioValorPct ?? 0}
                       onChange={(v) => updateFinanciamento("cashSweepInicioValorPct", v)}
                       disabled={desativado}
                     />
-                  </Field>
+                  </FieldGroup>
                 )
               )}
             </Row>
@@ -2829,7 +2829,7 @@ function StepEstruturaCapital({
     <>
       <Card title="Este projeto possui investidores externos?">
         <Row>
-          <Field label="Investidor externo">
+          <FieldGroup label="Investidor externo">
             <select
               className="input-dark"
               value={estruturaCapital.temInvestidorExterno ? "sim" : "nao"}
@@ -2838,8 +2838,8 @@ function StepEstruturaCapital({
               <option value="nao">Não</option>
               <option value="sim">Sim</option>
             </select>
-          </Field>
-          <Field label="Modelo inicial (aplica valores de referência, tudo editável depois)">
+          </FieldGroup>
+          <FieldGroup label="Modelo inicial (aplica valores de referência, tudo editável depois)">
             <select className="input-dark" value={estruturaCapital.modelo} onChange={(e) => onAplicarModelo(e.target.value as ModeloCapital)}>
               {MODELOS_CAPITAL.map((m) => (
                 <option key={m.value} value={m.value}>
@@ -2847,7 +2847,7 @@ function StepEstruturaCapital({
                 </option>
               ))}
             </select>
-          </Field>
+          </FieldGroup>
         </Row>
         {!estruturaCapital.temInvestidorExterno && (
           <p className="text-xs text-[#59636A]">
@@ -2860,18 +2860,18 @@ function StepEstruturaCapital({
         <>
           <Card title="Estrutura de capital">
             <Row>
-              <Field label="% do investidor">
+              <FieldGroup label="% do investidor">
                 <PercentInput
                   value={estruturaCapital.percentagemInvestidor}
                   onChange={(v) => updateEstruturaCapital("percentagemInvestidor", v)}
                 />
-              </Field>
-              <Field label="% do promotor (co-investimento, calculado)">
+              </FieldGroup>
+              <FieldGroup label="% do promotor (co-investimento, calculado)">
                 <input className="input-dark" value={`${((1 - estruturaCapital.percentagemInvestidor) * 100).toFixed(1)}%`} disabled />
-              </Field>
+              </FieldGroup>
             </Row>
             <Row>
-              <Field label="Catch-up ativo?">
+              <FieldGroup label="Catch-up ativo?">
                 <select
                   className="input-dark"
                   value={estruturaCapital.catchUpAtivo ? "sim" : "nao"}
@@ -2880,11 +2880,11 @@ function StepEstruturaCapital({
                   <option value="nao">Não</option>
                   <option value="sim">Sim</option>
                 </select>
-              </Field>
+              </FieldGroup>
               {estruturaCapital.catchUpAtivo && (
-                <Field label="% de catch-up">
+                <FieldGroup label="% de catch-up">
                   <PercentInput value={estruturaCapital.catchUpPct} onChange={(v) => updateEstruturaCapital("catchUpPct", v)} />
-                </Field>
+                </FieldGroup>
               )}
             </Row>
           </Card>
@@ -2892,12 +2892,12 @@ function StepEstruturaCapital({
           <Card title="Hurdles e promote" subtitle="Ordem: retorno preferencial até ao 1.º hurdle, depois promote sobre o incremento de cada tier.">
             {hurdles.map((h, i) => (
               <Row key={h.id}>
-                <Field label={`Hurdle ${i + 1} (IRR)`}>
+                <FieldGroup label={`Hurdle ${i + 1} (IRR)`}>
                   <PercentInput value={h.hurdleIRR} onChange={(v) => onAtualizarHurdle(h.id, { hurdleIRR: v })} />
-                </Field>
-                <Field label={`Promote ${i + 1} (acima deste hurdle)`}>
+                </FieldGroup>
+                <FieldGroup label={`Promote ${i + 1} (acima deste hurdle)`}>
                   <PercentInput value={h.promotePctAcima} onChange={(v) => onAtualizarHurdle(h.id, { promotePctAcima: v })} />
-                </Field>
+                </FieldGroup>
                 <div className="flex items-end pb-1">
                   <button onClick={() => onRemoverHurdle(h.id)} className="text-[#A13D2E] text-xs">
                     Remover
@@ -2916,10 +2916,10 @@ function StepEstruturaCapital({
         {feesNovos.map((f) => (
           <div key={f.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
             <Row>
-              <Field label="Nome">
+              <FieldGroup label="Nome">
                 <input className="input-dark" value={f.nome} onChange={(e) => onAtualizarFee(f.id, { nome: e.target.value })} />
-              </Field>
-              <Field label="Base de cálculo">
+              </FieldGroup>
+              <FieldGroup label="Base de cálculo">
                 <select
                   className="input-dark"
                   value={f.baseCalculo}
@@ -2933,8 +2933,8 @@ function StepEstruturaCapital({
                   <option value="eur_m2">€/m²</option>
                   <option value="eur_unidade">€/unidade</option>
                 </select>
-              </Field>
-              <Field label={f.baseCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
+              </FieldGroup>
+              <FieldGroup label={f.baseCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
                 {f.baseCalculo.startsWith("percentagem") ? (
                   <PercentInput value={f.valorInput} onChange={(v) => onAtualizarFee(f.id, { valorInput: v })} />
                 ) : (
@@ -2945,7 +2945,7 @@ function StepEstruturaCapital({
                     onChange={(e) => onAtualizarFee(f.id, { valorInput: Number(e.target.value) })}
                   />
                 )}
-              </Field>
+              </FieldGroup>
             </Row>
             <div className="flex justify-between items-center">
               <span className="text-xs text-[#59636A]">
@@ -3021,28 +3021,28 @@ function StepImpostos({
         subtitle="O tratamento depende da estrutura jurídica, do município, do ano e das regras aplicáveis ao projeto. Confirme sempre com contabilista certificado ou consultor fiscal."
       >
         <Row>
-          <Field label="Estrutura fiscal assumida">
+          <FieldGroup label="Estrutura fiscal assumida">
             <select className="input-dark" value={impostos.estruturaFiscalAssumida} onChange={(e) => updateImpostos("estruturaFiscalAssumida", e.target.value as ImpostosEstado["estruturaFiscalAssumida"])}>
               <option value="empresa_spv">Empresa/SPV — IRC</option>
               <option value="pessoa_singular">Pessoa singular / atividade individual — IRS</option>
               <option value="nao_definida">Estrutura ainda não definida</option>
               <option value="outra">Outra</option>
             </select>
-          </Field>
+          </FieldGroup>
         </Row>
 
         {impostos.estruturaFiscalAssumida === "empresa_spv" ? (
           <>
             <Row>
-              <Field label="Regime de IRC assumido">
+              <FieldGroup label="Regime de IRC assumido">
                 <select className="input-dark" value={impostos.ircRegime} onChange={(e) => updateImpostos("ircRegime", e.target.value as ImpostosEstado["ircRegime"])}>
                   <option value="geral">Taxa geral</option>
                   <option value="pme_small_mid_cap">PME / Small Mid Cap elegível</option>
                 </select>
-              </Field>
-              <Field label="Ano fiscal de referência"><input type="number" className="input-dark" value={impostos.ircAnoFiscalReferencia} onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))} /></Field>
-              <Field label="Taxa geral de referência"><input className="input-dark" value={`${(taxaIrc * 100).toFixed(1)}%`} disabled /></Field>
-              <Field label="Taxa geral manual (opcional)"><input type="number" className="input-dark" value={impostos.ircTaxaManual == null ? "" : impostos.ircTaxaManual * 100} onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)} placeholder={`${(taxaIrc * 100).toFixed(1)}%`} /></Field>
+              </FieldGroup>
+              <FieldGroup label="Ano fiscal de referência"><input type="number" className="input-dark" value={impostos.ircAnoFiscalReferencia} onChange={(e) => updateImpostos("ircAnoFiscalReferencia", Number(e.target.value))} /></FieldGroup>
+              <FieldGroup label="Taxa geral de referência"><input className="input-dark" value={`${(taxaIrc * 100).toFixed(1)}%`} disabled /></FieldGroup>
+              <FieldGroup label="Taxa geral manual (opcional)"><input type="number" className="input-dark" value={impostos.ircTaxaManual == null ? "" : impostos.ircTaxaManual * 100} onChange={(e) => updateImpostos("ircTaxaManual", e.target.value ? Number(e.target.value) / 100 : null)} placeholder={`${(taxaIrc * 100).toFixed(1)}%`} /></FieldGroup>
             </Row>
             {taxaManualAplicada && <p className="text-xs text-[#B96343] mb-2">Taxa geral manual aplicada. Esta premissa deve ser validada.</p>}
             {impostos.ircRegime === "pme_small_mid_cap" && (
@@ -3058,9 +3058,9 @@ function StepImpostos({
               <p className="text-xs text-[#59636A] mb-3">Parcela com taxa reduzida: €{Math.round(resultadoIrc.parcelaTaxaReduzida).toLocaleString("pt-PT")} · Parcela com taxa geral: €{Math.round(resultadoIrc.parcelaTaxaGeral).toLocaleString("pt-PT")}</p>
             )}
             <Row>
-              <Field label="Ajustes fiscais estimados (€)"><input type="number" className="input-dark" value={impostos.ircAjustesFiscais} onChange={(e) => updateImpostos("ircAjustesFiscais", Number(e.target.value))} /></Field>
-              <Field label="Prejuízos fiscais acumulados (€)"><NumeroInput value={impostos.ircPrejuizosFiscaisAcumulados} onChange={(v) => updateImpostos("ircPrejuizosFiscaisAcumulados", v)} /></Field>
-              <Field label="Derrama municipal (%)"><PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} /></Field>
+              <FieldGroup label="Ajustes fiscais estimados (€)"><input type="number" className="input-dark" value={impostos.ircAjustesFiscais} onChange={(e) => updateImpostos("ircAjustesFiscais", Number(e.target.value))} /></FieldGroup>
+              <FieldGroup label="Prejuízos fiscais acumulados (€)"><NumeroInput value={impostos.ircPrejuizosFiscaisAcumulados} onChange={(v) => updateImpostos("ircPrejuizosFiscaisAcumulados", v)} /></FieldGroup>
+              <FieldGroup label="Derrama municipal (%)"><PercentInput value={impostos.derramaMunicipalTaxa} onChange={(v) => updateImpostos("derramaMunicipalTaxa", v)} /></FieldGroup>
             </Row>
             <p className="text-xs text-[#59636A] mt-2">Derrama municipal estimada: €{Math.round(derramaMunicipal).toLocaleString("pt-PT")} · Derrama estadual progressiva estimada: €{Math.round(derramaEstadual).toLocaleString("pt-PT")}.</p>
             <p className="text-xs text-[#8FA6AF] mt-2">A derrama municipal não é fixa nacionalmente. A derrama estadual não é uma taxa fixa de 1,5% e só se aplica quando os limites legais são ultrapassados.</p>
@@ -3069,8 +3069,8 @@ function StepImpostos({
           <>
             <p className="text-xs text-[#B96343] mb-3">O tratamento pode estar sujeito a IRS ou outro enquadramento. O Landwise não aplica IRC automaticamente.</p>
             <Row>
-              <Field label="Taxa efetiva manual (simulação)"><PercentInput value={impostos.simulacaoTaxaEfetivaManual ?? 0} onChange={(v) => updateImpostos("simulacaoTaxaEfetivaManual", v)} /></Field>
-              <Field label="Imposto estimado manual (€)"><input type="number" className="input-dark" value={impostos.simulacaoImpostoEstimadoManual ?? ""} onChange={(e) => updateImpostos("simulacaoImpostoEstimadoManual", e.target.value ? Number(e.target.value) : null)} /></Field>
+              <FieldGroup label="Taxa efetiva manual (simulação)"><PercentInput value={impostos.simulacaoTaxaEfetivaManual ?? 0} onChange={(v) => updateImpostos("simulacaoTaxaEfetivaManual", v)} /></FieldGroup>
+              <FieldGroup label="Imposto estimado manual (€)"><input type="number" className="input-dark" value={impostos.simulacaoImpostoEstimadoManual ?? ""} onChange={(e) => updateImpostos("simulacaoImpostoEstimadoManual", e.target.value ? Number(e.target.value) : null)} /></FieldGroup>
             </Row>
             <p className="text-xs text-[#A13D2E] font-semibold">Premissa manual não validada.</p>
           </>
@@ -3144,33 +3144,33 @@ function ConsultoriaModal({
             <h3 className="text-[#142B3A] font-bold text-lg mb-1">Solicitar análise especializada</h3>
             <p className="text-xs text-[#8FA6AF] mb-4">Esta estimativa não substitui uma análise fiscal, jurídica ou contabilística individual.</p>
             <Row>
-              <Field label="Nome">
+              <FieldGroup label="Nome">
                 <input className="input-dark" value={nome} onChange={(e) => setNomeLead(e.target.value)} />
-              </Field>
-              <Field label="Empresa">
+              </FieldGroup>
+              <FieldGroup label="Empresa">
                 <input className="input-dark" value={empresa} onChange={(e) => setEmpresa(e.target.value)} />
-              </Field>
+              </FieldGroup>
             </Row>
             <Row>
-              <Field label="Email">
+              <FieldGroup label="Email">
                 <input type="email" className="input-dark" value={email} onChange={(e) => setEmail(e.target.value)} />
-              </Field>
-              <Field label="Telefone">
+              </FieldGroup>
+              <FieldGroup label="Telefone">
                 <input className="input-dark" value={telefone} onChange={(e) => setTelefone(e.target.value)} />
-              </Field>
+              </FieldGroup>
             </Row>
             <Row>
-              <Field label="Preferência de contacto">
+              <FieldGroup label="Preferência de contacto">
                 <select className="input-dark" value={preferencia} onChange={(e) => setPreferencia(e.target.value as "email" | "telefone")}>
                   <option value="email">Email</option>
                   <option value="telefone">Telefone</option>
                 </select>
-              </Field>
+              </FieldGroup>
             </Row>
             <Row>
-              <Field label="Mensagem (opcional)">
+              <FieldGroup label="Mensagem (opcional)">
                 <textarea className="input-dark" rows={3} value={mensagem} onChange={(e) => setMensagem(e.target.value)} />
-              </Field>
+              </FieldGroup>
             </Row>
             {erro && <p className="text-xs text-[#A13D2E] mb-2">{erro}</p>}
             <div className="flex gap-2 mt-2">
@@ -3660,14 +3660,14 @@ function StepCashFlowResultados({
           subtitle="Cada célula recalcula o modelo completo — a célula central (0%×0%) é sempre igual ao cenário-base. Indicadores Lucro/Margem aqui são sem fees de promotor nem impostos (mesmo critério do Resumo) — para o lucro/margem completos, ver o dashboard do projeto."
         >
           <Row>
-            <Field label="Matriz">
+            <FieldGroup label="Matriz">
               <select className="input-dark" value={sensMatriz} onChange={(e) => setSensMatriz(e.target.value as MatrizSensibilidade)}>
                 <option value="aquisicao_vs_custo_construcao">Aquisição × Custo de construção</option>
                 <option value="custo_construcao_vs_preco_venda">Custo de construção × Preço de venda</option>
                 <option value="aquisicao_vs_preco_venda">Aquisição × Preço de venda</option>
               </select>
-            </Field>
-            <Field label="Indicador">
+            </FieldGroup>
+            <FieldGroup label="Indicador">
               <select className="input-dark" value={sensIndicador} onChange={(e) => setSensIndicador(e.target.value as IndicadorSensibilidade)}>
                 <option value="margem">Margem</option>
                 <option value="lucro">Lucro</option>
@@ -3679,7 +3679,7 @@ function StepCashFlowResultados({
                 <option value="peak_debt">Peak debt</option>
                 <option value="equity_contributed">Equity contributed</option>
               </select>
-            </Field>
+            </FieldGroup>
           </Row>
           <SensibilidadesMatriz
             base={{
@@ -3721,23 +3721,23 @@ function StepCashFlowResultados({
           {cenarios.map((c) => (
             <div key={c.id} className="border border-[#E3DACB] rounded-lg p-3 mb-3">
               <Row>
-                <Field label="Nome">
+                <FieldGroup label="Nome">
                   <input
                     className="input-dark"
                     value={c.nome}
                     onChange={(e) => onAtualizarCenario(c.id, { nome: e.target.value })}
                     disabled={c.ehBase}
                   />
-                </Field>
-                <Field label="Δ Aquisição (%)">
+                </FieldGroup>
+                <FieldGroup label="Δ Aquisição (%)">
                   <PercentInput value={c.deltaAquisicao} onChange={(v) => onAtualizarCenario(c.id, { deltaAquisicao: v })} disabled={c.ehBase} />
-                </Field>
-                <Field label="Δ Construção (%)">
+                </FieldGroup>
+                <FieldGroup label="Δ Construção (%)">
                   <PercentInput value={c.deltaConstrucao} onChange={(v) => onAtualizarCenario(c.id, { deltaConstrucao: v })} disabled={c.ehBase} />
-                </Field>
-                <Field label="Δ Preço de venda (%)">
+                </FieldGroup>
+                <FieldGroup label="Δ Preço de venda (%)">
                   <PercentInput value={c.deltaPreco} onChange={(v) => onAtualizarCenario(c.id, { deltaPreco: v })} disabled={c.ehBase} />
-                </Field>
+                </FieldGroup>
               </Row>
               <div className="flex justify-end gap-3">
                 <button onClick={() => onDuplicarCenario(c)} className="text-xs text-[#142B3A] underline">
@@ -3885,7 +3885,12 @@ function Card({ title, subtitle, children }: { title: string; subtitle?: string;
 function Row({ children }: { children: React.ReactNode }) {
   return <div className="flex gap-4 mb-4">{children}</div>;
 }
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+// Chamado "FieldGroup" (não "Field") de propósito: src/components/ui.tsx já
+// tem um `Field` com uma API diferente (renderiza o próprio <input>, não
+// aceita `children`) — dois componentes com o mesmo nome e comportamentos
+// incompatíveis era um risco real de confusão (achado de segmentação da
+// auditoria de 2026-07-31).
+function FieldGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex-1 min-w-0">
       <label className="block text-xs text-[#59636A] mb-1.5">{label}</label>
