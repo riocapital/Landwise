@@ -189,10 +189,11 @@ describe("simularFinanciamento com cash sweep — nunca deixa o projeto sem caix
     saldoMinimoCaixa: 50_000,
   };
 
-  it("sem cash sweep ativo (mesInicioCashSweep=null), amortização fica a 0", () => {
+  it("sem cash sweep ativo (mesInicioCashSweep=null), amortização fica a 0 (fora do último mês do horizonte)", () => {
     const necessidades: NecessidadeMensal[] = [
       { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -500_000 },
       { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 800_000 },
+      { mes: "2026-03", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 },
     ];
     const linhas = simularFinanciamento(necessidades, p, null);
     expect(linhas[1].amortizacao).toBe(0);
@@ -202,10 +203,12 @@ describe("simularFinanciamento com cash sweep — nunca deixa o projeto sem caix
     const necessidades: NecessidadeMensal[] = [
       { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -500_000 },
       { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 800_000 },
+      { mes: "2026-03", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 },
     ];
     const linhas = simularFinanciamento(necessidades, p, "2026-02");
-    // caixa disponível no mês 2 = 800_000 (sem novo drawdown); caixa livre = 800_000 - 50_000 (saldo mínimo) = 750_000
-    expect(linhas[1].amortizacao).toBeCloseTo(Math.min(linhas[1].saldoInicial + linhas[1].juros, 750_000), 2);
+    // caixa disponível no mês 2 = 800_000 (sem novo drawdown); caixa livre = 800_000 - 50_000 (saldo mínimo) = 750_000.
+    // Juros já não capitalizam no saldo (pagos em caixa à parte) — o teto do cash sweep é só o saldo devedor.
+    expect(linhas[1].amortizacao).toBeCloseTo(Math.min(linhas[1].saldoInicial, 750_000), 2);
   });
 
   it("nunca amortiza mais do que a dívida existente (saldo nunca fica negativo)", () => {
@@ -239,6 +242,7 @@ describe("simularFinanciamento com cash sweep — nunca deixa o projeto sem caix
     const necessidades: NecessidadeMensal[] = [
       { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -500_000 },
       { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 800_000 },
+      { mes: "2026-03", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 },
     ];
     const linhas = simularFinanciamento(necessidades, pComSaldoAlto, "2026-02");
     // caixa livre = 800_000 - 790_000 = 10_000, muito menor que a dívida
@@ -293,10 +297,15 @@ describe("Carência do principal (auditoria — secção 15)", () => {
     expect(linhas[prazoTotalMeses - 1].saldoFinal).toBeGreaterThanOrEqual(-1e-6);
   });
 
-  it("sem carência (carenciaAtiva: false), comportamento antigo inalterado — nunca amortiza sozinho sem cash sweep", () => {
+  it("sem carência e sem cash sweep, a dívida nunca amortiza durante o projeto — mas é sempre liquidada no último mês do horizonte (regressão do Achado P0.1 da auditoria de 2026-07-31)", () => {
     const pSemCarencia = { ...pCarencia, carenciaAtiva: false };
     const linhas = simularFinanciamento(gerarNecessidades(), pSemCarencia);
-    expect(linhas.every((l) => l.amortizacao === 0)).toBe(true); // sem carência E sem cash sweep — nunca amortiza (regra pré-existente)
+    // Nenhum mês antes do último amortiza sozinho — sem carência nem cash sweep, não há mecanismo de amortização corrente.
+    expect(linhas.slice(0, -1).every((l) => l.amortizacao === 0)).toBe(true);
+    // Mas o saldo devedor nunca fica por pagar no fim do horizonte modelado — a dívida bancária nunca pode
+    // ser distribuída ao equity como se fosse lucro (era exatamente isto que acontecia antes da correção).
+    expect(linhas[linhas.length - 1].saldoFinal).toBeCloseTo(0, 2);
+    expect(linhas[linhas.length - 1].amortizacao).toBeGreaterThan(0);
   });
 
   it("cash sweep nunca amortiza durante a carência, mesmo que ativo", () => {

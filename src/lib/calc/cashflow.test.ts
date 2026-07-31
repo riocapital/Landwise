@@ -107,18 +107,23 @@ describe("calcularCashFlow — com financiamento bancário", () => {
     const linhasCusto = [
       custo({ grupo: "aquisicao", tipoCalculo: "valor_fixo", valorInput: 1_000_000, dataInicial: "2026-01-01", duracaoMeses: 1, dataFinal: "2026-01-31" }),
     ];
+    // Horizonte estendido até 2027-01 (venda) — com um único mês de horizonte,
+    // a liquidação forçada da dívida no último mês (Achado P0.1) aconteceria
+    // no mesmo mês do drawdown, anulando o benefício do financiamento. Um
+    // projeto real nunca tem o mesmo mês como início e fim.
+    const recebimentos = [receber("2027-01", 2_000_000)];
 
     const semFin = calcularCashFlow({
       linhasCusto,
       contextoCusto: contexto,
-      recebimentos: [],
+      recebimentos,
       parametrosFinanciamento: parametrosSemFinanciamento,
       saldoMinimoCaixa: 0,
     });
     const comFin = calcularCashFlow({
       linhasCusto,
       contextoCusto: contexto,
-      recebimentos: [],
+      recebimentos,
       parametrosFinanciamento: parametrosComFinanciamento,
       saldoMinimoCaixa: 0,
     });

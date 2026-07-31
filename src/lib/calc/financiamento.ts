@@ -225,7 +225,12 @@ export function simularFinanciamento(
       feesSetupLancados = true;
     }
 
-    let saldoFinal = saldoInicial + juros + drawdown;
+    // Juros pagos correntemente em caixa (cashflow.ts subtrai `juros` todos
+    // os meses) — nunca capitalizados no saldo devedor. Capitalizar E pagar
+    // em caixa no mesmo mês era dupla contabilização do custo de juros
+    // (Achado P0.2 da auditoria de 2026-07-31): o mesmo euro descontava o
+    // caixa uma vez e ainda engordava o saldo a pagar mais tarde.
+    let saldoFinal = saldoInicial + drawdown;
 
     // Atualiza a contagem de meses desde o início do financiamento — âncora
     // da carência, definida no mês do primeiro drawdown.
@@ -274,12 +279,27 @@ export function simularFinanciamento(
       amortizacao += amortizacaoProgramada;
     }
 
+    // Último mês do horizonte modelado (Achado P0.1 da auditoria de
+    // 2026-07-31): a dívida bancária nunca pode ficar por liquidar quando o
+    // horizonte de cash flow termina — mesmo sem carência nem cash sweep
+    // ativos, e mesmo que a maturidade do empréstimo (prazoAnos) seja mais
+    // longa do que a vida comercial do projeto. Sem isto, o saldo devedor
+    // por pagar fluía para o caixa levered e o motor de equity distribuía-o
+    // ao investidor no último mês como se fosse lucro — dinheiro do banco
+    // apresentado como retorno do investidor. Espelha a mesma lógica que já
+    // existia só para a maturidade da carência (acima), agora sempre.
+    const ehUltimoMesDoHorizonte = i === necessidades.length - 1;
+    if (ehUltimoMesDoHorizonte && saldoFinal > 0) {
+      amortizacao += saldoFinal;
+      saldoFinal = 0;
+    }
+
     linhas.push({
       mes: n.mes,
       saldoInicial,
       drawdown,
       juros,
-      jurosCapitalizados: juros, // por agora, juros sempre capitalizados (sem pagamento corrente) — simplificação da Fase 5
+      jurosCapitalizados: 0, // juros pagos correntemente em caixa, nunca capitalizados — ver comentário acima em saldoFinal
       fees,
       impostoSelo: impostoSeloEmprestimo + impostoSeloJuros,
       amortizacao,
