@@ -75,14 +75,24 @@ function encontrarValorParaHurdle(
  * Distribui a cascata mês a mês. Nunca distribui mais do que
  * `disponivelParaDistribuir` em cada mês, e nunca aplica a percentagem
  * final de promote sobre todo o lucro — só sobre o incremento de cada tier.
+ *
+ * `catchUpPct` (0 = sem catch-up): logo a seguir ao 1.º hurdle (retorno
+ * preferencial ao investidor), o promotor recebe 100% da distribuição
+ * seguinte até a sua parte acumulada do lucro (excluindo devolução de
+ * capital) atingir `catchUpPct` — só depois volta à partilha normal dos
+ * tiers seguintes. Nunca antes do 1.º hurdle ser alcançado, nunca sobre a
+ * devolução de capital.
  */
 export function distribuirCascata(
   meses: MesDisponivelParaDistribuicao[],
-  hurdles: NivelHurdle[]
+  hurdles: NivelHurdle[],
+  catchUpPct: number = 0
 ): { linhas: LinhaCascataMensal[]; historicoInvestidor: FluxoDatado[] } {
   const historicoInvestidor: FluxoDatado[] = [];
   let capitalContribuidoAcumulado = 0;
   let capitalDevolvidoAcumulado = 0;
+  let distribuidoInvestidorAcumulado = 0; // lucro (acima da devolução de capital) já recebido pelo investidor
+  let distribuidoPromotorAcumulado = 0; // promote já recebido pelo promotor
   const linhas: LinhaCascataMensal[] = [];
 
   for (const m of meses) {
@@ -116,8 +126,25 @@ export function distribuirCascata(
         const paraPromotor = G - paraInvestidor;
         distribuidoInvestidor += paraInvestidor;
         distribuidoPromotor += paraPromotor;
+        distribuidoInvestidorAcumulado += paraInvestidor;
+        distribuidoPromotorAcumulado += paraPromotor;
         if (paraInvestidor > 0) historicoInvestidor.push({ data: m.data, valor: paraInvestidor });
         restante -= G;
+      }
+
+      // Catch-up do promotor: só depois do 1.º hurdle (i === 0, retorno
+      // preferencial), 100% ao promotor até a sua parte acumulada do lucro
+      // atingir catchUpPct. Resolve G_catchup tal que, depois de o somar:
+      // (distribuidoPromotorAcumulado + G) = catchUpPct × (lucroTotalAcumulado + G)
+      if (i === 0 && catchUpPct > 0 && catchUpPct < 1 && restante > 0.01) {
+        const lucroTotalAcumulado = distribuidoInvestidorAcumulado + distribuidoPromotorAcumulado;
+        const necessario = (catchUpPct * lucroTotalAcumulado - distribuidoPromotorAcumulado) / (1 - catchUpPct);
+        const paraCatchUp = Math.max(0, Math.min(restante, necessario));
+        if (paraCatchUp > 0) {
+          distribuidoPromotor += paraCatchUp;
+          distribuidoPromotorAcumulado += paraCatchUp;
+          restante -= paraCatchUp;
+        }
       }
     }
 
@@ -128,6 +155,8 @@ export function distribuirCascata(
       const paraPromotor = restante - paraInvestidor;
       distribuidoInvestidor += paraInvestidor;
       distribuidoPromotor += paraPromotor;
+      distribuidoInvestidorAcumulado += paraInvestidor;
+      distribuidoPromotorAcumulado += paraPromotor;
       if (paraInvestidor > 0) historicoInvestidor.push({ data: m.data, valor: paraInvestidor });
     }
 

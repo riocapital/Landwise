@@ -239,7 +239,13 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
 
   let investidorPromotor: ResultadosInvestidorPromotor | null = null;
   if (estruturaCapital.temInvestidorExterno) {
-    investidorPromotor = calcularResultadosComWaterfall(resultado.linhas, hurdles, estruturaCapital.percentagemInvestidor, feesTotais);
+    investidorPromotor = calcularResultadosComWaterfall(
+      resultado.linhas,
+      hurdles,
+      estruturaCapital.percentagemInvestidor,
+      feesTotais,
+      estruturaCapital.catchUpAtivo ? estruturaCapital.catchUpPct : 0
+    );
   }
 
   // Imposto estimado — mesma lógica da etapa de Impostos do wizard (secção

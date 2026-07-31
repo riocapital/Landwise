@@ -77,3 +77,40 @@ describe("calcResultadoInvestidor", () => {
     expect(resultado.irr).toBeNull();
   });
 });
+
+describe("Catch-up do promotor (secção 9 do plano)", () => {
+  it("nunca aplica catch-up antes do 1.º hurdle ser atingido", () => {
+    const meses: MesDisponivelParaDistribuicao[] = [
+      { mes: "2026-01", data: "2026-01-01", capitalCallDoMes: 1_000_000, disponivelParaDistribuir: 0 },
+      { mes: "2027-01", data: "2027-01-01", capitalCallDoMes: 0, disponivelParaDistribuir: 1_030_000 }, // devolve capital + 3%, abaixo do hurdle de 8%
+    ];
+    const { linhas } = distribuirCascata(meses, hurdles, 0.5);
+    expect(linhas[1].distribuidoPromotor).toBe(0);
+  });
+
+  it("com catch-up ativo, o promotor recebe mais logo a seguir ao 1.º hurdle do que sem catch-up", () => {
+    const meses: MesDisponivelParaDistribuicao[] = [
+      { mes: "2026-01", data: "2026-01-01", capitalCallDoMes: 1_000_000, disponivelParaDistribuir: 0 },
+      { mes: "2027-01", data: "2027-01-01", capitalCallDoMes: 0, disponivelParaDistribuir: 1_200_000 },
+    ];
+    const semCatchUp = distribuirCascata(meses, hurdles, 0);
+    const comCatchUp = distribuirCascata(meses, hurdles, 0.5);
+    expect(comCatchUp.linhas[1].distribuidoPromotor).toBeGreaterThan(semCatchUp.linhas[1].distribuidoPromotor);
+    expect(comCatchUp.linhas[1].distribuidoInvestidor).toBeLessThan(semCatchUp.linhas[1].distribuidoInvestidor);
+  });
+
+  it("depois de completo, a fatia acumulada do promotor converge para catchUpPct e mantém-se estável quando catchUpPct == promote do tier seguinte", () => {
+    const hurdleUnico: NivelHurdle[] = [{ hurdleIRR: 0.08, promotePctAcima: 0.2 }];
+    const meses: MesDisponivelParaDistribuicao[] = [
+      { mes: "2026-01", data: "2026-01-01", capitalCallDoMes: 1_000_000, disponivelParaDistribuir: 0 },
+      { mes: "2027-01", data: "2027-01-01", capitalCallDoMes: 0, disponivelParaDistribuir: 5_000_000 }, // caixa de sobra, ultrapassa largamente o catch-up
+    ];
+    const { linhas } = distribuirCascata(meses, hurdleUnico, 0.2);
+    const lucroInvestidor = linhas.reduce((s, l) => s + l.distribuidoInvestidor, 0);
+    const lucroPromotor = linhas.reduce((s, l) => s + l.distribuidoPromotor, 0);
+    const lucroTotal = lucroInvestidor + lucroPromotor;
+    // catchUpPct (0.2) == promote acima do último hurdle (0.2) — a fatia do
+    // promotor converge para 20% e não volta a mudar depois do catch-up.
+    expect(lucroPromotor / lucroTotal).toBeCloseTo(0.2, 2);
+  });
+});

@@ -193,10 +193,11 @@ export function calcularResultadosComWaterfall(
   linhasCashFlow: LinhaCashFlowMensal[],
   hurdles: NivelHurdle[],
   percentagemInvestidor: number,
-  feesTotais: number
+  feesTotais: number,
+  catchUpPct: number = 0
 ): ResultadosInvestidorPromotor {
   const meses = construirMesesParaCascata(linhasCashFlow);
-  const { linhas: linhasCascata, historicoInvestidor: historicoCombinado } = distribuirCascata(meses, hurdles);
+  const { linhas: linhasCascata, historicoInvestidor: historicoCombinado } = distribuirCascata(meses, hurdles, catchUpPct);
   void historicoCombinado; // histórico combinado (100% do capital) — usado só internamente pela cascata
 
   const reparto = repartirPorParticipacao(linhasCascata, percentagemInvestidor);
