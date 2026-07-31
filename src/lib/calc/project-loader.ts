@@ -38,12 +38,27 @@ import { carregarPlanoVendas } from "./../supabase/project-sales";
 import { carregarEstruturaCapital, listarHurdles, listarFees } from "./../supabase/project-capital";
 import { carregarImpostos } from "./../supabase/project-taxes";
 
+export type ExecucaoProjeto = {
+  dataInicio: string | null; // primeiro mês com movimento no cash flow (primeiro custo/drawdown)
+  dataFim: string | null; // último mês do horizonte modelado
+  duracaoTotalMeses: number;
+  dataLancamentoComercial: string | null;
+  dataInicioConstrucao: string | null;
+  dataFimConstrucao: string | null;
+  duracaoConstrucaoMeses: number | null;
+  dataPrimeiraVenda: string | null;
+  dataUltimaVenda: string | null;
+  dataEscritura: string | null; // "data prevista das escrituras" (secção 2 do wizard) — referência única, não por unidade
+};
+
 export type ResultadoProjetoCompleto = {
   projeto: {
     nome: string;
     tipoProjeto: string;
     localizacao: string | null;
+    areaLote: number | null;
   };
+  execucao: ExecucaoProjeto | null;
   dadosSuficientes: boolean; // false quando falta Sales Table, custos ou plano de vendas — dashboard mostra estado vazio, nunca inventa
   motivoInsuficiente: string | null;
   resumoPrograma: ReturnType<typeof calcResumoPrograma> | null;
@@ -76,6 +91,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     nome: projetoRow?.nome ?? "Projeto",
     tipoProjeto: projetoRow?.tipo_projeto ?? "",
     localizacao: [projetoRow?.freguesia, projetoRow?.concelho].filter(Boolean).join(", ") || projetoRow?.localizacao || null,
+    areaLote: projetoRow?.area_lote ?? null,
   };
 
   const [tipologias, unidades, custos, financiamento, planoVendas, estruturaCapital, hurdles, fees, impostos] = await Promise.all([
@@ -104,6 +120,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   if (custos.length === 0) {
     return {
       projeto,
+      execucao: null,
       dadosSuficientes: false,
       motivoInsuficiente: "Ainda não há linhas de custo na etapa \"Aquisição e custos\".",
       resumoPrograma,
@@ -123,6 +140,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   if (!planoVendasCompleto) {
     return {
       projeto,
+      execucao: null,
       dadosSuficientes: false,
       motivoInsuficiente: "O Plano de Vendas ainda não está completo (faltam datas de lançamento, construção ou escritura).",
       resumoPrograma,
@@ -351,8 +369,30 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     margemSensibilidadeBase: null,
   });
 
+  const diferencaMeses = (inicio: string | null, fim: string | null): number | null => {
+    if (!inicio || !fim) return null;
+    const a = new Date(`${inicio}T00:00:00Z`);
+    const b = new Date(`${fim}T00:00:00Z`);
+    if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime())) return null;
+    return Math.max(0, (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth());
+  };
+
+  const execucao: ExecucaoProjeto = {
+    dataInicio: resultado.linhas[0]?.mes ?? null,
+    dataFim: resultado.linhas[resultado.linhas.length - 1]?.mes ?? null,
+    duracaoTotalMeses: resultado.linhas.length,
+    dataLancamentoComercial: planoVendas.dataLancamentoComercial || null,
+    dataInicioConstrucao: planoVendas.dataInicioConstrucao || null,
+    dataFimConstrucao: planoVendas.dataFimConstrucao || null,
+    duracaoConstrucaoMeses: diferencaMeses(planoVendas.dataInicioConstrucao || null, planoVendas.dataFimConstrucao || null),
+    dataPrimeiraVenda: datasVendaOrdenadas[0] ?? null,
+    dataUltimaVenda: datasVendaOrdenadas[datasVendaOrdenadas.length - 1] ?? null,
+    dataEscritura: planoVendas.dataEscritura || null,
+  };
+
   return {
     projeto,
+    execucao,
     dadosSuficientes: true,
     motivoInsuficiente: null,
     resumoPrograma,

@@ -13,6 +13,13 @@ function fmtPct(v: number) {
 function fmtIndicador(v: number | null, formatador: (v: number) => string) {
   return v !== null ? formatador(v) : "Não calculável";
 }
+const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function fmtMesAno(dataIso: string | null): string {
+  if (!dataIso) return "—";
+  const [ano, mes] = dataIso.split("-").map(Number);
+  if (!ano || !mes) return "—";
+  return `${MESES_ABREV[mes - 1]}/${String(ano).slice(2)}`;
+}
 
 export default async function ProjetoResultadosPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -171,7 +178,8 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
       )}
 
       <SectionLabel>Áreas e programa</SectionLabel>
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      <div className="grid grid-cols-4 gap-4 mb-8">
+        <Kpi label="Área do lote" value={r.projeto.areaLote !== null ? `${Math.round(r.projeto.areaLote)} m²` : "—"} color="#3E6E8E" />
         <Kpi label="ABC Total" value={`${Math.round(r.abcTotal ?? 0)} m²`} color="#3E6E8E" />
         <Kpi
           label="Eficiência"
@@ -181,6 +189,37 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         />
         <Kpi label="Área vendável equivalente" value={`${Math.round(r.resumoPrograma?.areaVendavelEquivalenteTotal ?? 0)} m²`} color="#3E6E8E" />
       </div>
+
+      {r.execucao && (
+        <>
+          <SectionLabel>Execução</SectionLabel>
+          <p className="text-xs text-[#59636A] -mt-3 mb-3">
+            Gerado automaticamente a partir da Aquisição, Custos, Plano de Vendas e Financiamento — para mudar uma data, edita-a na etapa de origem.
+          </p>
+          <div className="grid grid-cols-4 gap-4 mb-5">
+            <Kpi label="Início do projeto" value={fmtMesAno(r.execucao.dataInicio)} color="#3E6E8E" />
+            <Kpi label="Lançamento comercial" value={fmtMesAno(r.execucao.dataLancamentoComercial)} color="#3E6E8E" />
+            <Kpi label="Início da construção" value={fmtMesAno(r.execucao.dataInicioConstrucao)} color="#3E6E8E" />
+            <Kpi
+              label="Fim da construção"
+              value={fmtMesAno(r.execucao.dataFimConstrucao)}
+              sub={r.execucao.duracaoConstrucaoMeses !== null ? `${r.execucao.duracaoConstrucaoMeses} meses de obra` : undefined}
+              color="#3E6E8E"
+            />
+          </div>
+          <div className="grid grid-cols-4 gap-4 mb-8">
+            <Kpi label="Primeira venda" value={fmtMesAno(r.execucao.dataPrimeiraVenda)} color="#3E6E8E" />
+            <Kpi label="Última venda" value={fmtMesAno(r.execucao.dataUltimaVenda)} color="#3E6E8E" />
+            <Kpi label="Escrituras (data prevista)" value={fmtMesAno(r.execucao.dataEscritura)} color="#3E6E8E" />
+            <Kpi
+              label="Fim do horizonte modelado"
+              value={fmtMesAno(r.execucao.dataFim)}
+              sub={`${r.execucao.duracaoTotalMeses} meses no total`}
+              color="#3E6E8E"
+            />
+          </div>
+        </>
+      )}
 
       <SectionLabel>Financiamento</SectionLabel>
       <div className="grid grid-cols-2 gap-4 mb-8">
