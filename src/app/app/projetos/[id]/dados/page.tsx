@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, use } from "react";
+import { useEffect, useState, useCallback, use, Fragment } from "react";
 import { TIPOS_PROJETO, normalizarTipoProjeto } from "@/lib/project-types";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
@@ -1358,6 +1358,11 @@ function StepPrograma({
 }) {
   const resumo = calcResumoPrograma(tipologiasNovas, identificacao.abcAcimaSolo, identificacao.abcAbaixoSolo);
   const semLocalizacao = !identificacao.freguesia && !identificacao.concelho;
+  // Sinal/reforços/escritura por unidade ficam num painel expansível, não em
+  // colunas sempre visíveis — antes disso mostravam o mesmo texto repetido
+  // linha após linha ("Fim de obra + prazo por defeito") sem acrescentar
+  // nada a olhar para a tabela principal (feedback direto do utilizador).
+  const [unidadeExpandidaId, setUnidadeExpandidaId] = useState<string | null>(null);
   const datasEfetivas = planoVendas.dataLancamentoComercial
     ? calcularDatasEfetivas(
         unidades.map((u) => ({ id: u.id, tipologiaId: u.tipologiaId, ordem: u.ordem, dataVenda: u.dataVenda, estadoComercial: u.estadoComercial })),
@@ -1804,10 +1809,7 @@ function StepPrograma({
                     <th className="pb-1 pr-2">Preço final</th>
                     <th className="pb-1 pr-2">Estado</th>
                     <th className="pb-1 pr-2">Data venda</th>
-                    <th className="pb-1 pr-2">Sinal</th>
-                    <th className="pb-1 pr-2">Reforços</th>
-                    <th className="pb-1 pr-2">Escritura (residual)</th>
-                    <th className="pb-1 pr-2">Data escritura</th>
+                    <th className="pb-1 pr-2">Escritura</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1815,8 +1817,10 @@ function StepPrograma({
                     const validacaoEscritura = validarEscrituraUnidade(u, u.precoFinal);
                     const valorEscritura = calcValorEscrituraUnidade(u, u.precoFinal);
                     const dataEscrituraDefeito = calcDataEscrituraDefeito(planoVendas.dataFimConstrucao, planoVendas.duracaoEscrituraAposObraMeses);
+                    const expandida = unidadeExpandidaId === u.id;
                     return (
-                    <tr key={u.id} className="border-t border-[#E3DACB]">
+                    <Fragment key={u.id}>
+                    <tr className="border-t border-[#E3DACB]">
                       <td className="py-1 pr-2">
                         <input className="input-dark w-20" value={u.bloco ?? ""} onChange={(e) => onAtualizarUnidade(u.id, { bloco: e.target.value })} />
                       </td>
@@ -1870,37 +1874,61 @@ function StepPrograma({
                         </span>
                       </td>
                       <td className="py-1 pr-2">
-                        <input
-                          type="number"
-                          className="input-dark w-24"
-                          value={u.sinalValor}
-                          onChange={(e) => onAtualizarUnidade(u.id, { sinalValor: Math.max(0, Number(e.target.value) || 0) })}
-                        />
-                      </td>
-                      <td className="py-1 pr-2">
-                        <input
-                          type="number"
-                          className="input-dark w-24"
-                          value={u.reforcosValor}
-                          onChange={(e) => onAtualizarUnidade(u.id, { reforcosValor: Math.max(0, Number(e.target.value) || 0) })}
-                        />
-                      </td>
-                      <td className={`py-1 pr-2 ${validacaoEscritura.valido ? "text-[#142B3A]" : "text-[#A13D2E] font-semibold"}`}>
-                        €{Math.round(valorEscritura).toLocaleString("pt-PT")}
-                        {!validacaoEscritura.valido && <span className="block text-[10px]">{validacaoEscritura.erro}</span>}
-                      </td>
-                      <td className="py-1 pr-2">
-                        <input
-                          type="date"
-                          className="input-dark"
-                          value={u.dataEscritura ?? dataEscrituraDefeito ?? ""}
-                          onChange={(e) => onAtualizarUnidade(u.id, { dataEscritura: e.target.value || null })}
-                        />
-                        <span className="block text-[10px] text-[#59636A] mt-1">
-                          {u.dataEscritura ? "Override manual" : dataEscrituraDefeito ? "Fim de obra + prazo por defeito" : "Preencha o fim de obra"}
-                        </span>
+                        <button
+                          onClick={() => setUnidadeExpandidaId(expandida ? null : u.id)}
+                          className={`text-[10px] px-2 py-1 rounded-full border ${
+                            validacaoEscritura.valido ? "border-[#E3DACB] text-[#59636A]" : "border-[#A13D2E] text-[#A13D2E] font-semibold"
+                          } hover:border-[#B96343]`}
+                        >
+                          {expandida ? "Fechar ▲" : validacaoEscritura.valido ? "Detalhe ▾" : "Ver erro ▾"}
+                        </button>
                       </td>
                     </tr>
+                    {expandida && (
+                      <tr className="bg-[#F5F0E6]">
+                        <td colSpan={9} className="p-3">
+                          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                            <Field label="Sinal">
+                              <input
+                                type="number"
+                                className="input-dark"
+                                value={u.sinalValor}
+                                onChange={(e) => onAtualizarUnidade(u.id, { sinalValor: Math.max(0, Number(e.target.value) || 0) })}
+                              />
+                            </Field>
+                            <Field label="Reforços">
+                              <input
+                                type="number"
+                                className="input-dark"
+                                value={u.reforcosValor}
+                                onChange={(e) => onAtualizarUnidade(u.id, { reforcosValor: Math.max(0, Number(e.target.value) || 0) })}
+                              />
+                            </Field>
+                            <Field label="Escritura (residual)">
+                              <input className="input-dark" disabled value={`€${Math.round(valorEscritura).toLocaleString("pt-PT")}`} />
+                            </Field>
+                            <Field label="Data escritura">
+                              <input
+                                type="date"
+                                className="input-dark"
+                                value={u.dataEscritura ?? dataEscrituraDefeito ?? ""}
+                                onChange={(e) => onAtualizarUnidade(u.id, { dataEscritura: e.target.value || null })}
+                              />
+                            </Field>
+                          </div>
+                          <p className={`text-[10px] mt-2 ${validacaoEscritura.valido ? "text-[#59636A]" : "text-[#A13D2E] font-semibold"}`}>
+                            {!validacaoEscritura.valido
+                              ? validacaoEscritura.erro
+                              : u.dataEscritura
+                                ? "Data de escritura: override manual."
+                                : dataEscrituraDefeito
+                                  ? "Data de escritura: fim de obra + prazo por defeito."
+                                  : "Preencha o fim de obra para sugerir a data de escritura."}
+                          </p>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                     );
                   })}
                 </tbody>
