@@ -89,7 +89,7 @@ import {
 } from "@/lib/supabase/project-timeline";
 import { validarEstruturaRecebimentos, type PlanoVendas } from "@/lib/calc/vendas";
 import { carregarPlanoVendas, guardarPlanoVendas, PLANO_VENDAS_VAZIO } from "@/lib/supabase/project-sales";
-import { calcularCashFlow, calcularReservaMinimaCustos, type LinhaCashFlowMensal } from "@/lib/calc/cashflow";
+import { calcularCashFlow, calcularReservaMinimaCustos } from "@/lib/calc/cashflow";
 import { calcularImt, FONTE_TABELAS_IMT, type TipoImovelImt } from "@/lib/calc/imt";
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable } from "@/lib/calc/vendas";
 import { gerarComissaoMensal } from "@/lib/calc/sales-commission";
@@ -100,6 +100,8 @@ import {
 } from "@/lib/calc/sensibilidades";
 import { Card, Row, FieldGroup, NumeroInput, PercentInput, CheckboxIdent, ResumoItem, SensibilidadesMatriz } from "./_components/ui";
 import { salesTableDaTipologia, fmtEUR, adicionarMesesData, diferencaMesesDatas, obterDatasConstrucaoDosCustos } from "./_components/helpers";
+import { CashFlowChart } from "./_components/cash-flow-chart";
+import { ConsultoriaModal } from "./_components/consultoria-modal";
 
 const STEPS = [
   "Identificação",
@@ -2352,58 +2354,6 @@ function StepAquisicaoCustos({
 
 // Gráfico SVG simples, sem dependências externas: saldo de caixa acumulado
 // (linha) + cash flow levered mensal (barras positivas/negativas).
-function CashFlowChart({ linhas }: { linhas: LinhaCashFlowMensal[] }) {
-  if (linhas.length === 0) return <p className="text-xs text-[#59636A]">Sem dados para mostrar.</p>;
-
-  const largura = 900;
-  const altura = 260;
-  const margem = { top: 10, right: 10, bottom: 24, left: 10 };
-  const w = largura - margem.left - margem.right;
-  const h = altura - margem.top - margem.bottom;
-
-  const saldos = linhas.map((l) => l.saldoCaixaAcumulado);
-  const cfs = linhas.map((l) => l.cashFlowLevered);
-  const minY = Math.min(0, ...saldos, ...cfs);
-  const maxY = Math.max(0, ...saldos, ...cfs);
-  const rangeY = maxY - minY || 1;
-
-  const x = (i: number) => margem.left + (linhas.length <= 1 ? 0 : (i / (linhas.length - 1)) * w);
-  const y = (v: number) => margem.top + h - ((v - minY) / rangeY) * h;
-  const yZero = y(0);
-
-  const pontosSaldo = saldos.map((v, i) => `${x(i)},${y(v)}`).join(" ");
-  const larguraBarra = Math.max(1, (w / linhas.length) * 0.6);
-
-  return (
-    <div className="overflow-x-auto">
-      <svg viewBox={`0 0 ${largura} ${altura}`} className="w-full" style={{ minWidth: 600 }}>
-        <line x1={margem.left} y1={yZero} x2={largura - margem.right} y2={yZero} stroke="#E3DACB" strokeWidth={1} />
-        {cfs.map((v, i) => (
-          <rect
-            key={i}
-            x={x(i) - larguraBarra / 2}
-            y={v >= 0 ? y(v) : yZero}
-            width={larguraBarra}
-            height={Math.abs(y(v) - yZero)}
-            fill={v >= 0 ? "#4E7A5C" : "#B96343"}
-            opacity={0.6}
-          />
-        ))}
-        <polyline points={pontosSaldo} fill="none" stroke="#3E6E8E" strokeWidth={2} />
-        {[0, Math.floor(linhas.length / 2), linhas.length - 1].map((i) => (
-          <text key={i} x={x(i)} y={altura - 6} fontSize={10} fill="#59636A" textAnchor="middle">
-            {linhas[i].mes}
-          </text>
-        ))}
-      </svg>
-      <div className="flex gap-4 text-[10px] text-[#59636A] mt-1">
-        <span><span className="inline-block w-3 h-0.5 bg-[#3E6E8E] align-middle mr-1" />Saldo de caixa acumulado</span>
-        <span><span className="inline-block w-3 h-3 bg-[#4E7A5C] opacity-60 align-middle mr-1" />CF levered positivo</span>
-        <span><span className="inline-block w-3 h-3 bg-[#B96343] opacity-60 align-middle mr-1" />CF levered negativo</span>
-      </div>
-    </div>
-  );
-}
 
 function StepFinanciamento({
   financiamento,
@@ -3034,107 +2984,6 @@ function StepImpostos({
   );
 }
 
-function ConsultoriaModal({
-  onFechar,
-  onEnviar,
-}: {
-  onFechar: () => void;
-  onEnviar: (dados: {
-    name: string;
-    company: string;
-    email: string;
-    phone: string;
-    message: string;
-    preferenciaContacto: "email" | "telefone";
-  }) => Promise<{ ok: boolean; erro?: string }>;
-}) {
-  const [nome, setNomeLead] = useState("");
-  const [empresa, setEmpresa] = useState("");
-  const [email, setEmail] = useState("");
-  const [telefone, setTelefone] = useState("");
-  const [mensagem, setMensagem] = useState("");
-  const [preferencia, setPreferencia] = useState<"email" | "telefone">("email");
-  const [aEnviar, setAEnviar] = useState(false);
-  const [enviado, setEnviado] = useState(false);
-  const [erro, setErro] = useState<string | null>(null);
-
-  async function handleEnviar() {
-    if (!nome || !email) {
-      setErro("Preenche pelo menos o nome e o email.");
-      return;
-    }
-    setAEnviar(true);
-    setErro(null);
-    const resultado = await onEnviar({ name: nome, company: empresa, email, phone: telefone, message: mensagem, preferenciaContacto: preferencia });
-    setAEnviar(false);
-    if (resultado.ok) {
-      setEnviado(true);
-    } else {
-      setErro(resultado.erro ?? "Não foi possível enviar o pedido. Tenta novamente.");
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onFechar}>
-      <div className="bg-white rounded-xl p-6 max-w-md w-full" onClick={(e) => e.stopPropagation()}>
-        {enviado ? (
-          <>
-            <h3 className="text-[#142B3A] font-bold text-lg mb-2">Pedido enviado</h3>
-            <p className="text-sm text-[#59636A] mb-4">
-              Obrigado. A nossa equipa entra em contacto por {preferencia === "email" ? "email" : "telefone"} em breve.
-            </p>
-            <button onClick={onFechar} className="px-4 py-2 rounded-lg bg-[#142B3A] text-white text-sm font-bold">
-              Fechar
-            </button>
-          </>
-        ) : (
-          <>
-            <h3 className="text-[#142B3A] font-bold text-lg mb-1">Solicitar análise especializada</h3>
-            <p className="text-xs text-[#8FA6AF] mb-4">Esta estimativa não substitui uma análise fiscal, jurídica ou contabilística individual.</p>
-            <Row>
-              <FieldGroup label="Nome">
-                <input className="input-dark" value={nome} onChange={(e) => setNomeLead(e.target.value)} />
-              </FieldGroup>
-              <FieldGroup label="Empresa">
-                <input className="input-dark" value={empresa} onChange={(e) => setEmpresa(e.target.value)} />
-              </FieldGroup>
-            </Row>
-            <Row>
-              <FieldGroup label="Email">
-                <input type="email" className="input-dark" value={email} onChange={(e) => setEmail(e.target.value)} />
-              </FieldGroup>
-              <FieldGroup label="Telefone">
-                <input className="input-dark" value={telefone} onChange={(e) => setTelefone(e.target.value)} />
-              </FieldGroup>
-            </Row>
-            <Row>
-              <FieldGroup label="Preferência de contacto">
-                <select className="input-dark" value={preferencia} onChange={(e) => setPreferencia(e.target.value as "email" | "telefone")}>
-                  <option value="email">Email</option>
-                  <option value="telefone">Telefone</option>
-                </select>
-              </FieldGroup>
-            </Row>
-            <Row>
-              <FieldGroup label="Mensagem (opcional)">
-                <textarea className="input-dark" rows={3} value={mensagem} onChange={(e) => setMensagem(e.target.value)} />
-              </FieldGroup>
-            </Row>
-            {erro && <p className="text-xs text-[#A13D2E] mb-2">{erro}</p>}
-            <div className="flex gap-2 mt-2">
-              <button onClick={handleEnviar} disabled={aEnviar} className="px-4 py-2 rounded-lg bg-[#142B3A] text-white text-sm font-bold disabled:opacity-60">
-                {aEnviar ? "A enviar…" : "Enviar pedido"}
-              </button>
-              <button onClick={onFechar} className="px-4 py-2 rounded-lg border border-[#E3DACB] text-[#142B3A] text-sm font-semibold">
-                Cancelar
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function StepCalendario({
   custosNovos,
