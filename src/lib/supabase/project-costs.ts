@@ -63,7 +63,7 @@ export async function criarCusto(supabase: SupabaseClient, projectId: string, gr
   return linhaParaLinhaCusto(data as ProjectCostRow);
 }
 
-export async function atualizarCusto(supabase: SupabaseClient, id: string, patch: Partial<LinhaCusto>): Promise<void> {
+export async function atualizarCusto(supabase: SupabaseClient, id: string, patch: Partial<LinhaCusto>): Promise<string | null> {
   const dbPatch: Partial<ProjectCostRow> = {};
   if (patch.nome !== undefined) { dbPatch.nome = patch.nome; dbPatch.categoria = patch.nome; }
   if (patch.tipoCalculo !== undefined) dbPatch.tipo_calculo = patch.tipoCalculo;
@@ -77,7 +77,8 @@ export async function atualizarCusto(supabase: SupabaseClient, id: string, patch
   if (patch.dataFinal !== undefined) dbPatch.data_final = patch.dataFinal;
   if (patch.perfilDesembolso !== undefined) dbPatch.perfil_desembolso = patch.perfilDesembolso;
 
-  await supabase.from("project_costs").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_costs").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 export async function apagarCusto(supabase: SupabaseClient, id: string): Promise<void> {

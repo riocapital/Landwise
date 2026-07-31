@@ -34,8 +34,8 @@ export async function carregarEstruturaCapital(supabase: SupabaseClient, project
   };
 }
 
-export async function guardarEstruturaCapital(supabase: SupabaseClient, projectId: string, estado: EstruturaCapitalEstado): Promise<void> {
-  await supabase.from("project_capital_structure").upsert(
+export async function guardarEstruturaCapital(supabase: SupabaseClient, projectId: string, estado: EstruturaCapitalEstado): Promise<string | null> {
+  const { error } = await supabase.from("project_capital_structure").upsert(
     {
       project_id: projectId,
       tem_investidor_externo: estado.temInvestidorExterno,
@@ -46,6 +46,7 @@ export async function guardarEstruturaCapital(supabase: SupabaseClient, projectI
     },
     { onConflict: "project_id" }
   );
+  return error?.message ?? null;
 }
 
 // --- Hurdle tiers ---
@@ -69,11 +70,12 @@ export async function criarHurdle(supabase: SupabaseClient, projectId: string, o
   return { id: r.id, hurdleIRR: r.hurdle_irr, promotePctAcima: r.promote_pct_acima };
 }
 
-export async function atualizarHurdle(supabase: SupabaseClient, id: string, patch: Partial<NivelHurdle>): Promise<void> {
+export async function atualizarHurdle(supabase: SupabaseClient, id: string, patch: Partial<NivelHurdle>): Promise<string | null> {
   const dbPatch: Record<string, number> = {};
   if (patch.hurdleIRR !== undefined) dbPatch.hurdle_irr = patch.hurdleIRR;
   if (patch.promotePctAcima !== undefined) dbPatch.promote_pct_acima = patch.promotePctAcima;
-  await supabase.from("project_waterfall_tiers").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_waterfall_tiers").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 export async function apagarHurdle(supabase: SupabaseClient, id: string): Promise<void> {
@@ -122,13 +124,14 @@ export async function criarFee(supabase: SupabaseClient, projectId: string, tipo
   return linhaParaFee(data as FeeRow);
 }
 
-export async function atualizarFee(supabase: SupabaseClient, id: string, patch: Partial<Fee>): Promise<void> {
+export async function atualizarFee(supabase: SupabaseClient, id: string, patch: Partial<Fee>): Promise<string | null> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.nome !== undefined) dbPatch.nome = patch.nome;
   if (patch.baseCalculo !== undefined) dbPatch.base_calculo = patch.baseCalculo;
   if (patch.valorInput !== undefined) dbPatch.valor_input = patch.valorInput;
   if (patch.momentoPagamento !== undefined) dbPatch.momento_pagamento = patch.momentoPagamento;
-  await supabase.from("project_fees").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_fees").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 export async function apagarFee(supabase: SupabaseClient, id: string): Promise<void> {

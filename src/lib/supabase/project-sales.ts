@@ -45,8 +45,8 @@ export async function carregarPlanoVendas(supabase: SupabaseClient, projectId: s
   };
 }
 
-export async function guardarPlanoVendas(supabase: SupabaseClient, projectId: string, plano: PlanoVendas): Promise<void> {
-  await supabase.from("project_sales_assumptions").upsert(
+export async function guardarPlanoVendas(supabase: SupabaseClient, projectId: string, plano: PlanoVendas): Promise<string | null> {
+  const { error } = await supabase.from("project_sales_assumptions").upsert(
     {
       project_id: projectId,
       data_lancamento_comercial: plano.dataLancamentoComercial || null,
@@ -69,4 +69,5 @@ export async function guardarPlanoVendas(supabase: SupabaseClient, projectId: st
     },
     { onConflict: "project_id" }
   );
+  return error?.message ?? null;
 }

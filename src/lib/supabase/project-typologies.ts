@@ -100,7 +100,7 @@ export async function atualizarTipologia(
   supabase: SupabaseClient,
   id: string,
   patch: Partial<Typology>
-): Promise<void> {
+): Promise<string | null> {
   const dbPatch: Partial<ProjectTypologyRow> = {};
   if (patch.nome !== undefined) dbPatch.nome = patch.nome;
   if (patch.quantidade !== undefined) dbPatch.quantidade = patch.quantidade;
@@ -121,7 +121,8 @@ export async function atualizarTipologia(
   if (patch.mesesParaPrimeiraVenda !== undefined) dbPatch.meses_para_primeira_venda = patch.mesesParaPrimeiraVenda;
   if (patch.unidadesPorMes !== undefined) dbPatch.unidades_por_mes = patch.unidadesPorMes;
 
-  await supabase.from("project_typologies").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_typologies").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 export async function apagarTipologia(supabase: SupabaseClient, id: string): Promise<void> {

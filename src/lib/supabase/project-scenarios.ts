@@ -64,14 +64,15 @@ export async function criarCenario(supabase: SupabaseClient, projectId: string, 
   return linhaParaCenario(data as ProjectScenarioRow);
 }
 
-export async function atualizarCenario(supabase: SupabaseClient, id: string, patch: Partial<Cenario>): Promise<void> {
+export async function atualizarCenario(supabase: SupabaseClient, id: string, patch: Partial<Cenario>): Promise<string | null> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.nome !== undefined) dbPatch.nome = patch.nome;
   if (patch.deltaAquisicao !== undefined) dbPatch.delta_aquisicao = patch.deltaAquisicao;
   if (patch.deltaConstrucao !== undefined) dbPatch.delta_construcao = patch.deltaConstrucao;
   if (patch.deltaPreco !== undefined) dbPatch.delta_preco = patch.deltaPreco;
   // eh_base nunca é atualizável a partir do wizard — protege o cenário-base na origem.
-  await supabase.from("project_scenarios").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_scenarios").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 /** Nunca apaga o cenário-base — o chamador deve verificar `podeApagarCenario` antes, mas esta função também recusa por segurança. */

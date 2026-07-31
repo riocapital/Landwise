@@ -169,6 +169,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Fase 2: localização/áreas estruturadas + tipologias no motor novo (areas.ts)
   const [identificacao, setIdentificacao] = useState<IdentificacaoEstruturada>(IDENTIFICACAO_VAZIA);
@@ -279,7 +280,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           ? [identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ")
           : inputs.localizacao;
 
-      await supabase
+      const { error: erroIdentificacao } = await supabase
         .from("projects")
         .update({
           nome,
@@ -311,20 +312,32 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
 
       // Tipologias do motor novo: cada uma já tem id real na BD (criada ao
       // clicar "+ Adicionar"), por isso aqui é sempre update, nunca insert.
-      await Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t)));
-      await Promise.all(unidades.map((u) => atualizarUnidade(supabase, u.id, u)));
-      await Promise.all(regrasPreco.map((r) => atualizarRegraPreco(supabase, r.id, r)));
-      await Promise.all(cenarios.filter((c) => !c.ehBase).map((c) => atualizarCenario(supabase, c.id, c)));
-      await Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c)));
-      await guardarFinanciamento(supabase, id, financiamento);
-      await guardarEstruturaCapital(supabase, id, estruturaCapital);
-      await Promise.all(hurdles.map((h) => atualizarHurdle(supabase, h.id, h)));
-      await Promise.all(feesNovos.map((f) => atualizarFee(supabase, f.id, f)));
-      await guardarImpostos(supabase, id, impostos);
-      await Promise.all(atividades.map((a) => atualizarAtividade(supabase, a.id, a)));
-      await guardarPlanoVendas(supabase, id, planoVendas);
+      // Cada chamada devolve a mensagem de erro (ou null) em vez de a
+      // ignorar silenciosamente — sem isto, "Guardado às HH:MM:SS" podia
+      // aparecer mesmo quando a gravação falhou (ex. erro de rede, RLS).
+      const resultados = await Promise.all([
+        Promise.all(tipologiasNovas.map((t) => atualizarTipologia(supabase, t.id, t))),
+        Promise.all(unidades.map((u) => atualizarUnidade(supabase, u.id, u))),
+        Promise.all(regrasPreco.map((r) => atualizarRegraPreco(supabase, r.id, r))),
+        Promise.all(cenarios.filter((c) => !c.ehBase).map((c) => atualizarCenario(supabase, c.id, c))),
+        Promise.all(custosNovos.map((c) => atualizarCusto(supabase, c.id, c))),
+        guardarFinanciamento(supabase, id, financiamento),
+        guardarEstruturaCapital(supabase, id, estruturaCapital),
+        Promise.all(hurdles.map((h) => atualizarHurdle(supabase, h.id, h))),
+        Promise.all(feesNovos.map((f) => atualizarFee(supabase, f.id, f))),
+        guardarImpostos(supabase, id, impostos),
+        Promise.all(atividades.map((a) => atualizarAtividade(supabase, a.id, a))),
+        guardarPlanoVendas(supabase, id, planoVendas),
+      ]);
 
-      setSavedAt(new Date());
+      const erros = [erroIdentificacao?.message ?? null, ...resultados.flat()].filter((e): e is string => e !== null);
+
+      if (erros.length > 0) {
+        setSaveError(erros[0]);
+      } else {
+        setSaveError(null);
+        setSavedAt(new Date());
+      }
       if (!silencioso) setSaving(false);
     },
     [
@@ -900,10 +913,21 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           onChange={(e) => setNome(e.target.value)}
           className="text-lg font-bold text-[#142B3A] bg-transparent border-b border-transparent hover:border-[#E3DACB] focus:border-[#B96343] focus:outline-none"
         />
-        <span className="text-xs text-[#59636A]">
-          {saving ? "A guardar…" : savedAt ? `Guardado às ${savedAt.toLocaleTimeString("pt-PT")}` : ""}
+        <span className={`text-xs ${saveError ? "text-[#A13D2E] font-semibold" : "text-[#59636A]"}`}>
+          {saving
+            ? "A guardar…"
+            : saveError
+              ? "Falha ao guardar — tenta novamente"
+              : savedAt
+                ? `Guardado às ${savedAt.toLocaleTimeString("pt-PT")}`
+                : ""}
         </span>
       </div>
+      {saveError && (
+        <p className="text-xs text-[#A13D2E] -mt-1 mb-4 bg-[#FBEAE6] border border-[#A13D2E]/30 rounded-lg px-3 py-2">
+          As últimas alterações não foram guardadas: {saveError}. Os dados no ecrã continuam corretos — tenta guardar de novo antes de sair desta página.
+        </p>
+      )}
       <p className="text-sm text-[#59636A] mb-6">Preencha o que souber. O que não souber, o motor assume um valor de referência — sempre editável.</p>
 
       <div className="flex border-b border-[#E3DACB] mb-7">

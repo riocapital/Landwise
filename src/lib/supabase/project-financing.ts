@@ -110,8 +110,8 @@ export async function carregarFinanciamento(supabase: SupabaseClient, projectId:
 }
 
 /** Upsert (um registo por projeto) — cria na primeira gravação, atualiza nas seguintes. */
-export async function guardarFinanciamento(supabase: SupabaseClient, projectId: string, parametros: ParametrosFinanciamento): Promise<void> {
-  await supabase.from("project_financing").upsert(
+export async function guardarFinanciamento(supabase: SupabaseClient, projectId: string, parametros: ParametrosFinanciamento): Promise<string | null> {
+  const { error } = await supabase.from("project_financing").upsert(
     {
       project_id: projectId,
       com_financiamento: parametros.comFinanciamento,
@@ -142,4 +142,5 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
     },
     { onConflict: "project_id" }
   );
+  return error?.message ?? null;
 }

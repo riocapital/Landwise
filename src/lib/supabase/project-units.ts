@@ -85,7 +85,7 @@ export async function criarUnidades(supabase: SupabaseClient, projectId: string,
   return (data as ProjectUnitRow[]).map(linhaParaUnidade);
 }
 
-export async function atualizarUnidade(supabase: SupabaseClient, id: string, patch: Partial<UnidadeVenda>): Promise<void> {
+export async function atualizarUnidade(supabase: SupabaseClient, id: string, patch: Partial<UnidadeVenda>): Promise<string | null> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.bloco !== undefined) dbPatch.bloco = patch.bloco;
   if (patch.piso !== undefined) dbPatch.piso = patch.piso;
@@ -100,7 +100,8 @@ export async function atualizarUnidade(supabase: SupabaseClient, id: string, pat
   if (patch.dataEscritura !== undefined) dbPatch.data_escritura = patch.dataEscritura;
   if (patch.estadoComercial !== undefined) dbPatch.estado_comercial = patch.estadoComercial;
 
-  await supabase.from("project_units").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_units").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 export async function apagarUnidades(supabase: SupabaseClient, ids: string[]): Promise<void> {

@@ -48,7 +48,7 @@ export async function criarRegraPreco(supabase: SupabaseClient, projectId: strin
   return linhaParaRegra(data as ProjectPriceRuleRow);
 }
 
-export async function atualizarRegraPreco(supabase: SupabaseClient, id: string, patch: Partial<RegraEvolucaoPreco>): Promise<void> {
+export async function atualizarRegraPreco(supabase: SupabaseClient, id: string, patch: Partial<RegraEvolucaoPreco>): Promise<string | null> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.escopo !== undefined) {
     dbPatch.escopo_tipo = patch.escopo.tipo;
@@ -61,7 +61,8 @@ export async function atualizarRegraPreco(supabase: SupabaseClient, id: string, 
   if (patch.modo !== undefined) dbPatch.modo = patch.modo;
   if (patch.observacao !== undefined) dbPatch.observacao = patch.observacao;
 
-  await supabase.from("project_price_rules").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_price_rules").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 export async function apagarRegraPreco(supabase: SupabaseClient, id: string): Promise<void> {

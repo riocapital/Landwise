@@ -73,8 +73,8 @@ export async function carregarImpostos(supabase: SupabaseClient, projectId: stri
   };
 }
 
-export async function guardarImpostos(supabase: SupabaseClient, projectId: string, estado: ImpostosEstado): Promise<void> {
-  await supabase.from("project_taxes").upsert(
+export async function guardarImpostos(supabase: SupabaseClient, projectId: string, estado: ImpostosEstado): Promise<string | null> {
+  const { error } = await supabase.from("project_taxes").upsert(
     {
       project_id: projectId,
       seguro_taxa: estado.seguroTaxa,
@@ -99,4 +99,5 @@ export async function guardarImpostos(supabase: SupabaseClient, projectId: strin
     },
     { onConflict: "project_id" }
   );
+  return error?.message ?? null;
 }

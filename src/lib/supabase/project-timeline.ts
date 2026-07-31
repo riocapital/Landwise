@@ -42,7 +42,7 @@ export async function criarAtividade(supabase: SupabaseClient, projectId: string
   return linhaParaAtividade(data as ProjectTimelineRow);
 }
 
-export async function atualizarAtividade(supabase: SupabaseClient, id: string, patch: Partial<Atividade>): Promise<void> {
+export async function atualizarAtividade(supabase: SupabaseClient, id: string, patch: Partial<Atividade>): Promise<string | null> {
   const dbPatch: Record<string, unknown> = {};
   if (patch.nome !== undefined) dbPatch.nome = patch.nome;
   if (patch.dataInicial !== undefined) dbPatch.data_inicial = patch.dataInicial;
@@ -52,7 +52,8 @@ export async function atualizarAtividade(supabase: SupabaseClient, id: string, p
   if (patch.dependenciaId !== undefined) dbPatch.dependencia_id = patch.dependenciaId;
   if (patch.observacoes !== undefined) dbPatch.observacoes = patch.observacoes;
   if (patch.ordem !== undefined) dbPatch.ordem = patch.ordem;
-  await supabase.from("project_timeline").update(dbPatch).eq("id", id);
+  const { error } = await supabase.from("project_timeline").update(dbPatch).eq("id", id);
+  return error?.message ?? null;
 }
 
 export async function apagarAtividade(supabase: SupabaseClient, id: string): Promise<void> {
