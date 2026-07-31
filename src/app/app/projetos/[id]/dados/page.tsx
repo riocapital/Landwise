@@ -563,30 +563,41 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     }
   }
 
+  // Usa a forma funcional de setCustosNovos (prev => ...) de propósito: várias
+  // chamadas a esta função disparam-se em sequência síncrona no mesmo evento
+  // (ex.: sincronizarAquisicao atualiza "Sinal da aquisição" e depois "Escritura
+  // da aquisição"). Com `custosNovos` capturado do closure do render, a segunda
+  // chamada partia sempre do mesmo array desatualizado da primeira — a última
+  // chamada "ganhava" e a atualização anterior era descartada silenciosamente
+  // (achado P1.6 da auditoria: o sinal ficava preso num valor antigo enquanto a
+  // escritura recalculava corretamente). A forma funcional garante que cada
+  // chamada parte sempre do estado mais recente, mesmo dentro do mesmo tick.
   function atualizarCustoNovoLocal(custoId: string, patch: Partial<LinhaCusto>) {
-    const atualizados = custosNovos.map((c) => (c.id === custoId ? { ...c, ...patch } : c));
-    const { inicio, fim } = obterDatasConstrucaoDosCustos(atualizados);
-    const duracao = inicio && fim ? Math.max(1, diferencaMesesDatas(inicio, fim) + 1) : null;
-    const comFiscalizacaoSincronizada = atualizados.map((c) =>
-      c.nome === "Fiscalização de obra" && inicio && fim
-        ? {
-            ...c,
-            tipoCalculo: "valor_mensal" as const,
-            dataInicial: inicio,
-            dataFinal: fim,
-            duracaoMeses: duracao,
-            perfilDesembolso: "linear" as const,
-          }
-        : c
-    );
-    setCustosNovos(comFiscalizacaoSincronizada);
-    if (inicio || fim) {
-      setPlanoVendas((prev) => ({
-        ...prev,
-        dataInicioConstrucao: inicio || prev.dataInicioConstrucao,
-        dataFimConstrucao: fim || prev.dataFimConstrucao,
-      }));
-    }
+    setCustosNovos((prev) => {
+      const atualizados = prev.map((c) => (c.id === custoId ? { ...c, ...patch } : c));
+      const { inicio, fim } = obterDatasConstrucaoDosCustos(atualizados);
+      const duracao = inicio && fim ? Math.max(1, diferencaMesesDatas(inicio, fim) + 1) : null;
+      const comFiscalizacaoSincronizada = atualizados.map((c) =>
+        c.nome === "Fiscalização de obra" && inicio && fim
+          ? {
+              ...c,
+              tipoCalculo: "valor_mensal" as const,
+              dataInicial: inicio,
+              dataFinal: fim,
+              duracaoMeses: duracao,
+              perfilDesembolso: "linear" as const,
+            }
+          : c
+      );
+      if (inicio || fim) {
+        setPlanoVendas((prevPlano) => ({
+          ...prevPlano,
+          dataInicioConstrucao: inicio || prevPlano.dataInicioConstrucao,
+          dataFimConstrucao: fim || prevPlano.dataFimConstrucao,
+        }));
+      }
+      return comFiscalizacaoSincronizada;
+    });
   }
 
   async function removerCustoNovo(custoId: string) {
