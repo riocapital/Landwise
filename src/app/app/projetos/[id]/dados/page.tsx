@@ -1972,6 +1972,15 @@ const PERFIS_DESEMBOLSO: { value: LinhaCusto["perfilDesembolso"]; label: string 
   { value: "back_loaded", label: "Back-loaded" },
 ];
 
+// Convenção monetária única do wizard (€ depois do número, sinal antes dos
+// dígitos — "-5 000 €", nunca "€-5 000"). Usar aqui em vez de reimplementar
+// `€${Math.round(v).toLocaleString("pt-PT")}` em cada célula — essa forma
+// coloca o sinal negativo a seguir ao símbolo do euro, ilegível em tabelas
+// densas como o "Cash flow mensal" (achado da auditoria de formatação).
+function fmtEUR(v: number): string {
+  return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 0 }).format(v) + " €";
+}
+
 function adicionarMesesData(data: string, meses: number): string {
   if (!data) return "";
   const [ano, mes, dia] = data.split("-").map(Number);
@@ -3380,7 +3389,9 @@ function StepCashFlowResultados({
         >
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <ResumoItem label="Freguesia / Concelho" valor={[identificacao.freguesia, identificacao.concelho].filter(Boolean).join(", ") || "—"} />
-            <ResumoItem label="ABC total" valor={`${Math.round((identificacao.abcAcimaSolo ?? 0) + (identificacao.abcAbaixoSolo ?? 0))} m²`} />
+            {/* Fonte única do ABC Total: resumoPrograma.abcTotal (calculado a partir do programa de tipologias) —
+                nunca a soma direta de identificacao.abcAcimaSolo/abcAbaixoSolo, que pode divergir do programado
+                (ver alerta de divergência na etapa Identificação) e mostrava dois "ABC total" lado a lado. */}
             <ResumoItem label="ABC Total" valor={`${Math.round(resumoPrograma.abcTotal)} m²`} />
             <ResumoItem label="ABP" valor={`${Math.round(resumoPrograma.abpTotal)} m²`} />
             <ResumoItem label="Área vendável equivalente" valor={`${Math.round(resumoPrograma.areaVendavelEquivalenteTotal)} m²`} />
@@ -3399,13 +3410,19 @@ function StepCashFlowResultados({
             <ResumoItem label="Lucro do equity" valor={`€${Math.round(resultado.equity.lucroEquity).toLocaleString("pt-PT")}`} />
             <ResumoItem label="Peak equity exposure" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
             <ResumoItem
-              label="IRR do equity"
+              label="TIR do equity (alavancada)"
               valor={(() => {
                 const irr = extrairIndicador(resultado, "irr_levered");
                 return irr !== null ? `${(irr * 100).toFixed(1)}%` : "Não calculável";
               })()}
             />
-            <ResumoItem label="MOIC do equity" valor={`${(extrairIndicador(resultado, "moic") ?? 0).toFixed(2)}x`} />
+            <ResumoItem
+              label="MOIC do equity"
+              valor={(() => {
+                const moic = extrairIndicador(resultado, "moic");
+                return moic !== null ? `${moic.toFixed(2)}x` : "Não calculável";
+              })()}
+            />
           </div>
         </Card>
       )}
@@ -3438,23 +3455,26 @@ function StepCashFlowResultados({
                 </tr>
               </thead>
               <tbody>
-                {resultado.linhas.map((l) => (
-                  <tr key={l.mes} className="border-t border-[#E3DACB]">
-                    <td className="py-1 pr-2">{l.mes}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.receitaVendas).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.comissaoComercial).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.cashFlowUnlevered).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.drawdown).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.jurosEFees).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.amortizacao).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.saldoDivida).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.cashFlowLevered).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.equityCall).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.distribuicoes).toLocaleString("pt-PT")}</td>
-                    <td className="py-1 pr-2">€{Math.round(l.saldoCaixaAcumulado).toLocaleString("pt-PT")}</td>
-                  </tr>
-                ))}
+                {resultado.linhas.map((l) => {
+                  const negativo = (v: number) => (v < 0 ? "text-[#B96343]" : undefined);
+                  return (
+                    <tr key={l.mes} className="border-t border-[#E3DACB]">
+                      <td className="py-1 pr-2">{l.mes}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.receitaVendas)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.comissaoComercial)}</td>
+                      <td className={`py-1 pr-2 ${negativo(l.cashFlowUnlevered)}`}>{fmtEUR(l.cashFlowUnlevered)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.drawdown)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.jurosEFees)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.amortizacao)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.saldoDivida)}</td>
+                      <td className={`py-1 pr-2 ${negativo(l.cashFlowLevered)}`}>{fmtEUR(l.cashFlowLevered)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.equityCall)}</td>
+                      <td className="py-1 pr-2">{fmtEUR(l.distribuicoes)}</td>
+                      <td className={`py-1 pr-2 ${negativo(l.saldoCaixaAcumulado)}`}>{fmtEUR(l.saldoCaixaAcumulado)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -3575,9 +3595,15 @@ function StepCashFlowResultados({
                 <ResumoItem label="Peak cash exposure" valor={`€${Math.round(resultado.equity.peakCashExposure).toLocaleString("pt-PT")}`} />
                 <ResumoItem label="Capital + lucro devolvido" valor={`€${Math.round(resultado.equity.capitalDevolvidoTotal).toLocaleString("pt-PT")}`} />
                 <ResumoItem label="Lucro do equity" valor={`€${Math.round(resultado.equity.lucroEquity).toLocaleString("pt-PT")}`} />
-                <ResumoItem label="MOIC" valor={`${(extrairIndicador(resultado, "moic") ?? 0).toFixed(2)}x`} />
                 <ResumoItem
-                  label="IRR"
+                  label="MOIC"
+                  valor={(() => {
+                    const moic = extrairIndicador(resultado, "moic");
+                    return moic !== null ? `${moic.toFixed(2)}x` : "Não calculável";
+                  })()}
+                />
+                <ResumoItem
+                  label="TIR (alavancada)"
                   valor={(() => {
                     const irr = extrairIndicador(resultado, "irr_levered");
                     return irr !== null ? `${(irr * 100).toFixed(1)}%` : "Não calculável";
