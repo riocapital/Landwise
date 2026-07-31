@@ -254,7 +254,17 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   // que já são o preço de aquisição (contextoCusto.valorAquisicao), contado
   // ali uma única vez. Ver calcCustosAquisicaoAcessorios em custos.ts.
   const linhasCustoResolvidas = resolverCustos(custos, contextoCusto);
-  const custosAquisicaoAuxiliares = calcCustosAquisicaoAcessorios(linhasCustoResolvidas);
+  // Só linhas com data entram no cash flow real (distribuirCustosPorMes em
+  // cashflow.ts ignora linhas sem dataInicial/dataFinal) — hardCosts/
+  // softCosts abaixo já respeitam isto por virem de `resultado.linhas`
+  // (derivado do cash flow). custosAquisicaoAuxiliares tinha de ser filtrado
+  // à parte, porque vem diretamente de linhasCustoResolvidas: sem isto, uma
+  // linha com valor mas sem data (ex.: IMT calculado mas nunca datado)
+  // contava no "Custo total do projeto" do dashboard sem nunca ter entrado
+  // no cash flow/financiamento/equity reais (achado P1.2 da auditoria de
+  // 2026-07-31).
+  const linhasCustoResolvidasComData = linhasCustoResolvidas.filter((l) => l.dataInicial && l.dataFinal);
+  const custosAquisicaoAuxiliares = calcCustosAquisicaoAcessorios(linhasCustoResolvidasComData);
   const hardCostsTotal = resultado.linhas.reduce((s, l) => s + l.hardCosts, 0);
   const softCostsTotal = resultado.linhas.reduce((s, l) => s + l.softCosts + l.outrosCustos, 0);
   // IVA não recuperável já entra no custo total do cash flow (cashflow.ts) —
