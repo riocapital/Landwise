@@ -248,7 +248,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   const necessidadesEquity: NecessidadeMensalEquity[] = unleveredPorMes.map((l, i) => {
     const fin = linhasFinanciamento[i];
     const cashFlowLevered = l.cashFlowUnlevered + fin.drawdown - fin.juros - fin.fees - fin.impostoSelo - fin.amortizacao;
-    return { mes: l.mes, saldoCaixaAposFinanciamento: cashFlowLevered, recebimentosClientes: l.receita };
+    return { mes: l.mes, saldoCaixaAposFinanciamento: cashFlowLevered, recebimentosClientes: l.receita, saldoMinimoCaixa: premissas.saldoMinimoCaixa };
   });
   const linhasEquity = simularEquity(necessidadesEquity);
 

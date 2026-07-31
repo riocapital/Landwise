@@ -14,6 +14,7 @@ export type NecessidadeMensalEquity = {
   mes: string;
   saldoCaixaAposFinanciamento: number; // saldo do mês depois de aplicado o drawdown do motor de financiamento (pode continuar negativo)
   recebimentosClientes: number; // entradas de caixa de vendas neste mês (para permitir devolução de capital)
+  saldoMinimoCaixa: number; // reserva de segurança (secção 15 da auditoria) — nunca distribuída antes do último mês, só o cash sweep já a respeitava
 };
 
 export type LinhaEquityMensal = {
@@ -65,9 +66,14 @@ export function simularEquity(necessidades: NecessidadeMensalEquity[]): LinhaEqu
         // Sobra de caixa: devolve capital aos investidores até ao limite do
         // que ainda está por devolver (net outstanding), o resto acumula
         // como caixa livre do projeto (reserva, não é lucro perdido — só
-        // ainda não distribuído).
+        // ainda não distribuído). Nunca distribui a reserva mínima de
+        // segurança (saldoMinimoCaixa) — antes desta correção, só o cash
+        // sweep a respeitava; as distribuições podiam esvaziá-la mesmo
+        // havendo custos futuros a cobrir (Achado P1.1 da auditoria de
+        // 2026-07-31).
         const aindaPorDevolver = contribuidoAcumulado - devolvidoAcumulado;
-        capitalDevolvido = Math.min(saldoComCaixaLivre, Math.max(0, aindaPorDevolver));
+        const disponivelAcimaDaReserva = Math.max(0, saldoComCaixaLivre - n.saldoMinimoCaixa);
+        capitalDevolvido = Math.min(disponivelAcimaDaReserva, Math.max(0, aindaPorDevolver));
         caixaLivre = saldoComCaixaLivre - capitalDevolvido;
       }
     }
