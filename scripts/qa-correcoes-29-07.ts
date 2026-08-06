@@ -64,6 +64,9 @@ const semFinanciamento: ParametrosFinanciamento = {
   carenciaAtiva: false,
   carenciaAnos: 0,
   prazoAnos: 0,
+  revolver: true,
+  commitmentFeePct: 0,
+  mesEventoSaida: null,
 };
 
 const tipologia: Typology = {

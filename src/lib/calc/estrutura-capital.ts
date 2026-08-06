@@ -161,18 +161,26 @@ export function calcResultadoPromotor(reparto: RepartoMensal[], coInvestimentoCo
 
 /**
  * Converte o ledger mensal do motor de cash flow em meses de
- * disponibilidade para a cascata: quando o cash flow levered do mês é
- * negativo, é um capital call; quando é positivo, é caixa disponível para
- * distribuir. Esta regra é a mesma usada por equity.ts (secção 8 do
- * plano) — a waterfall só muda COMO se distribui o que sobra, nunca
- * QUANDO se chama capital.
+ * disponibilidade para a cascata — usando SEMPRE equityCall/distribuicoes
+ * (já calculados por equity.ts::simularEquity dentro de calcularCashFlow),
+ * nunca reconstruindo capital calls/distribuições a partir de
+ * cashFlowLevered em bruto.
+ *
+ * Achado P0.2 da auditoria 03/08: a versão anterior tratava
+ * `cashFlowLevered > 0` diretamente como caixa distribuível, ignorando por
+ * completo a reserva mínima e a regra de "só o último mês distribui tudo"
+ * que equity.ts já respeita — a waterfall podia distribuir caixa que o
+ * motor de equity teria retido para custos futuros. Ao reutilizar
+ * l.equityCall/l.distribuicoes (o MESMO ledger, não um segundo), a
+ * cascata fica sempre presa ao que equity.ts realmente decidiu chamar ou
+ * devolver em cada mês — nunca distribui duas vezes o mesmo caixa.
  */
 export function construirMesesParaCascata(linhas: LinhaCashFlowMensal[]): MesDisponivelParaDistribuicao[] {
   return linhas.map((l) => ({
     mes: l.mes,
     data: `${l.mes}-01`,
-    capitalCallDoMes: l.cashFlowLevered < 0 ? -l.cashFlowLevered : 0,
-    disponivelParaDistribuir: l.cashFlowLevered > 0 ? l.cashFlowLevered : 0,
+    capitalCallDoMes: l.equityCall,
+    disponivelParaDistribuir: l.distribuicoes,
   }));
 }
 

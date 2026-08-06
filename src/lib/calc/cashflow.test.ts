@@ -52,6 +52,9 @@ const parametrosSemFinanciamento: ParametrosFinanciamento = {
   carenciaAtiva: false,
   carenciaAnos: 0,
   prazoAnos: 0,
+  revolver: true,
+  commitmentFeePct: 0,
+  mesEventoSaida: null,
 };
 
 function receber(mes: string, total: number): LinhaRecebimentoMensal {

@@ -120,6 +120,9 @@ const FINANCIAMENTO: ParametrosFinanciamento = {
   carenciaAtiva: false,
   carenciaAnos: 0,
   prazoAnos: 0,
+  revolver: true,
+  commitmentFeePct: 0,
+  mesEventoSaida: null,
 };
 
 const HURDLES: NivelHurdle[] = [{ hurdleIRR: 0.08, promotePctAcima: 0.2 }];

@@ -39,6 +39,9 @@ export type ProjectFinancingRow = {
   saldo_minimo_caixa: number;
   saldo_minimo_meses_reserva: number;
   prazo_anos: number;
+  revolver: boolean;
+  commitment_fee_pct: number;
+  mes_evento_saida: string | null;
 };
 
 export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
@@ -68,6 +71,9 @@ export const FINANCIAMENTO_VAZIO: ParametrosFinanciamento = {
   carenciaAtiva: false,
   carenciaAnos: 0,
   prazoAnos: 0,
+  revolver: true,
+  commitmentFeePct: 0,
+  mesEventoSaida: null,
 };
 
 export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanciamento {
@@ -100,6 +106,9 @@ export function linhaParaParametros(row: ProjectFinancingRow): ParametrosFinanci
     carenciaAtiva: (row.periodo_carencia_meses ?? 0) > 0,
     carenciaAnos: (row.periodo_carencia_meses ?? 0) / 12,
     prazoAnos: row.prazo_anos ?? 0,
+    revolver: row.revolver ?? true,
+    commitmentFeePct: row.commitment_fee_pct ?? 0,
+    mesEventoSaida: row.mes_evento_saida,
   };
 }
 
@@ -139,6 +148,9 @@ export async function guardarFinanciamento(supabase: SupabaseClient, projectId: 
       cash_sweep_inicio_data: parametros.cashSweepInicioData,
       periodo_carencia_meses: parametros.carenciaAtiva ? Math.max(0, Math.round(parametros.carenciaAnos * 12)) : 0,
       prazo_anos: parametros.prazoAnos,
+      revolver: parametros.revolver,
+      commitment_fee_pct: parametros.commitmentFeePct,
+      mes_evento_saida: parametros.mesEventoSaida,
     },
     { onConflict: "project_id" }
   );

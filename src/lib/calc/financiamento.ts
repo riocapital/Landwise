@@ -26,6 +26,26 @@ export type ParametrosFinanciamento = {
   saldoMinimoMesesReserva?: number; // meses de custos futuros cobertos pela reserva automática
   metodoTaxaMensal: "nominal_anual_div_12" | "mensal_equivalente";
 
+  // Revolver vs. non-revolver (secção 22 do prompt 03_08 — Gate 4). Numa
+  // facility revolver, amortizar reabre capacidade disponível (o limite
+  // compara-se ao saldo em dívida). Numa non-revolver (a norma em
+  // financiamento de promoção imobiliária), amortizar NUNCA reabre o
+  // limite — o teto compara-se ao total já alguma vez levantado, mesmo que
+  // entretanto pago. Default true (revolver) preserva o comportamento
+  // anterior a esta secção para projetos já configurados.
+  revolver: boolean;
+  // Comissão de compromisso anual (decimal) sobre o montante não
+  // utilizado do limite, pro-rata mensal — separada dos juros (que só
+  // incidem sobre o saldo levantado) e nunca confundida com eles.
+  commitmentFeePct: number;
+  // Evento de saída/refinanciamento explícito (secção 22): mês "YYYY-MM"
+  // em que a dívida é liquidada integralmente por venda final ou
+  // refinanciamento. Quando null, mantém a rede de segurança implícita
+  // (liquidação forçada no último mês do horizonte modelado) — nunca
+  // deixa saldo por pagar depois do fim do horizonte, mas o evento deixa
+  // de ser um "plug" silencioso quando configurado explicitamente.
+  mesEventoSaida: string | null;
+
   // Cash sweep (secção 24 do plano)
   cashSweepAtivo: boolean;
   cashSweepPctCaixaLivre: number; // 0-1 — % do caixa livre usado para amortizar
@@ -61,9 +81,11 @@ export type LinhaFinanciamentoMensal = {
   juros: number;
   jurosCapitalizados: number;
   fees: number;
+  comissaoCompromisso: number; // sobre o montante não utilizado do limite — nunca somada a `fees` (setup/estruturação), sempre linha própria
   impostoSelo: number;
   amortizacao: number;
   saldoFinal: number;
+  eventoLiquidacao: boolean; // true só no mês em que a dívida foi forçada a zero (evento de saída explícito ou fim do horizonte)
 };
 
 export type EventoMensalCashSweep = {
@@ -129,6 +151,8 @@ const PARAMETROS_ZERO: Pick<
   | "saldoMinimoMesesReserva"
   | "carenciaAtiva"
   | "carenciaAnos"
+  | "commitmentFeePct"
+  | "mesEventoSaida"
 > = {
   percentagemHardCostsFinanciada: 0,
   percentagemAquisicaoFinanciada: 0,
@@ -148,6 +172,8 @@ const PARAMETROS_ZERO: Pick<
   saldoMinimoMesesReserva: 0,
   carenciaAtiva: false,
   carenciaAnos: 0,
+  commitmentFeePct: 0,
+  mesEventoSaida: null,
 };
 
 /** Aplica a regra "financiamento bancário = Não zera e desativa todos os campos bancários" (secção 7). */
@@ -180,9 +206,11 @@ export function simularFinanciamento(
       juros: 0,
       jurosCapitalizados: 0,
       fees: 0,
+      comissaoCompromisso: 0,
       impostoSelo: 0,
       amortizacao: 0,
       saldoFinal: 0,
+      eventoLiquidacao: false,
     }));
   }
 
@@ -190,6 +218,11 @@ export function simularFinanciamento(
   const linhas: LinhaFinanciamentoMensal[] = [];
   let saldo = 0;
   let feesSetupLancados = false;
+  // Total alguma vez levantado (nunca decresce com amortizações) — só
+  // usado quando revolver = false, para que pagar dívida não reabra
+  // capacidade já consumida do limite (achado da secção 22 do prompt
+  // 03_08: a norma em financiamento de promoção é non-revolver).
+  let totalAlgumaVezLevantado = 0;
   // Carência (secção 15): contada a partir do primeiro mês com drawdown >
   // 0 — null até lá, nunca assume um início por omissão.
   let mesesDesdeInicioFinanciamento: number | null = null;
@@ -212,8 +245,21 @@ export function simularFinanciamento(
 
     let drawdown = necessidadeReal;
     if (parametros.limiteCredito !== null) {
-      const disponivel = Math.max(0, parametros.limiteCredito - saldoInicial);
+      const baseIndisponivel = parametros.revolver ? saldoInicial : totalAlgumaVezLevantado;
+      const disponivel = Math.max(0, parametros.limiteCredito - baseIndisponivel);
       drawdown = Math.min(drawdown, disponivel);
+    }
+    totalAlgumaVezLevantado += drawdown;
+
+    // Comissão de compromisso (secção 22): pro-rata mensal da taxa anual
+    // sobre o que ainda não foi utilizado do limite — nunca sobre o saldo
+    // levantado (isso são juros). Sem limite explícito não há "não
+    // utilizado" a comissionar.
+    let comissaoCompromisso = 0;
+    if (parametros.limiteCredito !== null && parametros.commitmentFeePct > 0) {
+      const baseIndisponivelParaFee = parametros.revolver ? saldoInicial + drawdown : totalAlgumaVezLevantado;
+      const naoUtilizado = Math.max(0, parametros.limiteCredito - baseIndisponivelParaFee);
+      comissaoCompromisso = naoUtilizado * (parametros.commitmentFeePct / 12);
     }
 
     let fees = 0;
@@ -288,8 +334,17 @@ export function simularFinanciamento(
     // ao investidor no último mês como se fosse lucro — dinheiro do banco
     // apresentado como retorno do investidor. Espelha a mesma lógica que já
     // existia só para a maturidade da carência (acima), agora sempre.
+    //
+    // Evento de saída explícito (secção 22 do prompt 03_08): quando
+    // `mesEventoSaida` está definido, a liquidação integral acontece nesse
+    // mês (venda final ou refinanciamento), não silenciosamente escondida
+    // no último mês do horizonte. Quando não está definido, mantém-se a
+    // rede de segurança acima (último mês do horizonte) — nunca deixa
+    // saldo por pagar de qualquer forma.
+    const ehMesDoEventoSaidaExplicito = parametros.mesEventoSaida !== null && n.mes === parametros.mesEventoSaida;
     const ehUltimoMesDoHorizonte = i === necessidades.length - 1;
-    if (ehUltimoMesDoHorizonte && saldoFinal > 0) {
+    const eventoLiquidacao = (ehMesDoEventoSaidaExplicito || ehUltimoMesDoHorizonte) && saldoFinal > 0;
+    if (eventoLiquidacao) {
       amortizacao += saldoFinal;
       saldoFinal = 0;
     }
@@ -301,9 +356,11 @@ export function simularFinanciamento(
       juros,
       jurosCapitalizados: 0, // juros pagos correntemente em caixa, nunca capitalizados — ver comentário acima em saldoFinal
       fees,
+      comissaoCompromisso,
       impostoSelo: impostoSeloEmprestimo + impostoSeloJuros,
       amortizacao,
       saldoFinal,
+      eventoLiquidacao,
     });
 
     saldo = saldoFinal;
@@ -318,10 +375,13 @@ export type ResultadosFinanciamento = {
   mesDividaMaxima: string | null;
   jurosTotais: number;
   feesBancarios: number;
+  comissaoCompromissoTotal: number; // secção 22 — nunca somada a feesBancarios, sempre discriminada
   impostoSeloTotal: number;
-  dividaAllIn: number; // peak debt + juros + fees + imposto selo capitalizados até ao pico
+  dividaAllIn: number; // peak debt + juros + fees + imposto selo + comissão de compromisso acumulados ATÉ ao mês do pico (nunca o total do horizonte inteiro)
   ltv: number | null; // peak debt / GDV
   ltc: number | null; // peak debt / custos elegíveis
+  mesLiquidacaoDivida: string | null; // mês do evento de saída explícito ou, na ausência de um, do fim do horizonte — nunca null quando alguma dívida foi levantada
+  valorLiquidadoNoEvento: number; // amortização total nesse mês (inclui a liquidação forçada, não só a programada)
 };
 
 export function calcResultadosFinanciamento(
@@ -332,26 +392,37 @@ export function calcResultadosFinanciamento(
   const dividaTotalLevantada = linhas.reduce((s, l) => s + l.drawdown, 0);
   const jurosTotais = linhas.reduce((s, l) => s + l.juros, 0);
   const feesBancarios = linhas.reduce((s, l) => s + l.fees, 0);
+  const comissaoCompromissoTotal = linhas.reduce((s, l) => s + l.comissaoCompromisso, 0);
   const impostoSeloTotal = linhas.reduce((s, l) => s + l.impostoSelo, 0);
 
   let peakDebt = 0;
   let mesDividaMaxima: string | null = null;
-  for (const l of linhas) {
+  let idxPico = -1;
+  for (let i = 0; i < linhas.length; i++) {
+    const l = linhas[i];
     if (l.saldoFinal > peakDebt) {
       peakDebt = l.saldoFinal;
       mesDividaMaxima = l.mes;
+      idxPico = i;
     }
   }
+  const custosFinanceirosAtePico =
+    idxPico >= 0 ? linhas.slice(0, idxPico + 1).reduce((s, l) => s + l.juros + l.fees + l.comissaoCompromisso + l.impostoSelo, 0) : 0;
+
+  const linhaLiquidacao = linhas.find((l) => l.eventoLiquidacao) ?? null;
 
   return {
     dividaTotalLevantada,
     peakDebt,
     mesDividaMaxima,
     jurosTotais,
+    comissaoCompromissoTotal,
     feesBancarios,
     impostoSeloTotal,
-    dividaAllIn: peakDebt,
+    dividaAllIn: peakDebt + custosFinanceirosAtePico,
     ltv: gdv > 0 ? peakDebt / gdv : null,
     ltc: custosElegiveisTotal > 0 ? peakDebt / custosElegiveisTotal : null,
+    mesLiquidacaoDivida: linhaLiquidacao?.mes ?? null,
+    valorLiquidadoNoEvento: linhaLiquidacao?.amortizacao ?? 0,
   };
 }

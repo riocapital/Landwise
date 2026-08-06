@@ -36,6 +36,9 @@ const parametrosBase: ParametrosFinanciamento = {
   carenciaAtiva: false,
   carenciaAnos: 0,
   prazoAnos: 0,
+  revolver: true,
+  commitmentFeePct: 0,
+  mesEventoSaida: null,
 };
 
 describe("Taxas", () => {
@@ -247,6 +250,162 @@ describe("simularFinanciamento com cash sweep — nunca deixa o projeto sem caix
     const linhas = simularFinanciamento(necessidades, pComSaldoAlto, "2026-02");
     // caixa livre = 800_000 - 790_000 = 10_000, muito menor que a dívida
     expect(linhas[1].amortizacao).toBeCloseTo(10_000, 2);
+  });
+});
+
+describe("dividaAllIn — peak debt + custos financeiros acumulados até ao pico (achado P1.8 da auditoria 03/08)", () => {
+  it("nunca é apenas o peak debt quando há juros/fees/imposto de selo — soma os custos financeiros até (e incluindo) o mês do pico, nunca o total do horizonte inteiro", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -1_000_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 },
+      { mes: "2026-03", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 2_000_000 }, // liquida a dívida aqui, via caixa positivo
+    ];
+    const linhas = simularFinanciamento(necessidades, { ...parametrosBase, limiteCredito: null });
+    const resultados = calcResultadosFinanciamento(linhas, 4_000_000, 1_000_000);
+
+    expect(resultados.dividaAllIn).toBeGreaterThan(resultados.peakDebt);
+
+    // Verificação independente: soma manual de juros+fees+comissão+imposto selo
+    // só até ao mês do pico (não inclui nada depois, mesmo que a dívida já
+    // esteja liquidada e ainda existam meses no horizonte).
+    const idxPico = linhas.findIndex((l) => l.mes === resultados.mesDividaMaxima);
+    const custosAtePico = linhas.slice(0, idxPico + 1).reduce((s, l) => s + l.juros + l.fees + l.comissaoCompromisso + l.impostoSelo, 0);
+    expect(resultados.dividaAllIn).toBeCloseTo(resultados.peakDebt + custosAtePico, 2);
+  });
+
+  it("sem nenhum drawdown, dividaAllIn é 0 (nunca soma custos financeiros de um pico que não existe)", () => {
+    const necessidades: NecessidadeMensal[] = [{ mes: "2026-01", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 }];
+    const linhas = simularFinanciamento(necessidades, parametrosBase);
+    const resultados = calcResultadosFinanciamento(linhas, 4_000_000, 1_000_000);
+    expect(resultados.dividaAllIn).toBe(0);
+  });
+});
+
+describe("Revolver vs. non-revolver (secção 22 do prompt 03_08)", () => {
+  const necessidades: NecessidadeMensal[] = [
+    { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -900_000 },
+    { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 900_000 }, // caixa para amortizar via cash sweep
+    { mes: "2026-03", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 800_000, saldoCaixaAntesFinanciamento: -800_000 }, // nova necessidade, depois de ter amortizado
+  ];
+  const pBase = {
+    ...parametrosBase,
+    percentagemAquisicaoFinanciada: 1,
+    percentagemHardCostsFinanciada: 1,
+    limiteCredito: 900_000,
+    cashSweepAtivo: true,
+    cashSweepPctCaixaLivre: 1,
+    cashSweepMesesCustosFuturos: 0,
+    saldoMinimoCaixa: 0,
+  };
+
+  it("revolver: depois de amortizar, o limite reabre e volta a levantar dívida contra o mesmo teto", () => {
+    const linhas = simularFinanciamento(necessidades, { ...pBase, revolver: true }, "2026-02");
+    expect(linhas[1].amortizacao).toBeCloseTo(900_000, 2); // amortiza tudo, saldo volta a 0
+    expect(linhas[2].drawdown).toBeGreaterThan(0); // limite reaberto — volta a levantar
+  });
+
+  it("non-revolver: depois de amortizar, o limite NÃO reabre — o teto compara-se ao total já alguma vez levantado", () => {
+    const linhas = simularFinanciamento(necessidades, { ...pBase, revolver: false }, "2026-02");
+    expect(linhas[1].amortizacao).toBeCloseTo(900_000, 2); // amortiza na mesma
+    // já levantou 900.000 no total (= o limite inteiro) — non-revolver nunca deixa levantar mais, mesmo com saldo a 0
+    expect(linhas[2].drawdown).toBe(0);
+  });
+});
+
+describe("Comissão de compromisso (secção 22 do prompt 03_08) — nunca confundida com juros nem com fees de estruturação", () => {
+  it("incide só sobre o montante não utilizado do limite, pro-rata mensal da taxa anual", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 400_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -400_000 },
+    ];
+    const p = { ...parametrosBase, percentagemAquisicaoFinanciada: 1, limiteCredito: 1_000_000, commitmentFeePct: 0.012 };
+    const linhas = simularFinanciamento(necessidades, p);
+    expect(linhas[0].drawdown).toBe(400_000);
+    // não utilizado após o drawdown = 1.000.000 - 400.000 = 600.000; comissão mensal = 600.000 * 0.012/12
+    expect(linhas[0].comissaoCompromisso).toBeCloseTo(600_000 * (0.012 / 12), 2);
+  });
+
+  it("sem limite de crédito explícito, nunca cobra comissão de compromisso (não há 'não utilizado' definido)", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 400_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -400_000 },
+    ];
+    const p = { ...parametrosBase, percentagemAquisicaoFinanciada: 1, limiteCredito: null, commitmentFeePct: 0.012 };
+    const linhas = simularFinanciamento(necessidades, p);
+    expect(linhas[0].comissaoCompromisso).toBe(0);
+  });
+
+  it("entra em jurosEFees do cash flow (via calcularCashFlow), nunca some do custo financeiro do projeto", async () => {
+    const { calcularCashFlow } = await import("./cashflow");
+    const linhasCusto = [
+      {
+        id: "1",
+        grupo: "aquisicao" as const,
+        categoria: "Aquisição",
+        nome: "Aquisição",
+        tipoCalculo: "valor_fixo" as const,
+        valorInput: 1_000_000,
+        baseReferenciaCustoId: null,
+        taxaIva: null,
+        ivaRecuperavelPct: 0,
+        dataIvaRecuperacao: null,
+        dataInicial: "2026-01-01",
+        duracaoMeses: 1,
+        dataFinal: "2026-01-31",
+        perfilDesembolso: "linear" as const,
+      },
+    ];
+    const contextoCusto = { valorAquisicao: 1_000_000, abcAcimaSolo: 600, abcAbaixoSolo: 400, abdTotal: 200, numeroUnidades: 10 };
+    const p = { ...parametrosBase, percentagemAquisicaoFinanciada: 1, limiteCredito: 2_000_000, commitmentFeePct: 0.012 };
+    const semComissao = calcularCashFlow({
+      linhasCusto,
+      contextoCusto,
+      recebimentos: [{ mes: "2027-01", reserva: 0, cpcv: 0, duranteConstrucao: 0, conclusao: 2_000_000, escritura: 0, total: 2_000_000 }],
+      parametrosFinanciamento: { ...p, commitmentFeePct: 0 },
+      saldoMinimoCaixa: 0,
+    });
+    const comComissao = calcularCashFlow({
+      linhasCusto,
+      contextoCusto,
+      recebimentos: [{ mes: "2027-01", reserva: 0, cpcv: 0, duranteConstrucao: 0, conclusao: 2_000_000, escritura: 0, total: 2_000_000 }],
+      parametrosFinanciamento: p,
+      saldoMinimoCaixa: 0,
+    });
+    expect(comComissao.custosFinanceiros).toBeGreaterThan(semComissao.custosFinanceiros);
+    expect(comComissao.financiamento.comissaoCompromissoTotal).toBeGreaterThan(0);
+  });
+});
+
+describe("Evento de saída/refinanciamento explícito (secção 22 do prompt 03_08)", () => {
+  it("com mesEventoSaida definido, a dívida é liquidada integralmente nesse mês, não escondida no fim do horizonte", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -1_000_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 },
+      { mes: "2026-03", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 },
+    ];
+    const linhas = simularFinanciamento(necessidades, { ...parametrosBase, limiteCredito: null, mesEventoSaida: "2026-02" });
+    expect(linhas[1].mes).toBe("2026-02");
+    expect(linhas[1].eventoLiquidacao).toBe(true);
+    expect(linhas[1].saldoFinal).toBe(0);
+    // mês seguinte já não tem dívida nem evento de liquidação — já foi liquidada antes
+    expect(linhas[2].eventoLiquidacao).toBe(false);
+    expect(linhas[2].saldoFinal).toBe(0);
+
+    const resultados = calcResultadosFinanciamento(linhas, 4_000_000, 1_000_000);
+    expect(resultados.mesLiquidacaoDivida).toBe("2026-02");
+    expect(resultados.valorLiquidadoNoEvento).toBeGreaterThan(0);
+  });
+
+  it("sem mesEventoSaida, mantém a rede de segurança implícita no último mês do horizonte", () => {
+    const necessidades: NecessidadeMensal[] = [
+      { mes: "2026-01", custosElegiveisAquisicao: 1_000_000, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: -1_000_000 },
+      { mes: "2026-02", custosElegiveisAquisicao: 0, custosElegiveisHardCosts: 0, saldoCaixaAntesFinanciamento: 0 },
+    ];
+    const linhas = simularFinanciamento(necessidades, { ...parametrosBase, limiteCredito: null, mesEventoSaida: null });
+    expect(linhas[0].eventoLiquidacao).toBe(false);
+    expect(linhas[1].eventoLiquidacao).toBe(true);
+    expect(linhas[1].saldoFinal).toBe(0);
+
+    const resultados = calcResultadosFinanciamento(linhas, 4_000_000, 1_000_000);
+    expect(resultados.mesLiquidacaoDivida).toBe("2026-02");
   });
 });
 

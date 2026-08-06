@@ -206,6 +206,22 @@ export function StepFinanciamento({
           </FieldGroup>
         </Row>
         <Row>
+          <FieldGroup label="Facility revolver?">
+            <select
+              className="input-dark"
+              value={financiamento.revolver ? "sim" : "nao"}
+              onChange={(e) => updateFinanciamento("revolver", e.target.value === "sim")}
+              disabled={desativado}
+            >
+              <option value="sim">Sim — amortizar reabre o limite</option>
+              <option value="nao">Não — o limite nunca reabre depois de utilizado</option>
+            </select>
+          </FieldGroup>
+          <FieldGroup label="Comissão de compromisso anual (sobre o não utilizado)">
+            <PercentInput value={financiamento.commitmentFeePct} onChange={(v) => updateFinanciamento("commitmentFeePct", v)} disabled={desativado} />
+          </FieldGroup>
+        </Row>
+        <Row>
           <FieldGroup label="Prazo total do empréstimo (anos)">
             <input
               type="number"
@@ -246,6 +262,22 @@ export function StepFinanciamento({
             começa a seguir à carência, em linha reta até ao fim do prazo total (com liquidação final na maturidade).
           </p>
         )}
+        <Row>
+          <FieldGroup label="Evento de saída/refinanciamento (mês) — vazio = liquidação automática no último mês do horizonte">
+            <input
+              type="month"
+              className="input-dark"
+              value={financiamento.mesEventoSaida ?? ""}
+              onChange={(e) => updateFinanciamento("mesEventoSaida", e.target.value || null)}
+              disabled={desativado}
+            />
+          </FieldGroup>
+        </Row>
+        <p className="text-xs text-[#59636A] mb-3">
+          Se o projeto tiver uma venda final ou refinanciamento previsto para um mês específico, define-o aqui — a dívida é
+          liquidada integralmente nesse mês. Sem evento definido, a dívida é sempre liquidada no último mês do horizonte
+          modelado (nunca fica por pagar).
+        </p>
       </Card>
 
       <Card

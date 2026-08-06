@@ -71,6 +71,9 @@ const parametrosBase: ParametrosFinanciamento = {
   carenciaAtiva: false,
   carenciaAnos: 0,
   prazoAnos: 0,
+  revolver: true,
+  commitmentFeePct: 0,
+  mesEventoSaida: null,
 };
 
 describe("REGRESSÃO — Achado P0.1: dívida sempre liquidada no fim do horizonte, mesmo sem carência/sweep", () => {

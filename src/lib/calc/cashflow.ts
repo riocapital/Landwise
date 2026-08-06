@@ -67,7 +67,7 @@ export type ResultadoCashFlow = {
   custoTotal: number; // custos operacionais (inclui comissão comercial E development fees calendarizados) — NUNCA inclui juros/fees/impostos DE FINANCIAMENTO nem movimentos de dívida/equity
   feesOperacionaisTotal: number; // soma de linhas[].feesOperacionais — development fees já calendarizados, incluídos em custoTotal (secção 6 do prompt 03_08)
   comissaoComercialTotal: number;
-  custosFinanceiros: number; // juros + fees + imposto de selo do financiamento (soma de linhas[].jurosEFees) — custo económico real, nunca confundido com drawdown/amortização (que são movimentos de balanço, não de P&L)
+  custosFinanceiros: number; // juros + fees + comissão de compromisso + imposto de selo do financiamento (soma de linhas[].jurosEFees) — custo económico real, nunca confundido com drawdown/amortização (que são movimentos de balanço, não de P&L)
 
   // Resultado do projeto (secção 2/9 do plano) — nunca inclui drawdowns,
   // amortização de capital, equity calls nem distribuições: esses são
@@ -298,7 +298,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       comissaoComercial: l.comissao,
       cashFlowUnlevered: l.cashFlowUnlevered,
       drawdown: fin.drawdown,
-      jurosEFees: fin.juros + fin.fees + fin.impostoSelo,
+      jurosEFees: fin.juros + fin.fees + fin.comissaoCompromisso + fin.impostoSelo,
       amortizacao: fin.amortizacao,
       saldoDivida: fin.saldoFinal,
       cashFlowLevered,
