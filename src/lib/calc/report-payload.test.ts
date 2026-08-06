@@ -65,6 +65,7 @@ describe("montarReportPayload", () => {
     const promotor = calcResultadoPromotor([], cashFlow.equity.equityContributed, 0);
 
     const payload = montarReportPayload({
+      underwritingResult: null,
       identificacao: {
         nome: "Projeto Teste",
         tipoProjeto: "Terreno",

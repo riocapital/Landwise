@@ -29,6 +29,8 @@ import {
 import { calcMetricasPorM2, calcEstruturaSobreVgv, type MetricasPorM2, type EstruturaSobreVgv } from "./metricas";
 import { extrairIndicador } from "./sensibilidades";
 import { gerarAlertas, type Alerta } from "./alertas";
+import { montarUnderwritingResult, type ProjectUnderwritingResult } from "./underwriting";
+import type { ImpostosEstado } from "./../supabase/project-taxes";
 
 import { listarTipologiasProjeto } from "./../supabase/project-typologies";
 import { listarUnidades } from "./../supabase/project-units";
@@ -82,6 +84,12 @@ export type ResultadoProjetoCompleto = {
   // financeira: a diferença era exatamente fees + impostoEstimado).
   lucroProjetoTotal: number | null;
   margemProjetoTotal: number | null;
+
+  // Contrato central de resultado (Gate 1 da consolidação pré-relatório,
+  // 03/08) — dashboard, sensibilidades e relatório devem consumir este
+  // objeto em vez de recalcular por fora. null nos mesmos casos em que
+  // `resultado` é null (dadosSuficientes: false).
+  underwriting: ProjectUnderwritingResult | null;
 };
 
 export async function carregarResultadoProjeto(supabase: SupabaseClient, projectId: string): Promise<ResultadoProjetoCompleto> {
@@ -134,6 +142,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       alertas: [],
       lucroProjetoTotal: null,
       margemProjetoTotal: null,
+      underwriting: null,
     };
   }
 
@@ -154,6 +163,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       alertas: [],
       lucroProjetoTotal: null,
       margemProjetoTotal: null,
+      underwriting: null,
     };
   }
 
@@ -227,51 +237,6 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
   });
 
-  const contextoFees = {
-    valorAquisicao: contextoCusto.valorAquisicao,
-    hardCostsTotal: resultado.custoTotal, // aproximação: refinar quando o breakdown por grupo for exposto aqui
-    capexTotal: resultado.custoTotal,
-    custoTotal: resultado.custoTotal,
-    abcTotal,
-    numeroUnidades: contextoCusto.numeroUnidades,
-  };
-  const feesTotais = agregarFees(fees, contextoFees).total;
-
-  let investidorPromotor: ResultadosInvestidorPromotor | null = null;
-  if (estruturaCapital.temInvestidorExterno) {
-    investidorPromotor = calcularResultadosComWaterfall(
-      resultado.linhas,
-      hurdles,
-      estruturaCapital.percentagemInvestidor,
-      feesTotais,
-      estruturaCapital.catchUpAtivo ? estruturaCapital.catchUpPct : 0
-    );
-  }
-
-  // Imposto estimado — mesma lógica da etapa de Impostos do wizard (secção
-  // 29): só Empresa/SPV calcula IRC a partir do motor; os outros casos só
-  // usam a simulação manual, nunca aplicam IRC automaticamente.
-  let impostoEstimadoTotal = 0;
-  if (impostos.estruturaFiscalAssumida === "empresa_spv") {
-    const lucroTributavelAntesDeAjustes = calcLucroTributavelEstimado({
-      receitasReconhecidas: resultado.gdv,
-      custosFiscalmenteConsiderados: resultado.custoTotal - resultado.comissaoComercialTotal,
-      comissaoDedutivel: resultado.comissaoComercialTotal,
-      feesDedutiveis: 0,
-      custosFinanceirosDedutiveis: resultado.financiamento.jurosTotais,
-      ajustesFiscais: impostos.ircAjustesFiscais,
-    });
-    const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostos.ircPrejuizosFiscaisAcumulados);
-    const { taxa: taxaIrc } = resolverTaxaIRC(impostos.ircAnoFiscalReferencia, impostos.ircTaxaManual);
-    const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
-    const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostos.derramaMunicipalTaxa);
-    const derramaEstadual = calcDerramaEstadual(lucroTributavel);
-    impostoEstimadoTotal = ircEstimado + derramaMunicipal + derramaEstadual;
-  } else {
-    impostoEstimadoTotal = impostos.simulacaoImpostoEstimadoManual ?? 0;
-  }
-
-  const custosFinanceiros = resultado.financiamento.jurosTotais + resultado.financiamento.feesBancarios + resultado.financiamento.impostoSeloTotal;
   // Custos de aquisição = só as linhas acessórias (DD, notário, registos,
   // IMT, imposto de selo, comissão de aquisição, outros) — NUNCA as linhas
   // "Sinal da aquisição"/"Escritura da aquisição"/"Reforço da aquisição",
@@ -291,6 +256,64 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   const custosAquisicaoAuxiliares = calcCustosAquisicaoAcessorios(linhasCustoResolvidasComData);
   const hardCostsTotal = resultado.linhas.reduce((s, l) => s + l.hardCosts, 0);
   const softCostsTotal = resultado.linhas.reduce((s, l) => s + l.softCosts + l.outrosCustos, 0);
+  // CAPEX real antes do próprio development fee — nunca resultado.custoTotal
+  // (esse inclui a comissão comercial, um custo de venda, não de CAPEX).
+  // Achado P0.1 da auditoria 03/08: as três bases (hardCostsTotal,
+  // capexTotal, custoTotal) recebiam literalmente o mesmo valor
+  // (resultado.custoTotal), tornando "% dos hard costs" e "% do CAPEX"
+  // idênticos na prática. hardCostsTotal passa a ser só os hard costs
+  // reais; capexTotal/custoTotal ficam iguais entre si por agora (ainda não
+  // há uma base "custo total" com semântica distinta de "CAPEX" — essa
+  // distinção fica para a secção 6 do plano, fora do âmbito deste gate).
+  const capexAntesDoProprioFee = contextoCusto.valorAquisicao + custosAquisicaoAuxiliares + hardCostsTotal + softCostsTotal;
+  const contextoFees = {
+    valorAquisicao: contextoCusto.valorAquisicao,
+    hardCostsTotal,
+    capexTotal: capexAntesDoProprioFee,
+    custoTotal: capexAntesDoProprioFee,
+    abcTotal,
+    numeroUnidades: contextoCusto.numeroUnidades,
+  };
+  const feesTotais = agregarFees(fees, contextoFees).total;
+
+  let investidorPromotor: ResultadosInvestidorPromotor | null = null;
+  if (estruturaCapital.temInvestidorExterno) {
+    investidorPromotor = calcularResultadosComWaterfall(
+      resultado.linhas,
+      hurdles,
+      estruturaCapital.percentagemInvestidor,
+      feesTotais,
+      estruturaCapital.catchUpAtivo ? estruturaCapital.catchUpPct : 0
+    );
+  }
+
+  // Imposto estimado — mesma lógica da etapa de Impostos do wizard (secção
+  // 29): só Empresa/SPV calcula IRC a partir do motor; os outros casos só
+  // usam a simulação manual, nunca aplicam IRC automaticamente. Extraída
+  // para função reutilizável — usada também no cenário unlevered abaixo
+  // (Gate 1 da consolidação 03/08), onde os juros dedutíveis são zero.
+  function calcularImpostoEstimado(resultadoCF: ResultadoCashFlow, impostosParam: ImpostosEstado): number {
+    if (impostosParam.estruturaFiscalAssumida !== "empresa_spv") {
+      return impostosParam.simulacaoImpostoEstimadoManual ?? 0;
+    }
+    const lucroTributavelAntesDeAjustes = calcLucroTributavelEstimado({
+      receitasReconhecidas: resultadoCF.gdv,
+      custosFiscalmenteConsiderados: resultadoCF.custoTotal - resultadoCF.comissaoComercialTotal,
+      comissaoDedutivel: resultadoCF.comissaoComercialTotal,
+      feesDedutiveis: 0,
+      custosFinanceirosDedutiveis: resultadoCF.financiamento.jurosTotais,
+      ajustesFiscais: impostosParam.ircAjustesFiscais,
+    });
+    const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostosParam.ircPrejuizosFiscaisAcumulados);
+    const { taxa: taxaIrc } = resolverTaxaIRC(impostosParam.ircAnoFiscalReferencia, impostosParam.ircTaxaManual);
+    const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
+    const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostosParam.derramaMunicipalTaxa);
+    const derramaEstadual = calcDerramaEstadual(lucroTributavel);
+    return ircEstimado + derramaMunicipal + derramaEstadual;
+  }
+  const impostoEstimadoTotal = calcularImpostoEstimado(resultado, impostos);
+
+  const custosFinanceiros = resultado.financiamento.jurosTotais + resultado.financiamento.feesBancarios + resultado.financiamento.impostoSeloTotal;
   // IVA não recuperável já entra no custo total do cash flow (cashflow.ts) —
   // faltava aqui, e essa omissão fazia "Estrutura sobre VGV"/"Métricas por
   // m²" mostrarem um lucro maior do que o do Resumo (auditoria financeira).
@@ -396,6 +419,39 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     dataEscritura: planoVendas.dataEscritura || null,
   };
 
+  // --- Cenário não alavancado (secção 14 do plano 03/08) — mesmo motor
+  // (calcularCashFlow), segunda execução com comFinanciamento:false. Nunca
+  // "o cenário alavancado com a dívida final zerada": desligar o
+  // financiamento desde a origem muda genuinamente o funding necessário e o
+  // timing do equity (sem drawdowns, juros, fees bancários nem amortizações).
+  const resultadoUnlevered = calcularCashFlow({
+    linhasCusto: custos,
+    contextoCusto,
+    recebimentos,
+    comissaoPorMes,
+    parametrosFinanciamento: { ...financiamento, comFinanciamento: false },
+    mesInicioCashSweep: null,
+    saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
+  });
+  const impostoEstimadoUnlevered = calcularImpostoEstimado(resultadoUnlevered, impostos);
+
+  const underwriting = montarUnderwritingResult({
+    resultado,
+    resultadoUnlevered,
+    investidorPromotor,
+    feesTotais,
+    impostoEstimadoLevered: impostoEstimadoTotal,
+    impostoEstimadoUnlevered,
+    acquisitionPrice: contextoCusto.valorAquisicao,
+    acquisitionCosts: custosAquisicaoAuxiliares,
+    abcTotal,
+    averageSalePricePerSqm: resumoPrograma.precoMedioPonderadoM2 > 0 ? resumoPrograma.precoMedioPonderadoM2 : null,
+    unitCount: contextoCusto.numeroUnidades,
+    committedDebtLimite: financiamento.limiteCredito,
+    primeiraSaidaCapital: execucao.dataInicio,
+    ultimaEntradaCapitalOuRetorno: resultado.equity.dataRecuperacaoIntegral ?? execucao.dataFim,
+  });
+
   return {
     projeto,
     execucao,
@@ -412,6 +468,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     alertas,
     lucroProjetoTotal: estruturaSobreVgv.lucro,
     margemProjetoTotal: resultado.gdv > 0 ? estruturaSobreVgv.lucro / resultado.gdv : null,
+    underwriting,
   };
 }
 

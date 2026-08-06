@@ -24,6 +24,7 @@ import type { Cenario, LinhaComparacaoCenarios } from "./cenarios";
 import type { ResultadoCalendarioAutomatico } from "./calendario-automatico";
 import type { MetricasPorM2, EstruturaSobreVgv } from "./metricas";
 import type { Alerta } from "./alertas";
+import type { ProjectUnderwritingResult } from "./underwriting";
 
 export type OrigemValor = "utilizador" | "sugestao_landwise" | "assumido_automaticamente" | "calculado" | "importado" | "substituido_manualmente";
 
@@ -31,6 +32,12 @@ export type PremissaComOrigem<T> = { valor: T; origem: OrigemValor; badge?: stri
 
 export type ReportPayload = {
   geradoEm: string; // ISO — nunca "cacheado" indefinidamente sem esta marca
+
+  // Contrato central de resultado (Gate 1 da consolidação pré-relatório,
+  // 03/08) — dashboard, sensibilidades e relatório consomem exatamente o
+  // mesmo objeto, nunca recalculado por fora (secção 20 do plano). null só
+  // quando o projeto ainda não tem dados suficientes para o cash flow.
+  underwritingResult: ProjectUnderwritingResult | null;
 
   identificacao: {
     nome: string;
@@ -134,6 +141,7 @@ export type ReportPayload = {
  * nunca com valores inventados.
  */
 export function montarReportPayload(dados: {
+  underwritingResult: ProjectUnderwritingResult | null;
   identificacao: ReportPayload["identificacao"];
   localizacao: ReportPayload["localizacao"];
   areas: ReportPayload["areas"];
@@ -160,6 +168,7 @@ export function montarReportPayload(dados: {
 }): ReportPayload {
   return {
     geradoEm: new Date().toISOString(),
+    underwritingResult: dados.underwritingResult,
     identificacao: dados.identificacao,
     localizacao: dados.localizacao,
     areas: dados.areas,
