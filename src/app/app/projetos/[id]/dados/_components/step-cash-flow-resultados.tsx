@@ -378,7 +378,7 @@ export function StepCashFlowResultados({
                 <option value="irr_levered">IRR levered</option>
                 <option value="irr_unlevered">IRR unlevered</option>
                 <option value="moic">MOIC</option>
-                <option value="roe">ROE</option>
+                <option value="roi">ROI</option>
                 <option value="peak_cash_exposure">Peak cash exposure</option>
                 <option value="peak_debt">Peak debt</option>
                 <option value="equity_contributed">Equity contributed</option>

@@ -168,6 +168,13 @@ describe("Auditoria financeira — IRR/MOIC vêm sempre do equity, nunca do cash
     }
   });
 
+  it("roi (secção 19 do prompt 03_08 — renomeado de 'roe') é sempre lucroEquity ÷ equityContributed, fluxos do investidor", () => {
+    const resultado = calcularCenarioComVariacoes(baseComFinanciamento, 0, 0, 0);
+    expect(extrairIndicador(resultado, "roi")).toBe(
+      resultado.equity.equityContributed > 0 ? resultado.equity.lucroEquity / resultado.equity.equityContributed : null
+    );
+  });
+
   it("lucro/margem (via extrairIndicador) são sempre os do PROJETO (lucroProjeto/margemProjeto), nunca lucroLevered/margem antigos", () => {
     const resultado = calcularCenarioComVariacoes(baseComFinanciamento, 0, 0, 0);
     expect(extrairIndicador(resultado, "lucro")).toBe(resultado.lucroProjeto);

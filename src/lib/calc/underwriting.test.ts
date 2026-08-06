@@ -151,6 +151,43 @@ describe("montarUnderwritingResult — reconciliações (secção 5 do prompt 03
     expect(r.unleveredEquityInvested!).toBeGreaterThanOrEqual(r.leveredEquityInvested - 0.01);
   });
 
+  it("Gate 5 — leveredIrr é exatamente resultado.equity.irr, nunca recalculado por fora (fluxos do investidor: capital calls negativos, devolução+lucro distribuído positivos)", () => {
+    const entrada = construirEntrada();
+    const r = montarUnderwritingResult(entrada);
+    expect(r.leveredIrr).toBe(entrada.resultado.equity.irr);
+  });
+
+  it("Gate 5 — unleveredIrr é exatamente resultado.irrProjeto (XIRR dos fluxos operacionais datados, sem financiamento)", () => {
+    const entrada = construirEntrada();
+    const r = montarUnderwritingResult(entrada);
+    expect(r.unleveredIrr).toBe(entrada.resultado.irrProjeto);
+  });
+
+  it("Gate 5 — moic reconcilia com resultado.equity.moic (mesma base: totalReturn = capitalDevolvidoTotal)", () => {
+    const entrada = construirEntrada();
+    const r = montarUnderwritingResult(entrada);
+    expect(entrada.resultado.equity.moic).not.toBeNull();
+    expect(r.moic).toBeCloseTo(entrada.resultado.equity.moic!, 6);
+    expect(r.totalReturn).toBeCloseTo(entrada.resultado.equity.capitalDevolvidoTotal, 2);
+  });
+
+  it("Gate 5 — paybackMonth é exatamente resultado.equity.dataRecuperacaoIntegral, nunca um mês inventado", () => {
+    const entrada = construirEntrada();
+    const r = montarUnderwritingResult(entrada);
+    expect(r.paybackMonth).toBe(entrada.resultado.equity.dataRecuperacaoIntegral);
+  });
+
+  it("Gate 5 — durationMonths conta exatamente entre a primeira saída de capital e a última entrada de capital/retorno (nunca a duração da obra)", () => {
+    const entrada = construirEntrada();
+    const r = montarUnderwritingResult(entrada);
+    expect(entrada.primeiraSaidaCapital).not.toBeNull();
+    expect(entrada.ultimaEntradaCapitalOuRetorno).not.toBeNull();
+    const [anoI, mesI] = entrada.primeiraSaidaCapital!.split("-").map(Number);
+    const [anoF, mesF] = entrada.ultimaEntradaCapitalOuRetorno!.split("-").map(Number);
+    const esperado = (anoF - anoI) * 12 + (mesF - mesI);
+    expect(r.durationMonths).toBe(esperado);
+  });
+
   it("deteta uma reconciliação quebrada quando o CAPEX é montado com um componente em falta (regressão do checker)", () => {
     const entrada = construirEntrada();
     const r = montarUnderwritingResult(entrada);

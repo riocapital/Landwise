@@ -30,7 +30,7 @@ export type IndicadorSensibilidade =
   | "irr_unlevered"
   | "irr_levered"
   | "moic"
-  | "roe"
+  | "roi"
   | "lucro"
   | "margem"
   | "equity_contributed"
@@ -120,7 +120,7 @@ export function calcularCenarioComVariacoes(
  *   margemProjeto de cashflow.ts — receita menos custos económicos reais,
  *   nunca inclui drawdowns, amortização de capital, equity calls ou
  *   distribuições).
- * - "irr_levered"/"moic"/"roe" são SEMPRE o retorno do EQUITY
+ * - "irr_levered"/"moic"/"roi" são SEMPRE o retorno do EQUITY
  *   (resultado.equity.irr/moic/lucroEquity de equity.ts — calculados só a
  *   partir dos fluxos datados do investidor: capital calls negativos,
  *   distribuições positivas). Nunca a partir do cash flow do projeto —
@@ -145,7 +145,10 @@ export function extrairIndicador(resultado: ResultadoCashFlow, indicador: Indica
       return resultado.equity.irr;
     case "moic":
       return resultado.equity.moic;
-    case "roe":
+    case "roi":
+      // Secção 19 do prompt 03_08: renomeado de "roe" para "roi" — mesma
+      // fórmula (lucro do equity ÷ equity investido, fluxos do investidor),
+      // só o nome do indicador mudou.
       return resultado.equity.equityContributed > 0 ? resultado.equity.lucroEquity / resultado.equity.equityContributed : null;
     case "lucro":
       return resultado.lucroProjeto;

@@ -133,7 +133,7 @@ export function SensibilidadesMatriz({
   const resultado = calcularMatrizSensibilidade(base, matriz, indicador);
   const formatar = (v: number | null) => {
     if (v === null) return "—";
-    if (indicador.startsWith("irr") || indicador === "margem" || indicador === "roe") return `${(v * 100).toFixed(1)}%`;
+    if (indicador.startsWith("irr") || indicador === "margem" || indicador === "roi") return `${(v * 100).toFixed(1)}%`;
     if (indicador === "moic") return `${v.toFixed(2)}x`;
     return `€${Math.round(v).toLocaleString("pt-PT")}`;
   };
