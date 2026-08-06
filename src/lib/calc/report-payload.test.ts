@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { montarReportPayload } from "./report-payload";
 import { calcularCashFlow } from "./cashflow";
 import { calcResultadoPromotor } from "./estrutura-capital";
+import { montarUnderwritingResult } from "./underwriting";
 import type { LinhaCusto } from "./custos";
 import type { ParametrosFinanciamento } from "./financiamento";
 
@@ -132,5 +133,91 @@ describe("montarReportPayload", () => {
     expect(payload.cenarios.lista).toEqual([]);
     expect(payload.alertas).toEqual([]);
     expect(new Date(payload.geradoEm).getTime()).toBeGreaterThan(0);
+  });
+
+  it("Gate 7 do prompt 03_08 — underwritingResult passa exatamente igual (mesma referência), nunca recalculado dentro do payload", () => {
+    const cashFlow = calcularCashFlow({
+      linhasCusto: [custo({ grupo: "aquisicao", tipoCalculo: "valor_fixo", valorInput: 500_000, duracaoMeses: 1, dataFinal: "2026-01-31" })],
+      contextoCusto: { valorAquisicao: 500_000, abcAcimaSolo: 300, abcAbaixoSolo: 200, abdTotal: 100, numeroUnidades: 5 },
+      recebimentos: [{ mes: "2027-01", reserva: 0, cpcv: 0, duranteConstrucao: 0, conclusao: 1_500_000, escritura: 0, total: 1_500_000 }],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+    const promotor = calcResultadoPromotor([], cashFlow.equity.equityContributed, 0);
+    const underwritingResult = montarUnderwritingResult({
+      resultado: cashFlow,
+      resultadoUnlevered: cashFlow,
+      investidorPromotor: null,
+      feesTotais: 0,
+      impostoEstimadoLevered: 0,
+      impostoEstimadoUnlevered: 0,
+      acquisitionPrice: 500_000,
+      acquisitionCosts: 0,
+      abcTotal: 500,
+      averageSalePricePerSqm: null,
+      unitCount: 5,
+      committedDebtLimite: null,
+      primeiraSaidaCapital: cashFlow.linhas[0]?.mes ?? null,
+      ultimaEntradaCapitalOuRetorno: cashFlow.linhas[cashFlow.linhas.length - 1]?.mes ?? null,
+    });
+
+    const payload = montarReportPayload({
+      underwritingResult,
+      identificacao: {
+        nome: "Projeto Teste",
+        tipoProjeto: "Terreno",
+        estadoProjeto: "Em estudo",
+        tipoAtivo: "Residencial",
+        descricaoResumida: null,
+        dataReferenciaAnalise: "2026-01-01",
+      },
+      localizacao: { codigoPostal: null, rua: null, freguesia: null, concelho: null, distrito: null, latitude: null, longitude: null, origem: "manual" },
+      areas: { areaLote: null, abcAcimaSolo: null, abcAbaixoSolo: null, abcPrincipal: 0, abcTotal: 0, abpEstimada: null, abpProgramada: 0, eficiencia: null },
+      programa: {
+        totalUnidades: 0, abpTotal: 0, areaVarandas: 0, varandaVendavel: 0, areaTerracos: 0, terracoVendavel: 0,
+        areaJardins: 0, jardimVendavel: 0, areaArrecadacoes: 0, arrecadacaoVendavel: 0, areaDependenteTotal: 0,
+        areaDependenteVendavel: 0, abcTotal: 0, areaVendavelEquivalenteTotal: 0, totalEstacionamentos: 0,
+        precoMedioUnidade: 0, precoMedioPonderadoM2: 0, receitaTotal: 1_500_000,
+      },
+      tipologias: [],
+      salesTable: [],
+      regrasEvolucaoPreco: [],
+      sugestoesUsadas: {},
+      custos: { totalAquisicao: 500_000, totalHardCosts: 0, totalSoftCosts: 0, totalOutros: 0, custoTotal: 500_000, ivaSuportadoTotal: 0, ivaRecuperavelTotal: 0, ivaNaoRecuperavelTotal: 0 },
+      impostos: {
+        estruturaFiscalAssumida: "nao_definida",
+        seguroTotal: 0,
+        imiTotal: 0,
+        lucroEconomico: null,
+        lucroTributavelEstimado: null,
+        ircEstimado: 0,
+        derramaMunicipal: 0,
+        derramaEstadual: 0,
+        simulacaoManual: { taxaEfetivaManual: null, impostoEstimadoManual: null },
+        ivaSuportado: 0,
+        ivaRecuperavel: 0,
+        ivaNaoRecuperavel: 0,
+      },
+      calendarioAutomatico: { grupos: [], dataInicial: null, dataFinal: null },
+      cashFlow,
+      cashSweep: { ativo: false, mesInicio: null },
+      investidor: null,
+      promotor,
+      sensibilidades: [],
+      cenarios: { lista: [], comparacao: [] },
+      metricasPorM2: null,
+      estruturaSobreVgv: null,
+      alertas: [],
+      premissas: { areaLote: { valor: null, origem: "utilizador" } },
+      fontesComparaveis: { totalUsados: 0, fontesUnicas: [] },
+      fonteLocalizacao: null,
+    });
+
+    // Mesma referência — prova que o payload nunca reconstrói nem
+    // recalcula o contrato central, só o passa adiante tal como o
+    // dashboard e a base das sensibilidades o produziram.
+    expect(payload.underwritingResult).toBe(underwritingResult);
+    expect(payload.underwritingResult?.netProfit).toBe(underwritingResult.netProfit);
+    expect(payload.underwritingResult?.leveredIrr).toBe(underwritingResult.leveredIrr);
   });
 });

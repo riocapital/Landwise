@@ -10,9 +10,14 @@ import { calcularCashFlow, type PremissasCashFlow, type ResultadoCashFlow } from
 import { gerarRecebimentosMensais, gerarRecebimentosDaSalesTable, type PlanoVendas } from "./vendas";
 import { gerarComissaoMensal, type ParametrosComissao } from "./sales-commission";
 import { calcXIRR, type FluxoDatado } from "./xirr";
-import type { LinhaCusto, GrupoCusto } from "./custos";
+import { resolverCustos, calcCustosAquisicaoAcessorios, type LinhaCusto, type GrupoCusto } from "./custos";
 import type { LinhaSalesTableResolvida } from "./sales-table";
 import type { Typology } from "./areas";
+import { feesParaLinhasCusto, type Fee, type DatasProjetoParaFees } from "./fees";
+import { calcularResultadosComWaterfall, type ResultadosInvestidorPromotor } from "./estrutura-capital";
+import type { NivelHurdle } from "./waterfall";
+import { calcularImpostoEstimadoDoResultado, type ParametrosImpostoEstimado } from "./impostos";
+import { montarUnderwritingResult, type ProjectUnderwritingResult } from "./underwriting";
 
 export const VARIACOES_SENSIBILIDADE = [-0.1, -0.05, 0, 0.05, 0.1] as const;
 
@@ -31,7 +36,9 @@ export type IndicadorSensibilidade =
   | "irr_levered"
   | "moic"
   | "roi"
+  | "roi_nao_alavancado"
   | "lucro"
+  | "lucro_liquido"
   | "margem"
   | "equity_contributed"
   | "peak_cash_exposure"
@@ -59,16 +66,17 @@ function aplicarVariacaoAoGrupo(linhasCusto: LinhaCusto[], grupo: GrupoCusto, de
 }
 
 /**
- * Recalcula o modelo completo (custos → recebimentos → financiamento →
- * equity → cash flow) para uma combinação de variações — nunca aplica
- * a percentagem só ao resultado final.
+ * Aplica as três variações aos custos/recebimentos, sem correr nenhum
+ * motor ainda — usado por calcularCenarioComVariacoes (só cash flow) e por
+ * calcularCenarioCompletoComVariacoes (Gate 7: pipeline completo). Nunca
+ * duas implementações da mesma lógica de variação.
  */
-export function calcularCenarioComVariacoes(
+function prepararCenario(
   base: PremissasBaseSensibilidade,
   deltaAquisicao: number,
   deltaConstrucao: number,
   deltaPreco: number
-): ResultadoCashFlow {
+): { linhasCusto: LinhaCusto[]; recebimentos: ReturnType<typeof gerarRecebimentosMensais>["linhas"]; comissaoPorMes: Map<string, number> | undefined } {
   let linhas = aplicarVariacaoAoGrupo(base.linhasCusto, "aquisicao", deltaAquisicao);
   linhas = aplicarVariacaoAoGrupo(linhas, "hard_cost", deltaConstrucao);
 
@@ -102,14 +110,215 @@ export function calcularCenarioComVariacoes(
     ({ linhas: recebimentos } = gerarRecebimentosMensais(receitaAjustada, base.planoVendas));
   }
 
+  return { linhasCusto: linhas, recebimentos, comissaoPorMes };
+}
+
+/**
+ * Recalcula o modelo completo (custos → recebimentos → financiamento →
+ * equity → cash flow) para uma combinação de variações — nunca aplica
+ * a percentagem só ao resultado final.
+ */
+export function calcularCenarioComVariacoes(
+  base: PremissasBaseSensibilidade,
+  deltaAquisicao: number,
+  deltaConstrucao: number,
+  deltaPreco: number
+): ResultadoCashFlow {
+  const { linhasCusto, recebimentos, comissaoPorMes } = prepararCenario(base, deltaAquisicao, deltaConstrucao, deltaPreco);
+
   return calcularCashFlow({
-    linhasCusto: linhas,
+    linhasCusto,
     contextoCusto: base.contextoCusto,
     recebimentos,
     comissaoPorMes,
     parametrosFinanciamento: base.parametrosFinanciamento,
     saldoMinimoCaixa: base.parametrosFinanciamento.saldoMinimoCaixa,
   });
+}
+
+/**
+ * Contexto adicional (Gate 7 do prompt 03_08) para que cada célula da
+ * matriz possa executar a função central COMPLETA — development fee,
+ * financiamento, promote, impostos, equity e retorno — nunca só
+ * cashflow.ts isolado. A célula-base (0%×0%) fica assim genuinamente
+ * idêntica ao que o dashboard mostra (underwriting.ts), porque usa
+ * exatamente os mesmos passos de project-loader.ts, só que recalculados
+ * por variação.
+ */
+export type PremissasCompletaSensibilidade = PremissasBaseSensibilidade & {
+  fees: Fee[];
+  datasProjetoParaFees: DatasProjetoParaFees;
+  temInvestidorExterno: boolean;
+  percentagemInvestidor: number;
+  hurdles: NivelHurdle[];
+  catchUpPct: number;
+  impostos: ParametrosImpostoEstimado;
+  acquisitionPrice: number;
+  acquisitionCosts: number;
+  abcTotal: number | null;
+  averageSalePricePerSqm: number | null;
+  unitCount: number;
+  committedDebtLimite: number | null;
+};
+
+/**
+ * Versão completa de calcularCenarioComVariacoes (Gate 7): além do cash
+ * flow, calendariza fees, corre o cenário não alavancado, a waterfall
+ * (quando há investidor externo) e o imposto estimado — exatamente os
+ * mesmos passos e as mesmas funções que project-loader.ts usa para
+ * montar o underwriting do dashboard. Nunca uma segunda fórmula.
+ */
+export function calcularCenarioCompletoComVariacoes(
+  base: PremissasCompletaSensibilidade,
+  deltaAquisicao: number,
+  deltaConstrucao: number,
+  deltaPreco: number
+): ProjectUnderwritingResult {
+  const { linhasCusto, recebimentos, comissaoPorMes } = prepararCenario(base, deltaAquisicao, deltaConstrucao, deltaPreco);
+
+  const linhasCustoResolvidas = resolverCustos(linhasCusto, base.contextoCusto);
+  const linhasCustoResolvidasComData = linhasCustoResolvidas.filter((l) => l.dataInicial && l.dataFinal);
+  const custosAquisicaoAuxiliares = calcCustosAquisicaoAcessorios(linhasCustoResolvidasComData);
+  const somaGrupoComData = (grupo: LinhaCusto["grupo"]) =>
+    linhasCustoResolvidasComData.filter((l) => l.grupo === grupo).reduce((s, l) => s + l.valorResolvido, 0);
+  const hardCostsTotal = somaGrupoComData("hard_cost");
+  const softCostsTotal = somaGrupoComData("soft_cost") + somaGrupoComData("outro");
+  const capexAntesDoProprioFee = base.contextoCusto.valorAquisicao + custosAquisicaoAuxiliares + hardCostsTotal + softCostsTotal;
+
+  const vgvBruto = recebimentos.reduce((s, l) => s + l.total, 0);
+  const comissaoComercialAntecipada = comissaoPorMes ? [...comissaoPorMes.values()].reduce((s, v) => s + v, 0) : 0;
+  const contextoFees = {
+    valorAquisicao: base.contextoCusto.valorAquisicao,
+    hardCostsTotal,
+    capexTotal: capexAntesDoProprioFee,
+    custoTotal: capexAntesDoProprioFee,
+    vgvBruto,
+    vgvLiquido: vgvBruto - comissaoComercialAntecipada,
+    abcTotal: base.abcTotal ?? 0,
+    numeroUnidades: base.unitCount,
+  };
+  const feesComoLinhasCusto = feesParaLinhasCusto(base.fees, contextoFees, base.datasProjetoParaFees);
+  const linhasCustoComFees = [...linhasCusto, ...feesComoLinhasCusto];
+
+  const resultado = calcularCashFlow({
+    linhasCusto: linhasCustoComFees,
+    contextoCusto: base.contextoCusto,
+    recebimentos,
+    comissaoPorMes,
+    parametrosFinanciamento: base.parametrosFinanciamento,
+    saldoMinimoCaixa: base.parametrosFinanciamento.saldoMinimoCaixa,
+  });
+  const feesTotais = resultado.feesOperacionaisTotal;
+
+  const resultadoUnlevered = calcularCashFlow({
+    linhasCusto: linhasCustoComFees,
+    contextoCusto: base.contextoCusto,
+    recebimentos,
+    comissaoPorMes,
+    parametrosFinanciamento: { ...base.parametrosFinanciamento, comFinanciamento: false },
+    saldoMinimoCaixa: base.parametrosFinanciamento.saldoMinimoCaixa,
+  });
+
+  let investidorPromotor: ResultadosInvestidorPromotor | null = null;
+  if (base.temInvestidorExterno) {
+    investidorPromotor = calcularResultadosComWaterfall(resultado.linhas, base.hurdles, base.percentagemInvestidor, feesTotais, base.catchUpPct);
+  }
+
+  const impostoEstimadoLevered = calcularImpostoEstimadoDoResultado(resultado, base.impostos);
+  const impostoEstimadoUnlevered = calcularImpostoEstimadoDoResultado(resultadoUnlevered, base.impostos);
+
+  const primeiraSaidaCapital = resultado.linhas[0]?.mes ?? null;
+  const ultimaEntradaCapitalOuRetorno = resultado.equity.dataRecuperacaoIntegral ?? resultado.linhas[resultado.linhas.length - 1]?.mes ?? null;
+
+  return montarUnderwritingResult({
+    resultado,
+    resultadoUnlevered,
+    investidorPromotor,
+    feesTotais,
+    impostoEstimadoLevered,
+    impostoEstimadoUnlevered,
+    acquisitionPrice: base.acquisitionPrice,
+    acquisitionCosts: base.acquisitionCosts,
+    abcTotal: base.abcTotal,
+    averageSalePricePerSqm: base.averageSalePricePerSqm,
+    unitCount: base.unitCount,
+    committedDebtLimite: base.committedDebtLimite,
+    primeiraSaidaCapital,
+    ultimaEntradaCapitalOuRetorno,
+  });
+}
+
+/** Extrai o indicador pedido de um ProjectUnderwritingResult já calculado (Gate 7 — pipeline completo). */
+export function extrairIndicadorUnderwriting(u: ProjectUnderwritingResult, indicador: IndicadorSensibilidade): number | null {
+  switch (indicador) {
+    case "irr_unlevered":
+      return u.unleveredIrr;
+    case "irr_levered":
+      return u.leveredIrr;
+    case "moic":
+      return u.moic;
+    case "roi":
+      return u.leveredRoi;
+    case "roi_nao_alavancado":
+      return u.unleveredRoi;
+    case "lucro":
+      return u.profitBeforePromoteAndTax;
+    case "lucro_liquido":
+      return u.netProfit;
+    case "margem":
+      return u.grossVgv > 0 ? u.profitBeforePromoteAndTax / u.grossVgv : null;
+    case "equity_contributed":
+      return u.leveredEquityInvested;
+    case "peak_cash_exposure":
+      return u.peakEquityExposure;
+    case "peak_debt":
+      return u.peakDebt;
+    default:
+      return null;
+  }
+}
+
+/**
+ * Versão completa de calcularMatrizSensibilidade (Gate 7): cada célula
+ * executa calcularCenarioCompletoComVariacoes — nunca só cashflow.ts. A
+ * célula 0%×0% fica exatamente igual ao underwriting do dashboard quando
+ * `base` é montada com os mesmos dados que project-loader.ts usa.
+ */
+export function calcularMatrizSensibilidadeCompleta(
+  base: PremissasCompletaSensibilidade,
+  matriz: MatrizSensibilidade,
+  indicador: IndicadorSensibilidade
+): MatrizResultado {
+  const [eixoLinha, eixoColuna] = EIXOS_POR_MATRIZ[matriz];
+
+  const celulas: CelulaSensibilidade[][] = VARIACOES_SENSIBILIDADE.map((variacaoLinha) =>
+    VARIACOES_SENSIBILIDADE.map((variacaoColuna) => {
+      const deltas = { aquisicao: 0, construcao: 0, preco: 0 };
+
+      const aplicar = (eixo: EixoSensibilidade, valor: number) => {
+        if (eixo === "aquisicao") deltas.aquisicao = valor;
+        else if (eixo === "custo_construcao") deltas.construcao = valor;
+        else deltas.preco = valor;
+      };
+      aplicar(eixoLinha, variacaoLinha);
+      aplicar(eixoColuna, variacaoColuna);
+
+      const u = calcularCenarioCompletoComVariacoes(base, deltas.aquisicao, deltas.construcao, deltas.preco);
+      const valor = extrairIndicadorUnderwriting(u, indicador);
+
+      return {
+        variacaoLinha,
+        variacaoColuna,
+        valor,
+        gdv: u.grossVgv,
+        custoTotal: u.projectCapexBeforePromoteAndTax,
+        lucro: u.netProfit,
+        margem: u.grossVgv > 0 ? u.profitBeforePromoteAndTax / u.grossVgv : 0,
+      };
+    })
+  );
+
+  return { matriz, indicador, celulas };
 }
 
 /**

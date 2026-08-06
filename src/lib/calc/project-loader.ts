@@ -18,20 +18,12 @@ import { resolverMesInicioCashSweep } from "./financiamento";
 import { calcularResultadosComWaterfall, type ResultadosInvestidorPromotor } from "./estrutura-capital";
 import { feesParaLinhasCusto, type DatasProjetoParaFees } from "./fees";
 import { resolverCustos, calcCustosAquisicaoAcessorios, type ContextoCusto, type LinhaCusto } from "./custos";
-import {
-  calcLucroTributavelEstimado,
-  calcLucroTributavel,
-  calcIRC,
-  calcDerramaMunicipal,
-  calcDerramaEstadual,
-  resolverTaxaIRC,
-} from "./impostos";
+import { calcularImpostoEstimadoDoResultado } from "./impostos";
 import { calcMetricasPorM2, calcEstruturaSobreVgv, type MetricasPorM2, type EstruturaSobreVgv } from "./metricas";
-import { extrairIndicador } from "./sensibilidades";
+import { extrairIndicador, calcularMatrizSensibilidadeCompleta, type PremissasCompletaSensibilidade, type MatrizResultado } from "./sensibilidades";
 import { gerarAlertas, type Alerta } from "./alertas";
 import { montarUnderwritingResult, type ProjectUnderwritingResult } from "./underwriting";
 import { calcularRecomendacao, type ResultadoRecomendacao } from "./recomendacao";
-import type { ImpostosEstado } from "./../supabase/project-taxes";
 
 import { listarTipologiasProjeto } from "./../supabase/project-typologies";
 import { listarUnidades } from "./../supabase/project-units";
@@ -97,6 +89,16 @@ export type ResultadoProjetoCompleto = {
   // contrato central acima. null nos mesmos casos em que `underwriting` é
   // null.
   recomendacao: ResultadoRecomendacao | null;
+
+  // As três matrizes obrigatórias (Gate 7 da consolidação, secção 19) —
+  // cada célula já passou pela função central completa (fee, financiamento,
+  // promote, impostos, equity, retorno), com indicador padrão TIR
+  // alavancada. null nos mesmos casos em que `underwriting` é null.
+  sensibilidades: {
+    aquisicaoVsCustoConstrucao: MatrizResultado;
+    custoConstrucaoVsPrecoVenda: MatrizResultado;
+    aquisicaoVsPrecoVenda: MatrizResultado;
+  } | null;
 };
 
 export async function carregarResultadoProjeto(supabase: SupabaseClient, projectId: string): Promise<ResultadoProjetoCompleto> {
@@ -151,6 +153,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       margemProjetoTotal: null,
       underwriting: null,
       recomendacao: null,
+      sensibilidades: null,
     };
   }
 
@@ -173,6 +176,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       margemProjetoTotal: null,
       underwriting: null,
       recomendacao: null,
+      sensibilidades: null,
     };
   }
 
@@ -324,31 +328,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     );
   }
 
-  // Imposto estimado — mesma lógica da etapa de Impostos do wizard (secção
-  // 29): só Empresa/SPV calcula IRC a partir do motor; os outros casos só
-  // usam a simulação manual, nunca aplicam IRC automaticamente. Extraída
-  // para função reutilizável — usada também no cenário unlevered abaixo
-  // (Gate 1 da consolidação 03/08), onde os juros dedutíveis são zero.
-  function calcularImpostoEstimado(resultadoCF: ResultadoCashFlow, impostosParam: ImpostosEstado): number {
-    if (impostosParam.estruturaFiscalAssumida !== "empresa_spv") {
-      return impostosParam.simulacaoImpostoEstimadoManual ?? 0;
-    }
-    const lucroTributavelAntesDeAjustes = calcLucroTributavelEstimado({
-      receitasReconhecidas: resultadoCF.gdv,
-      custosFiscalmenteConsiderados: resultadoCF.custoTotal - resultadoCF.comissaoComercialTotal,
-      comissaoDedutivel: resultadoCF.comissaoComercialTotal,
-      feesDedutiveis: 0,
-      custosFinanceirosDedutiveis: resultadoCF.financiamento.jurosTotais,
-      ajustesFiscais: impostosParam.ircAjustesFiscais,
-    });
-    const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostosParam.ircPrejuizosFiscaisAcumulados);
-    const { taxa: taxaIrc } = resolverTaxaIRC(impostosParam.ircAnoFiscalReferencia, impostosParam.ircTaxaManual);
-    const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
-    const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostosParam.derramaMunicipalTaxa);
-    const derramaEstadual = calcDerramaEstadual(lucroTributavel);
-    return ircEstimado + derramaMunicipal + derramaEstadual;
-  }
-  const impostoEstimadoTotal = calcularImpostoEstimado(resultado, impostos);
+  const impostoEstimadoTotal = calcularImpostoEstimadoDoResultado(resultado, impostos);
 
   const custosFinanceiros = resultado.financiamento.jurosTotais + resultado.financiamento.feesBancarios + resultado.financiamento.impostoSeloTotal;
   // IVA não recuperável já entra no custo total do cash flow (cashflow.ts) —
@@ -470,7 +450,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     mesInicioCashSweep: null,
     saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
   });
-  const impostoEstimadoUnlevered = calcularImpostoEstimado(resultadoUnlevered, impostos);
+  const impostoEstimadoUnlevered = calcularImpostoEstimadoDoResultado(resultadoUnlevered, impostos);
 
   const underwriting = montarUnderwritingResult({
     resultado,
@@ -491,6 +471,48 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
 
   const recomendacao = calcularRecomendacao(underwriting, alertas.filter((a) => a.tipo === "erro").length);
 
+  // As três matrizes obrigatórias (Gate 7, secção 19) — mesma premissa-base
+  // que gerou `underwriting` acima, para que a célula 0%×0% reconcilie
+  // exatamente com o resto do dashboard (cada célula corre a função
+  // central completa via calcularMatrizSensibilidadeCompleta).
+  const premissasSensibilidade: PremissasCompletaSensibilidade = {
+    linhasCusto: custos,
+    contextoCusto,
+    receitaTotalGdvBase: vgvBruto,
+    planoVendas,
+    parametrosFinanciamento: financiamento,
+    salesTableResolvida,
+    tipologias,
+    comissaoParametros:
+      salesTableResolvida.length > 0
+        ? {
+            percentagemComissao: planoVendas.comissaoMediacaoPct,
+            taxaIva: planoVendas.comissaoTaxaIva,
+            pctPagoNoSinal: planoVendas.comissaoPctPagoSinal,
+            pctPagoNaEscritura: planoVendas.comissaoPctPagoEscritura,
+            ivaRecuperavelPct: planoVendas.comissaoIvaRecuperavelPct,
+          }
+        : undefined,
+    fees,
+    datasProjetoParaFees,
+    temInvestidorExterno: estruturaCapital.temInvestidorExterno,
+    percentagemInvestidor: estruturaCapital.percentagemInvestidor,
+    hurdles,
+    catchUpPct: estruturaCapital.catchUpAtivo ? estruturaCapital.catchUpPct : 0,
+    impostos,
+    acquisitionPrice: contextoCusto.valorAquisicao,
+    acquisitionCosts: custosAquisicaoAuxiliares,
+    abcTotal,
+    averageSalePricePerSqm: resumoPrograma.precoMedioPonderadoM2 > 0 ? resumoPrograma.precoMedioPonderadoM2 : null,
+    unitCount: contextoCusto.numeroUnidades,
+    committedDebtLimite: financiamento.limiteCredito,
+  };
+  const sensibilidades = {
+    aquisicaoVsCustoConstrucao: calcularMatrizSensibilidadeCompleta(premissasSensibilidade, "aquisicao_vs_custo_construcao", "irr_levered"),
+    custoConstrucaoVsPrecoVenda: calcularMatrizSensibilidadeCompleta(premissasSensibilidade, "custo_construcao_vs_preco_venda", "irr_levered"),
+    aquisicaoVsPrecoVenda: calcularMatrizSensibilidadeCompleta(premissasSensibilidade, "aquisicao_vs_preco_venda", "irr_levered"),
+  };
+
   return {
     projeto,
     execucao,
@@ -509,6 +531,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     margemProjetoTotal: resultado.gdv > 0 ? estruturaSobreVgv.lucro / resultado.gdv : null,
     underwriting,
     recomendacao,
+    sensibilidades,
   };
 }
 

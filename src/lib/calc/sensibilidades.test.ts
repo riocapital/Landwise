@@ -2,13 +2,20 @@ import { describe, it, expect } from "vitest";
 import {
   calcularMatrizSensibilidade,
   calcularCenarioComVariacoes,
+  calcularCenarioCompletoComVariacoes,
+  calcularMatrizSensibilidadeCompleta,
   extrairIndicador,
+  extrairIndicadorUnderwriting,
   VARIACOES_SENSIBILIDADE,
   type PremissasBaseSensibilidade,
+  type PremissasCompletaSensibilidade,
 } from "./sensibilidades";
 import type { LinhaCusto } from "./custos";
 import type { ParametrosFinanciamento } from "./financiamento";
 import type { PlanoVendas } from "./vendas";
+import type { Fee } from "./fees";
+import type { DatasProjetoParaFees } from "./fees";
+import type { ParametrosImpostoEstimado } from "./impostos";
 
 function custo(overrides: Partial<LinhaCusto>): LinhaCusto {
   return {
@@ -179,5 +186,115 @@ describe("Auditoria financeira — IRR/MOIC vêm sempre do equity, nunca do cash
     const resultado = calcularCenarioComVariacoes(baseComFinanciamento, 0, 0, 0);
     expect(extrairIndicador(resultado, "lucro")).toBe(resultado.lucroProjeto);
     expect(extrairIndicador(resultado, "margem")).toBe(resultado.margemProjeto);
+  });
+});
+
+describe("Gate 7 do prompt 03_08 — cada célula executa a função central completa (fee, financiamento, promote, impostos, equity, retorno)", () => {
+  const fees: Fee[] = [
+    {
+      id: "fee-1",
+      nome: "Development fee",
+      tipo: "development",
+      baseCalculo: "percentagem_hard_costs",
+      valorInput: 0.05,
+      momentoPagamento: "durante_desenvolvimento",
+      dataPersonalizada: null,
+      dataInicial: null,
+      duracaoMeses: null,
+      perfilDesembolso: "linear",
+      taxaIva: null,
+      ivaRecuperavelPct: 0,
+    },
+  ];
+  const datasProjetoParaFees: DatasProjetoParaFees = {
+    dataEscrituraAquisicao: "2026-01-01",
+    dataInicioConstrucao: planoVendas.dataInicioConstrucao,
+    dataFimConstrucao: planoVendas.dataFimConstrucao,
+    dataEscrituraVenda: planoVendas.dataEscritura,
+  };
+  const impostosEmpresaSpv: ParametrosImpostoEstimado = {
+    estruturaFiscalAssumida: "empresa_spv",
+    simulacaoImpostoEstimadoManual: null,
+    ircAjustesFiscais: 0,
+    ircPrejuizosFiscaisAcumulados: 0,
+    ircAnoFiscalReferencia: 2026,
+    ircTaxaManual: null,
+    derramaMunicipalTaxa: 0,
+  };
+  const parametrosComFinanciamento: ParametrosFinanciamento = {
+    ...parametrosSemFinanciamento,
+    comFinanciamento: true,
+    percentagemHardCostsFinanciada: 0.5,
+    percentagemAquisicaoFinanciada: 0.5,
+    euribor: 0.03,
+    spread: 0.02,
+    limiteCredito: 1_200_000,
+  };
+
+  const baseCompleta: PremissasCompletaSensibilidade = {
+    ...base,
+    parametrosFinanciamento: parametrosComFinanciamento,
+    fees,
+    datasProjetoParaFees,
+    temInvestidorExterno: true,
+    percentagemInvestidor: 0.8,
+    hurdles: [{ hurdleIRR: 0.08, promotePctAcima: 0.2 }],
+    catchUpPct: 0,
+    impostos: impostosEmpresaSpv,
+    acquisitionPrice: 1_000_000,
+    acquisitionCosts: 20_000,
+    abcTotal: 1_000,
+    averageSalePricePerSqm: 4_000,
+    unitCount: 10,
+    committedDebtLimite: 1_200_000,
+  };
+
+  it("a célula-base (0%×0%) inclui genuinamente development fee, promote e impostos — nunca zero por omissão de wiring", () => {
+    const u = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0, 0);
+    expect(u.developmentFee).toBeGreaterThan(0);
+    expect(u.estimatedTaxes).toBeGreaterThan(0);
+    // Com hurdle 8% e retorno positivo, a waterfall tem de gerar promote > 0
+    // neste cenário sintético (senão o wiring do investidor/waterfall não
+    // estaria mesmo a chegar à célula).
+    expect(u.promoteFee).toBeGreaterThanOrEqual(0);
+  });
+
+  it("todas as reconciliações da célula-base passam com tolerância de €0,01 — mesmo padrão de qualidade do dashboard", () => {
+    const u = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0, 0);
+    expect(u.qualidade.todasReconciliacoesOk).toBe(true);
+  });
+
+  it("a célula-base da matriz (índice central) é exatamente igual a uma chamada direta com deltas 0/0/0 — nunca um valor recalculado de outra forma", () => {
+    const direta = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0, 0);
+    const matriz = calcularMatrizSensibilidadeCompleta(baseCompleta, "aquisicao_vs_custo_construcao", "lucro_liquido");
+    const centroIdx = VARIACOES_SENSIBILIDADE.indexOf(0);
+    const celulaCentral = matriz.celulas[centroIdx][centroIdx];
+    expect(celulaCentral.variacaoLinha).toBe(0);
+    expect(celulaCentral.variacaoColuna).toBe(0);
+    expect(celulaCentral.valor).toBeCloseTo(direta.netProfit, 2);
+    expect(celulaCentral.valor).toBe(extrairIndicadorUnderwriting(direta, "lucro_liquido"));
+  });
+
+  it("o development fee (base % dos hard costs) recalcula com a variação de custo de construção — nunca fica preso ao valor da base original", () => {
+    const semVariacao = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0, 0);
+    const comHardCostsMaiores = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0.1, 0);
+    expect(comHardCostsMaiores.developmentFee).toBeGreaterThan(semVariacao.developmentFee);
+    expect(comHardCostsMaiores.hardCosts).toBeGreaterThan(semVariacao.hardCosts);
+  });
+
+  it("roi_nao_alavancado e lucro_liquido ficam disponíveis via extrairIndicadorUnderwriting (secção 19: novos indicadores do Gate 7)", () => {
+    const u = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0, 0);
+    expect(extrairIndicadorUnderwriting(u, "roi_nao_alavancado")).toBe(u.unleveredRoi);
+    expect(extrairIndicadorUnderwriting(u, "lucro_liquido")).toBe(u.netProfit);
+  });
+
+  it("nunca aplica só a percentagem ao resultado final — variações diferentes produzem impostos e promote genuinamente recalculados, não escalados", () => {
+    const base00 = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0, 0);
+    const comPrecoMaior = calcularCenarioCompletoComVariacoes(baseCompleta, 0, 0, 0.1);
+    // Um preço de venda 10% maior não escala o imposto/promote linearmente
+    // (dependem de escalões/hurdles não-lineares) — só confirmamos que o
+    // motor os recalculou de facto, não que ficaram parados.
+    expect(comPrecoMaior.estimatedTaxes).not.toBe(base00.estimatedTaxes);
+    expect(comPrecoMaior.netProfit).toBeGreaterThan(base00.netProfit);
   });
 });

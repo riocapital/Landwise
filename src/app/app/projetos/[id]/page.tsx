@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { carregarResultadoProjeto } from "@/lib/calc/project-loader";
 import type { NivelRecomendacao } from "@/lib/calc/recomendacao";
 import { CashFlowChart } from "./_components/cash-flow-chart";
+import { MatrizSensibilidadeView } from "./_components/matriz-sensibilidade";
 
 function fmtEUR(v: number) {
   return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 0 }).format(v) + " €";
@@ -245,10 +246,22 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
           color={u.qualidade.todasReconciliacoesOk ? "#4E7A5C" : "#A13D2E"}
         />
       </div>
-      <p className="text-xs text-[#59636A] mb-8">
-        Sensibilidade: consulta as três matrizes (Aquisição × Venda, Aquisição × Custo de obra, Custo de obra × Venda) na etapa de preenchimento. Campos
-        ainda sem motor dedicado nesta versão: {u.qualidade.camposEmFalta.length > 0 ? u.qualidade.camposEmFalta.join("; ") : "nenhum"}.
+      <p className="text-xs text-[#59636A] mb-3">
+        Campos ainda sem motor dedicado nesta versão: {u.qualidade.camposEmFalta.length > 0 ? u.qualidade.camposEmFalta.join("; ") : "nenhum"}.
       </p>
+
+      {r.sensibilidades && (
+        <>
+          <SectionLabel>Sensibilidade</SectionLabel>
+          <p className="text-xs text-[#59636A] -mt-3 mb-3">
+            Cada célula corre a função central completa (development fee, financiamento, promote, impostos, equity e retorno) — a célula central
+            (0%×0%) é exatamente o cenário-base acima. Nunca altera as premissas guardadas do projeto.
+          </p>
+          <MatrizSensibilidadeView titulo="Aquisição × Custo de construção" resultado={r.sensibilidades.aquisicaoVsCustoConstrucao} />
+          <MatrizSensibilidadeView titulo="Custo de construção × Preço de venda" resultado={r.sensibilidades.custoConstrucaoVsPrecoVenda} />
+          <MatrizSensibilidadeView titulo="Aquisição × Preço de venda" resultado={r.sensibilidades.aquisicaoVsPrecoVenda} />
+        </>
+      )}
 
       {resultado.equity.fluxosInvestidor.length > 0 && (
         <details className="mb-8 border border-[#E3DACB] rounded-lg px-4 py-3">

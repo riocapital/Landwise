@@ -14,6 +14,7 @@
 //   nenhum desses termos, de propósito).
 
 import type { LinhaCustoResolvida } from "./custos";
+import type { ResultadoCashFlow } from "./cashflow";
 
 // --- Seguro ---
 
@@ -220,6 +221,49 @@ export type ResumoIVAConsolidado = {
   ivaNaoRecuperavel: number;
   saldoIva: number; // recuperável ainda não recuperado
 };
+
+// --- Imposto estimado a partir de um resultado de cash flow (secção 29) ---
+//
+// Fonte única partilhada por project-loader.ts (dashboard) e
+// sensibilidades.ts (Gate 7 do prompt 03_08 — cada célula tem de executar
+// a função central completa, incluindo impostos). Extraída para aqui
+// para nunca haver uma segunda fórmula de imposto estimado a divergir.
+
+export type ParametrosImpostoEstimado = {
+  estruturaFiscalAssumida: EstruturaFiscalAssumida;
+  simulacaoImpostoEstimadoManual: number | null;
+  ircAjustesFiscais: number;
+  ircPrejuizosFiscaisAcumulados: number;
+  ircAnoFiscalReferencia: number;
+  ircTaxaManual: number | null;
+  derramaMunicipalTaxa: number;
+};
+
+/**
+ * Só a estrutura "empresa_spv" calcula IRC automaticamente a partir do
+ * motor (secção 29) — nos outros casos (pessoa singular, não definida,
+ * outra), só é permitida a simulação manual, nunca aplicado IRC
+ * automaticamente.
+ */
+export function calcularImpostoEstimadoDoResultado(resultadoCF: ResultadoCashFlow, impostosParam: ParametrosImpostoEstimado): number {
+  if (impostosParam.estruturaFiscalAssumida !== "empresa_spv") {
+    return impostosParam.simulacaoImpostoEstimadoManual ?? 0;
+  }
+  const lucroTributavelAntesDeAjustes = calcLucroTributavelEstimado({
+    receitasReconhecidas: resultadoCF.gdv,
+    custosFiscalmenteConsiderados: resultadoCF.custoTotal - resultadoCF.comissaoComercialTotal,
+    comissaoDedutivel: resultadoCF.comissaoComercialTotal,
+    feesDedutiveis: 0,
+    custosFinanceirosDedutiveis: resultadoCF.financiamento.jurosTotais,
+    ajustesFiscais: impostosParam.ircAjustesFiscais,
+  });
+  const lucroTributavel = calcLucroTributavel(lucroTributavelAntesDeAjustes, impostosParam.ircPrejuizosFiscaisAcumulados);
+  const { taxa: taxaIrc } = resolverTaxaIRC(impostosParam.ircAnoFiscalReferencia, impostosParam.ircTaxaManual);
+  const ircEstimado = calcIRC(lucroTributavel, taxaIrc);
+  const derramaMunicipal = calcDerramaMunicipal(lucroTributavel, impostosParam.derramaMunicipalTaxa);
+  const derramaEstadual = calcDerramaEstadual(lucroTributavel);
+  return ircEstimado + derramaMunicipal + derramaEstadual;
+}
 
 export function agregarIVAConsolidado(linhasCusto: LinhaCustoResolvida[], dataReferencia: string): ResumoIVAConsolidado {
   const ivaSuportado = linhasCusto.reduce((s, l) => s + l.ivaSuportado, 0);
