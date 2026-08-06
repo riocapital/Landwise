@@ -93,6 +93,11 @@ export type FeeRow = {
   valor_input: number;
   momento_pagamento: MomentoPagamentoFee;
   data_personalizada: string | null;
+  data_inicial: string | null;
+  duracao_meses: number | null;
+  perfil_desembolso: Fee["perfilDesembolso"] | null;
+  taxa_iva: number | null;
+  iva_recuperavel_pct: number;
   ordem: number;
 };
 
@@ -105,6 +110,11 @@ function linhaParaFee(r: FeeRow): Fee {
     valorInput: r.valor_input,
     momentoPagamento: r.momento_pagamento,
     dataPersonalizada: r.data_personalizada,
+    dataInicial: r.data_inicial,
+    duracaoMeses: r.duracao_meses,
+    perfilDesembolso: r.perfil_desembolso ?? "unico_inicio",
+    taxaIva: r.taxa_iva,
+    ivaRecuperavelPct: r.iva_recuperavel_pct ?? 0,
   };
 }
 
@@ -130,6 +140,12 @@ export async function atualizarFee(supabase: SupabaseClient, id: string, patch: 
   if (patch.baseCalculo !== undefined) dbPatch.base_calculo = patch.baseCalculo;
   if (patch.valorInput !== undefined) dbPatch.valor_input = patch.valorInput;
   if (patch.momentoPagamento !== undefined) dbPatch.momento_pagamento = patch.momentoPagamento;
+  if (patch.dataPersonalizada !== undefined) dbPatch.data_personalizada = patch.dataPersonalizada;
+  if (patch.dataInicial !== undefined) dbPatch.data_inicial = patch.dataInicial;
+  if (patch.duracaoMeses !== undefined) dbPatch.duracao_meses = patch.duracaoMeses;
+  if (patch.perfilDesembolso !== undefined) dbPatch.perfil_desembolso = patch.perfilDesembolso;
+  if (patch.taxaIva !== undefined) dbPatch.taxa_iva = patch.taxaIva;
+  if (patch.ivaRecuperavelPct !== undefined) dbPatch.iva_recuperavel_pct = patch.ivaRecuperavelPct;
   const { error } = await supabase.from("project_fees").update(dbPatch).eq("id", id);
   return error?.message ?? null;
 }

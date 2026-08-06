@@ -9,6 +9,7 @@ import {
   type ProjectInputs,
 } from "@/lib/calc/viabilidade";
 import { calcResumoPrograma, calcAbcTotalProgramado, type Typology } from "@/lib/calc/areas";
+import type { TipoImovelImt } from "@/lib/calc/imt";
 import {
   listarTipologiasProjeto,
   criarTipologia,
@@ -120,6 +121,15 @@ export type IdentificacaoEstruturada = {
   numElevadores: number;
   temJardimExterior: boolean;
   imovelOcupado: boolean;
+  // Configuração do calculador assistido de IMT (secção 12 do prompt
+  // 03_08 — corrige o achado P1.10). Antes só vivia em useState local do
+  // wizard, perdida a cada reload. null = ainda não escolhido, o
+  // calculador assume "outro_urbano_ou_terreno_construcao" por defeito
+  // (o mesmo default que já tinha antes de existir persistência).
+  imtCalculadorTipoImovel: TipoImovelImt | null;
+  imtCalculadorRegiaoAutonoma: boolean;
+  imtCalculadorJovem: boolean;
+  imtCalculadorOffshore: boolean;
 };
 
 const IDENTIFICACAO_VAZIA: IdentificacaoEstruturada = {
@@ -142,6 +152,10 @@ const IDENTIFICACAO_VAZIA: IdentificacaoEstruturada = {
   numElevadores: 0,
   temJardimExterior: false,
   imovelOcupado: false,
+  imtCalculadorTipoImovel: null,
+  imtCalculadorRegiaoAutonoma: false,
+  imtCalculadorJovem: false,
+  imtCalculadorOffshore: false,
 };
 
 export default function WizardPage({ params }: { params: Promise<{ id: string }> }) {
@@ -211,6 +225,10 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         numElevadores: data.num_elevadores ?? 0,
         temJardimExterior: data.tem_jardim_exterior ?? false,
         imovelOcupado: data.imovel_ocupado ?? false,
+        imtCalculadorTipoImovel: data.imt_calculador_tipo_imovel ?? null,
+        imtCalculadorRegiaoAutonoma: data.imt_calculador_regiao_autonoma ?? false,
+        imtCalculadorJovem: data.imt_calculador_jovem ?? false,
+        imtCalculadorOffshore: data.imt_calculador_offshore ?? false,
       });
     }
     const tipologiasLidas = await listarTipologiasProjeto(supabase, id);
@@ -294,6 +312,10 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           num_elevadores: identificacao.temElevador ? identificacao.numElevadores : 0,
           tem_jardim_exterior: identificacao.temJardimExterior,
           imovel_ocupado: identificacao.imovelOcupado,
+          imt_calculador_tipo_imovel: identificacao.imtCalculadorTipoImovel,
+          imt_calculador_regiao_autonoma: identificacao.imtCalculadorRegiaoAutonoma,
+          imt_calculador_jovem: identificacao.imtCalculadorJovem,
+          imt_calculador_offshore: identificacao.imtCalculadorOffshore,
         })
         .eq("id", id);
 
@@ -893,6 +915,11 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
     hardCostsTotal: resumoCustosAtual.totalHardCosts,
     capexTotal: resumoCustosAtual.custoTotal,
     custoTotal: resumoCustosAtual.custoTotal,
+    // Pré-visualização do wizard — aproximação com a % de comissão
+    // configurada, não o valor real por data de venda (esse só existe no
+    // resultado consolidado de project-loader.ts, usado pelo dashboard).
+    vgvBruto: vgvBrutoAtual,
+    vgvLiquido: vgvBrutoAtual * (1 - (planoVendas.comissaoMediacaoPct || 0)),
     abcTotal: abcTotalAtual,
     numeroUnidades: contextoCustoAtual.numeroUnidades,
   };
@@ -1069,6 +1096,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         <StepAquisicaoCustos
           custosNovos={custosNovos}
           identificacao={identificacao}
+          updateIdentificacao={updateIdentificacao}
           tipologiasNovas={tipologiasNovas}
           inputs={inputs}
           updateInput={updateInput}

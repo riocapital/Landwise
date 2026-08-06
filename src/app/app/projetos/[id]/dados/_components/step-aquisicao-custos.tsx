@@ -2,7 +2,6 @@
 
 // Extraído de page.tsx (achado S1 da auditoria de 2026-07-31) — Etapa 3 do wizard.
 
-import { useState } from "react";
 import { type ProjectInputs } from "@/lib/calc/viabilidade";
 import { calcResumoPrograma, type Typology } from "@/lib/calc/areas";
 import { resolverCustos, agregarCustos, type LinhaCusto, type GrupoCusto, type ContextoCusto } from "@/lib/calc/custos";
@@ -49,6 +48,7 @@ const NOMES_CUSTOS_FIXOS = new Set(CUSTOS_PADRAO.map((c) => c.nome));
 export function StepAquisicaoCustos({
   custosNovos,
   identificacao,
+  updateIdentificacao,
   tipologiasNovas,
   inputs,
   updateInput,
@@ -58,6 +58,7 @@ export function StepAquisicaoCustos({
 }: {
   custosNovos: LinhaCusto[];
   identificacao: IdentificacaoEstruturada;
+  updateIdentificacao: <K extends keyof IdentificacaoEstruturada>(key: K, value: IdentificacaoEstruturada[K]) => void;
   tipologiasNovas: Typology[];
   inputs: ProjectInputs;
   updateInput: <K extends keyof ProjectInputs>(key: K, value: ProjectInputs[K]) => void;
@@ -124,15 +125,32 @@ export function StepAquisicaoCustos({
     onAtualizarCusto(custo.id, { dataInicial: dataInicial || null, duracaoMeses: duracaoMeses || null, dataFinal });
   }
 
-  const [imtTipoImovel, setImtTipoImovel] = useState<TipoImovelImt>("outro_urbano_ou_terreno_construcao");
-  const [imtRegiaoAutonoma, setImtRegiaoAutonoma] = useState(false);
-  const [imtJovem, setImtJovem] = useState(false);
-  const [imtOffshore, setImtOffshore] = useState(false);
+  // Configuração do calculador persistida em `identificacao` (secção 12 do
+  // prompt 03_08 — corrige o achado P1.10: antes vivia só em useState local,
+  // perdida a cada reload). imtTipoImovel só fica null antes de o
+  // utilizador escolher pela primeira vez — o cálculo já assume
+  // "outro_urbano_ou_terreno_construcao" como referência visível, mas nunca
+  // persiste esse default sem uma escolha explícita.
+  const imtTipoImovel = identificacao.imtCalculadorTipoImovel ?? "outro_urbano_ou_terreno_construcao";
+  const imtRegiaoAutonoma = identificacao.imtCalculadorRegiaoAutonoma;
+  const imtJovem = identificacao.imtCalculadorJovem;
+  const imtOffshore = identificacao.imtCalculadorOffshore;
   const imtCalculado = calcularImt({ tipoImovel: imtTipoImovel, valor: inputs.custoTerreno || 0, regiaoAutonoma: imtRegiaoAutonoma, jovemAte35: imtJovem, offshore: imtOffshore });
 
+  const linhaImt = custoPorNome("IMT");
+  const linhaImposelo = custoPorNome("Imposto do selo");
+  const imtValorAtual = Math.round(imtCalculado.imt * 100) / 100;
+  const imposeloValorAtual = Math.round(imtCalculado.impostoSelo * 100) / 100;
+  // Override rastreado (secção 12): o valor da linha diverge do cálculo
+  // automático assim que o utilizador o edita manualmente — mostrado
+  // sempre, nunca escondido, para nunca haver um valor "fantasma" que
+  // parece automático mas já não é.
+  const imtDivergeDoCalculo = Boolean(linhaImt && Math.abs(linhaImt.valorInput - imtValorAtual) > 0.01);
+  const imposeloDivergeDoCalculo = Boolean(linhaImposelo && Math.abs(linhaImposelo.valorInput - imposeloValorAtual) > 0.01);
+
   function aplicarImtCalculado() {
-    atualizarLinha("IMT", { valorInput: Math.round(imtCalculado.imt * 100) / 100 });
-    atualizarLinha("Imposto do selo", { valorInput: Math.round(imtCalculado.impostoSelo * 100) / 100 });
+    atualizarLinha("IMT", { valorInput: imtValorAtual });
+    atualizarLinha("Imposto do selo", { valorInput: imposeloValorAtual });
   }
 
   function renderLinhaAquisicaoCompacta(c: LinhaCusto) {
@@ -264,7 +282,11 @@ export function StepAquisicaoCustos({
           <div className="mt-3">
             <Row>
               <FieldGroup label="Tipo de imóvel">
-                <select className="input-dark" value={imtTipoImovel} onChange={(e) => setImtTipoImovel(e.target.value as TipoImovelImt)}>
+                <select
+                  className="input-dark"
+                  value={imtTipoImovel}
+                  onChange={(e) => updateIdentificacao("imtCalculadorTipoImovel", e.target.value as TipoImovelImt)}
+                >
                   <option value="outro_urbano_ou_terreno_construcao">Terreno para construção / outro prédio urbano</option>
                   <option value="habitacao_propria_permanente">Habitação própria e permanente</option>
                   <option value="habitacao_secundaria_ou_arrendamento">Habitação secundária / arrendamento</option>
@@ -272,7 +294,11 @@ export function StepAquisicaoCustos({
                 </select>
               </FieldGroup>
               <FieldGroup label="Região">
-                <select className="input-dark" value={imtRegiaoAutonoma ? "ra" : "continente"} onChange={(e) => setImtRegiaoAutonoma(e.target.value === "ra")}>
+                <select
+                  className="input-dark"
+                  value={imtRegiaoAutonoma ? "ra" : "continente"}
+                  onChange={(e) => updateIdentificacao("imtCalculadorRegiaoAutonoma", e.target.value === "ra")}
+                >
                   <option value="continente">Portugal Continental</option>
                   <option value="ra">Região Autónoma (Açores/Madeira)</option>
                 </select>
@@ -284,12 +310,12 @@ export function StepAquisicaoCustos({
                   type="checkbox"
                   checked={imtJovem}
                   disabled={imtTipoImovel !== "habitacao_propria_permanente"}
-                  onChange={(e) => setImtJovem(e.target.checked)}
+                  onChange={(e) => updateIdentificacao("imtCalculadorJovem", e.target.checked)}
                 />
                 Adquirente jovem até 35 anos (só HPP)
               </label>
               <label className="flex items-center gap-2 text-xs text-[#59636A]">
-                <input type="checkbox" checked={imtOffshore} onChange={(e) => setImtOffshore(e.target.checked)} />
+                <input type="checkbox" checked={imtOffshore} onChange={(e) => updateIdentificacao("imtCalculadorOffshore", e.target.checked)} />
                 Adquirente offshore (paraíso fiscal — taxa agravada de 10%)
               </label>
             </Row>
@@ -297,9 +323,15 @@ export function StepAquisicaoCustos({
               <p>{imtCalculado.escalaoDescricao}</p>
               <p>IMT: €{imtCalculado.imt.toLocaleString("pt-PT", { minimumFractionDigits: 2 })} · Imposto do selo (0,8%): €{imtCalculado.impostoSelo.toLocaleString("pt-PT", { minimumFractionDigits: 2 })} · Total: €{imtCalculado.total.toLocaleString("pt-PT", { minimumFractionDigits: 2 })}</p>
               <p className="text-[10px] text-[#59636A]">Fonte: {FONTE_TABELAS_IMT}. Sugestão calculada sobre o preço de aquisição introduzido acima — confirma sempre o VPT antes da escritura, pois o IMT incide sobre o maior dos dois valores.</p>
+              {(imtDivergeDoCalculo || imposeloDivergeDoCalculo) && (
+                <p className="text-[#B96343] font-semibold">
+                  ⚠ O valor atual das linhas &quot;IMT&quot;/&quot;Imposto do selo&quot; diverge deste cálculo (override manual em vigor) — clica em
+                  &quot;Restaurar cálculo automático&quot; para repor.
+                </p>
+              )}
             </div>
             <button onClick={aplicarImtCalculado} className="text-xs px-3 py-1.5 rounded-full border border-[#E3DACB] text-[#142B3A] hover:border-[#B96343] mt-2">
-              Aplicar às linhas &quot;IMT&quot; e &quot;Imposto do selo&quot;
+              {imtDivergeDoCalculo || imposeloDivergeDoCalculo ? "Restaurar cálculo automático" : "Aplicar às linhas \"IMT\" e \"Imposto do selo\""}
             </button>
           </div>
         </details>

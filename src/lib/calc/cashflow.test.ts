@@ -3,6 +3,7 @@ import { calcularCashFlow, calcularReservaMinimaCustos, type PremissasCashFlow }
 import type { LinhaCusto, ContextoCusto } from "./custos";
 import type { ParametrosFinanciamento } from "./financiamento";
 import type { LinhaRecebimentoMensal } from "./vendas";
+import { CATEGORIA_DEVELOPMENT_FEE } from "./fees";
 
 const contexto: ContextoCusto = { valorAquisicao: 1_000_000, abcAcimaSolo: 600, abcAbaixoSolo: 400, abdTotal: 200, numeroUnidades: 10 };
 
@@ -335,5 +336,115 @@ describe("irrProjeto — TIR desalavancada do projeto (secção 17/24 da auditor
     expect(resultado.irrProjeto).not.toBeNull();
     expect(resultado.equity.irr).not.toBeNull();
     expect(resultado.irrProjeto).not.toBeCloseTo(resultado.equity.irr!, 4);
+  });
+});
+
+// --- Development fee calendarizado (secção 6 do prompt 03_08 — corrige o
+// achado P0.1): uma linha de custo com categoria "Development fee" entra
+// no MESMO calcularCashFlow que os custos normais, num campo próprio
+// (feesOperacionais), nunca dentro de outrosCustos (evita contar o fee
+// duas vezes nas métricas de decisão, que já somam `fees` à parte). ---
+
+describe("Development fee calendarizado — entra no cash flow como qualquer outro custo (achado P0.1)", () => {
+  it("uma linha com categoria 'Development fee' aparece em feesOperacionais, nunca em outrosCustos", () => {
+    const fee = custo({
+      grupo: "outro",
+      categoria: CATEGORIA_DEVELOPMENT_FEE,
+      nome: "Development fee",
+      valorInput: 60_000,
+      dataInicial: "2026-06-01",
+      duracaoMeses: 1,
+      dataFinal: "2026-06-30",
+      perfilDesembolso: "unico_inicio",
+    });
+    const resultado = calcularCashFlow({
+      linhasCusto: [fee],
+      contextoCusto: contexto,
+      recebimentos: [receber("2027-01", 1_500_000)],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+    const linhaJunho = resultado.linhas.find((l) => l.mes === "2026-06");
+    expect(linhaJunho?.feesOperacionais).toBeCloseTo(60_000, 2);
+    expect(linhaJunho?.outrosCustos).toBe(0);
+    expect(resultado.feesOperacionaisTotal).toBeCloseTo(60_000, 2);
+  });
+
+  it("o fee aumenta a necessidade de dívida/equity no mês em que é pago — nunca só um total agregado à parte (achado P0.1)", () => {
+    const semFee: PremissasCashFlow = {
+      linhasCusto: [custo({ grupo: "hard_cost", valorInput: 500_000, dataInicial: "2026-01-01", duracaoMeses: 6, dataFinal: "2026-06-30" })],
+      contextoCusto: contexto,
+      recebimentos: [receber("2027-01", 1_500_000)],
+      parametrosFinanciamento: parametrosSemFinanciamento,
+      saldoMinimoCaixa: 0,
+    };
+    const comFee: PremissasCashFlow = {
+      ...semFee,
+      linhasCusto: [
+        ...semFee.linhasCusto,
+        custo({
+          grupo: "outro",
+          categoria: CATEGORIA_DEVELOPMENT_FEE,
+          nome: "Development fee",
+          valorInput: 40_000,
+          dataInicial: "2026-03-01",
+          duracaoMeses: 1,
+          dataFinal: "2026-03-31",
+          perfilDesembolso: "unico_inicio",
+        }),
+      ],
+    };
+    const resultadoSemFee = calcularCashFlow(semFee);
+    const resultadoComFee = calcularCashFlow(comFee);
+
+    // Peak equity exposure tem de subir exatamente pelo valor do fee — ele
+    // entrou no mês certo (Março), a meio do período de construção, não
+    // como um ajuste solto no fim.
+    expect(resultadoComFee.equity.peakCashExposure).toBeCloseTo(resultadoSemFee.equity.peakCashExposure + 40_000, 2);
+
+    const linhaMarcoSemFee = resultadoSemFee.linhas.find((l) => l.mes === "2026-03")!;
+    const linhaMarcoComFee = resultadoComFee.linhas.find((l) => l.mes === "2026-03")!;
+    expect(linhaMarcoComFee.equityCall).toBeCloseTo(linhaMarcoSemFee.equityCall + 40_000, 2);
+
+    // E o lucro do projeto reflete o custo do fee — nunca um "resultado
+    // core" que finge que o fee não existiu.
+    expect(resultadoComFee.lucroProjeto).toBeCloseTo(resultadoSemFee.lucroProjeto - 40_000, 2);
+  });
+
+  it("o fee gera juros quando financiado — nunca um custo silenciosamente livre de custo de capital", () => {
+    const parametrosComFinanciamento: ParametrosFinanciamento = {
+      ...parametrosSemFinanciamento,
+      comFinanciamento: true,
+      percentagemHardCostsFinanciada: 1,
+      euribor: 0.04,
+      spread: 0.02,
+    };
+    // O fee, marcado como grupo "outro"/categoria Development fee, não é
+    // elegível para drawdown (só custos de aquisição/hard costs o são,
+    // secção 13) — mas ao entrar no cash flow unlevered aumenta o défice
+    // de caixa do mês, o que por sua vez aumenta o que falta financiar via
+    // equity, e os juros sobre a dívida já levantada continuam a acumular
+    // normalmente sobre o saldo então existente.
+    const linhasCusto = [
+      custo({ grupo: "hard_cost", valorInput: 500_000, dataInicial: "2026-01-01", duracaoMeses: 1, dataFinal: "2026-01-31" }),
+      custo({
+        grupo: "outro",
+        categoria: CATEGORIA_DEVELOPMENT_FEE,
+        nome: "Development fee",
+        valorInput: 50_000,
+        dataInicial: "2026-01-01",
+        duracaoMeses: 1,
+        dataFinal: "2026-01-31",
+        perfilDesembolso: "unico_inicio",
+      }),
+    ];
+    const resultado = calcularCashFlow({
+      linhasCusto,
+      contextoCusto: contexto,
+      recebimentos: [receber("2027-01", 1_500_000)],
+      parametrosFinanciamento: parametrosComFinanciamento,
+      saldoMinimoCaixa: 0,
+    });
+    expect(resultado.financiamento.jurosTotais).toBeGreaterThan(0);
   });
 });

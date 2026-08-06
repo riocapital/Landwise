@@ -18,6 +18,7 @@ import { simularFinanciamento, calcResultadosFinanciamento, type ParametrosFinan
 import { simularEquity, calcResultadosEquity, type NecessidadeMensalEquity } from "./equity";
 import { calcXIRR } from "./xirr";
 import type { LinhaRecebimentoMensal } from "./vendas";
+import { CATEGORIA_DEVELOPMENT_FEE } from "./fees";
 
 export type LinhaCashFlowMensal = {
   mes: string;
@@ -30,6 +31,12 @@ export type LinhaCashFlowMensal = {
   hardCosts: number;
   softCosts: number;
   outrosCustos: number;
+  // Development fees calendarizados (secção 6 do prompt 03_08 — corrige o
+  // achado P0.1). Campo próprio, nunca dentro de outrosCustos — as duas
+  // origens já são somadas separadamente noutros pontos (calcMetricasPorM2/
+  // calcEstruturaSobreVgv usam `fees` como categoria distinta); misturar
+  // aqui contaria o fee duas vezes.
+  feesOperacionais: number;
   ivaNaoRecuperavel: number;
   comissaoComercial: number; // sempre saída separada — nunca descontada diretamente da receita de vendas (secção 18 do plano)
 
@@ -57,7 +64,8 @@ export type LinhaCashFlowMensal = {
 export type ResultadoCashFlow = {
   linhas: LinhaCashFlowMensal[];
   gdv: number;
-  custoTotal: number; // custos operacionais (inclui comissão comercial) — NUNCA inclui juros/fees/impostos de financiamento nem movimentos de dívida/equity
+  custoTotal: number; // custos operacionais (inclui comissão comercial E development fees calendarizados) — NUNCA inclui juros/fees/impostos DE FINANCIAMENTO nem movimentos de dívida/equity
+  feesOperacionaisTotal: number; // soma de linhas[].feesOperacionais — development fees já calendarizados, incluídos em custoTotal (secção 6 do prompt 03_08)
   comissaoComercialTotal: number;
   custosFinanceiros: number; // juros + fees + imposto de selo do financiamento (soma de linhas[].jurosEFees) — custo económico real, nunca confundido com drawdown/amortização (que são movimentos de balanço, não de P&L)
 
@@ -104,11 +112,13 @@ export type PremissasCashFlow = {
 };
 
 /** Distribui cada linha de custo pelos meses entre a sua data inicial e final, segundo o perfil de desembolso escolhido. */
-export function distribuirCustosPorMes(linhasResolvidas: LinhaCustoResolvida[]): Map<string, { aquisicao: number; hard: number; soft: number; outro: number; ivaNaoRecuperavel: number }> {
-  const porMes = new Map<string, { aquisicao: number; hard: number; soft: number; outro: number; ivaNaoRecuperavel: number }>();
+export function distribuirCustosPorMes(
+  linhasResolvidas: LinhaCustoResolvida[]
+): Map<string, { aquisicao: number; hard: number; soft: number; outro: number; fee: number; ivaNaoRecuperavel: number }> {
+  const porMes = new Map<string, { aquisicao: number; hard: number; soft: number; outro: number; fee: number; ivaNaoRecuperavel: number }>();
 
-  const soma = (mes: string, campo: "aquisicao" | "hard" | "soft" | "outro" | "ivaNaoRecuperavel", valor: number) => {
-    const atual = porMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, ivaNaoRecuperavel: 0 };
+  const soma = (mes: string, campo: "aquisicao" | "hard" | "soft" | "outro" | "fee" | "ivaNaoRecuperavel", valor: number) => {
+    const atual = porMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, fee: 0, ivaNaoRecuperavel: 0 };
     atual[campo] += valor;
     porMes.set(mes, atual);
   };
@@ -116,7 +126,21 @@ export function distribuirCustosPorMes(linhasResolvidas: LinhaCustoResolvida[]):
   for (const linha of linhasResolvidas) {
     if (!linha.dataInicial || !linha.dataFinal) continue; // sem calendário definido — não entra no cash flow (fica só no capex agregado)
     const distribuicao = distribuirValorPorPerfil(linha.valorResolvido, linha.dataInicial, linha.dataFinal, linha.perfilDesembolso ?? "linear");
-    const campo = linha.grupo === "aquisicao" ? "aquisicao" : linha.grupo === "hard_cost" ? "hard" : linha.grupo === "soft_cost" ? "soft" : "outro";
+    // Development fees (secção 6 do prompt 03_08 — corrige o achado P0.1)
+    // entram como LinhaCusto grupo "outro", mas ficam num campo próprio no
+    // ledger mensal — nunca dentro de "outro", que já é somado
+    // separadamente em `fees` nas métricas de decisão (calcMetricasPorM2 /
+    // calcEstruturaSobreVgv). Misturar os dois contaria o fee duas vezes.
+    const campo =
+      linha.categoria === CATEGORIA_DEVELOPMENT_FEE
+        ? "fee"
+        : linha.grupo === "aquisicao"
+          ? "aquisicao"
+          : linha.grupo === "hard_cost"
+            ? "hard"
+            : linha.grupo === "soft_cost"
+              ? "soft"
+              : "outro";
 
     const distribuicaoIvaNaoRecuperavel = distribuirValorPorPerfil(linha.ivaNaoRecuperavel, linha.dataInicial, linha.dataFinal, linha.perfilDesembolso ?? "linear");
 
@@ -161,8 +185,8 @@ export function calcularReservaMinimaCustos(
 
   const calendario = gerarMesesEntre(mesesOrdenados[0], mesesOrdenados[mesesOrdenados.length - 1]);
   const operacionais = calendario.map((mes) => {
-    const c = porMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, ivaNaoRecuperavel: 0 };
-    return c.hard + c.soft + c.outro + c.ivaNaoRecuperavel;
+    const c = porMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, fee: 0, ivaNaoRecuperavel: 0 };
+    return c.hard + c.soft + c.outro + c.fee + c.ivaNaoRecuperavel;
   });
 
   let melhorValor = 0;
@@ -204,6 +228,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       linhas: [],
       gdv: 0,
       custoTotal: 0,
+      feesOperacionaisTotal: 0,
       comissaoComercialTotal: 0,
       custosFinanceiros: 0,
       lucroProjeto: 0,
@@ -220,10 +245,10 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
 
   // 1) Cash flow unlevered mês a mês (sem dívida nem equity).
   const unleveredPorMes = mesesCompletos.map((mes) => {
-    const custos = custosPorMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, ivaNaoRecuperavel: 0 };
+    const custos = custosPorMes.get(mes) ?? { aquisicao: 0, hard: 0, soft: 0, outro: 0, fee: 0, ivaNaoRecuperavel: 0 };
     const receita = recebimentosPorMes.get(mes) ?? 0;
     const comissao = comissaoPorMes.get(mes) ?? 0;
-    const saida = custos.aquisicao + custos.hard + custos.soft + custos.outro + custos.ivaNaoRecuperavel + comissao;
+    const saida = custos.aquisicao + custos.hard + custos.soft + custos.outro + custos.fee + custos.ivaNaoRecuperavel + comissao;
     return { mes, receita, custos, comissao, cashFlowUnlevered: receita - saida };
   });
 
@@ -268,6 +293,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
       hardCosts: l.custos.hard,
       softCosts: l.custos.soft,
       outrosCustos: l.custos.outro,
+      feesOperacionais: l.custos.fee,
       ivaNaoRecuperavel: l.custos.ivaNaoRecuperavel,
       comissaoComercial: l.comissao,
       cashFlowUnlevered: l.cashFlowUnlevered,
@@ -286,7 +312,11 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
 
   const gdv = linhas.reduce((s, l) => s + l.receitaVendas, 0);
   const comissaoComercialTotal = linhas.reduce((s, l) => s + l.comissaoComercial, 0);
-  const custoTotal = linhas.reduce((s, l) => s + l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos + l.ivaNaoRecuperavel + l.comissaoComercial, 0);
+  const feesOperacionaisTotal = linhas.reduce((s, l) => s + l.feesOperacionais, 0);
+  const custoTotal = linhas.reduce(
+    (s, l) => s + l.custosAquisicao + l.hardCosts + l.softCosts + l.outrosCustos + l.feesOperacionais + l.ivaNaoRecuperavel + l.comissaoComercial,
+    0
+  );
   const custosFinanceiros = linhas.reduce((s, l) => s + l.jurosEFees, 0);
   const lucroUnlevered = linhas.reduce((s, l) => s + l.cashFlowUnlevered, 0);
   const lucroLevered = linhas.reduce((s, l) => s + l.cashFlowLevered, 0);
@@ -301,6 +331,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
     linhas,
     gdv,
     custoTotal,
+    feesOperacionaisTotal,
     comissaoComercialTotal,
     custosFinanceiros,
     lucroProjeto,

@@ -156,15 +156,18 @@ export function StepEstruturaCapital({
                   onChange={(e) => onAtualizarFee(f.id, { baseCalculo: e.target.value as Fee["baseCalculo"] })}
                 >
                   <option value="valor_fixo">Valor fixo</option>
+                  <option value="valor_mensal">Valor mensal</option>
+                  <option value="percentagem_vgv_bruto">% do VGV bruto</option>
+                  <option value="percentagem_vgv_liquido">% do VGV líquido</option>
                   <option value="percentagem_aquisicao">% da aquisição</option>
                   <option value="percentagem_hard_costs">% dos hard costs</option>
-                  <option value="percentagem_capex">% do capex</option>
+                  <option value="percentagem_capex">% do CAPEX (antes deste fee)</option>
                   <option value="percentagem_custo_total">% do custo total</option>
                   <option value="eur_m2">€/m²</option>
                   <option value="eur_unidade">€/unidade</option>
                 </select>
               </FieldGroup>
-              <FieldGroup label={f.baseCalculo.startsWith("percentagem") ? "Percentagem" : "Valor"}>
+              <FieldGroup label={f.baseCalculo.startsWith("percentagem") ? "Percentagem" : f.baseCalculo === "valor_mensal" ? "Valor por mês" : "Valor"}>
                 {f.baseCalculo.startsWith("percentagem") ? (
                   <PercentInput value={f.valorInput} onChange={(v) => onAtualizarFee(f.id, { valorInput: v })} />
                 ) : (
@@ -177,9 +180,54 @@ export function StepEstruturaCapital({
                 )}
               </FieldGroup>
             </Row>
+            <Row>
+              <FieldGroup label="Momento de pagamento (calendário por defeito)">
+                <select
+                  className="input-dark"
+                  value={f.momentoPagamento}
+                  onChange={(e) => onAtualizarFee(f.id, { momentoPagamento: e.target.value as Fee["momentoPagamento"] })}
+                >
+                  <option value="aquisicao">Na aquisição (escritura)</option>
+                  <option value="escritura">Na escritura da aquisição</option>
+                  <option value="durante_desenvolvimento">Durante a construção (espalhado)</option>
+                  <option value="mensal">Mensal, durante a construção</option>
+                  <option value="proporcional_capex">Proporcional ao CAPEX (durante a construção)</option>
+                  <option value="conclusao">Na conclusão da obra</option>
+                  <option value="venda">Na escritura de venda</option>
+                  <option value="data_personalizada">Data específica</option>
+                </select>
+              </FieldGroup>
+              {f.momentoPagamento === "data_personalizada" && (
+                <FieldGroup label="Data">
+                  <input
+                    type="date"
+                    className="input-dark"
+                    value={f.dataPersonalizada ?? ""}
+                    onChange={(e) => onAtualizarFee(f.id, { dataPersonalizada: e.target.value || null })}
+                  />
+                </FieldGroup>
+              )}
+              <FieldGroup label="Override do calendário (opcional)">
+                <input
+                  type="date"
+                  className="input-dark"
+                  placeholder="Usa o calendário por defeito"
+                  value={f.dataInicial ?? ""}
+                  onChange={(e) =>
+                    onAtualizarFee(f.id, {
+                      dataInicial: e.target.value || null,
+                      duracaoMeses: e.target.value ? (f.duracaoMeses ?? 1) : null,
+                    })
+                  }
+                />
+                <span className="block text-[10px] text-[#59636A] mt-1">
+                  {f.dataInicial ? "Calendário próprio, sobrepõe o por defeito." : "Sem override — usa o calendário por defeito derivado do momento de pagamento."}
+                </span>
+              </FieldGroup>
+            </Row>
             <div className="flex justify-between items-center">
               <span className="text-xs text-[#59636A]">
-                Valor resolvido: €{Math.round(resolverValorFee(f, contextoFees)).toLocaleString("pt-PT")}
+                Valor resolvido: €{Math.round(resolverValorFee(f, contextoFees, f.duracaoMeses)).toLocaleString("pt-PT")}
               </span>
               <button onClick={() => onRemoverFee(f.id)} className="text-[#A13D2E] text-xs">
                 Remover

@@ -16,8 +16,8 @@ import { gerarComissaoMensal } from "./sales-commission";
 import { calcularDatasEfetivas } from "./sales-curve";
 import { resolverMesInicioCashSweep } from "./financiamento";
 import { calcularResultadosComWaterfall, type ResultadosInvestidorPromotor } from "./estrutura-capital";
-import { agregarFees } from "./fees";
-import { resolverCustos, calcCustosAquisicaoAcessorios, type ContextoCusto } from "./custos";
+import { feesParaLinhasCusto, type DatasProjetoParaFees } from "./fees";
+import { resolverCustos, calcCustosAquisicaoAcessorios, type ContextoCusto, type LinhaCusto } from "./custos";
 import {
   calcLucroTributavelEstimado,
   calcLucroTributavel,
@@ -202,6 +202,37 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     comissaoPorMes = new Map(linhasComissao.map((l) => [l.mes, l.total]));
   }
 
+  // Custos de aquisição = só as linhas acessórias (DD, notário, registos,
+  // IMT, imposto de selo, comissão de aquisição, outros) — NUNCA as linhas
+  // "Sinal da aquisição"/"Escritura da aquisição"/"Reforço da aquisição",
+  // que já são o preço de aquisição (contextoCusto.valorAquisicao), contado
+  // ali uma única vez. Ver calcCustosAquisicaoAcessorios em custos.ts.
+  //
+  // Calculado ANTES de calcularCashFlow (Gate 3 da consolidação 03/08):
+  // os fees precisam de um capex/hardCosts reais para resolver as suas
+  // próprias bases percentuais ANTES de entrarem no cash flow como linhas
+  // — não depois, como no achado P0.1 original.
+  const linhasCustoResolvidas = resolverCustos(custos, contextoCusto);
+  // Só linhas com data entram no cash flow real (distribuirCustosPorMes em
+  // cashflow.ts ignora linhas sem dataInicial/dataFinal) — achado P1.2 da
+  // auditoria de 2026-07-31: uma linha com valor mas sem data (ex.: IMT
+  // calculado mas nunca datado) nunca pode contar no capex agregado sem
+  // nunca ter entrado no cash flow/financiamento/equity reais.
+  const linhasCustoResolvidasComData = linhasCustoResolvidas.filter((l) => l.dataInicial && l.dataFinal);
+  const custosAquisicaoAuxiliares = calcCustosAquisicaoAcessorios(linhasCustoResolvidasComData);
+  const somaGrupoComData = (grupo: LinhaCusto["grupo"]) =>
+    linhasCustoResolvidasComData.filter((l) => l.grupo === grupo).reduce((s, l) => s + l.valorResolvido, 0);
+  const hardCostsTotal = somaGrupoComData("hard_cost");
+  const softCostsTotal = somaGrupoComData("soft_cost") + somaGrupoComData("outro");
+  // CAPEX real antes do próprio development fee — nunca resultado.custoTotal
+  // (esse inclui a comissão comercial, um custo de venda, não de CAPEX).
+  // Achado P0.1 da auditoria 03/08: as três bases (hardCostsTotal,
+  // capexTotal, custoTotal) recebiam literalmente o mesmo valor. Agora
+  // hardCostsTotal é só os hard costs reais; capexTotal/custoTotal vêm do
+  // CAPEX genuinamente resolvido (aquisição + custos acessórios + hard +
+  // soft), antes do próprio fee.
+  const capexAntesDoProprioFee = contextoCusto.valorAquisicao + custosAquisicaoAuxiliares + hardCostsTotal + softCostsTotal;
+
   let mesInicioCashSweep: string | null = null;
   if (financiamento.cashSweepAtivo) {
     const datasEfetivas =
@@ -227,8 +258,38 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     mesInicioCashSweep = resolverMesInicioCashSweep(financiamento, eventosCashSweep);
   }
 
+  // Comissão total antecipada (secção 6 do prompt 03_08): precisa de existir
+  // ANTES do cash flow correr, para resolver bases de fee em % do VGV
+  // líquido. Mesma soma de comissaoPorMes que o motor de cash flow vai usar
+  // — nunca um valor recalculado de forma diferente.
+  const comissaoComercialAntecipada = comissaoPorMes ? [...comissaoPorMes.values()].reduce((s, v) => s + v, 0) : 0;
+  const contextoFees = {
+    valorAquisicao: contextoCusto.valorAquisicao,
+    hardCostsTotal,
+    capexTotal: capexAntesDoProprioFee,
+    custoTotal: capexAntesDoProprioFee,
+    vgvBruto,
+    vgvLiquido: vgvBruto - comissaoComercialAntecipada,
+    abcTotal: abcTotal ?? 0,
+    numeroUnidades: contextoCusto.numeroUnidades,
+  };
+
+  // Development fees calendarizados (secção 6 do prompt 03_08 — corrige o
+  // achado P0.1): transformados em linhas de custo e FUNDIDOS com os custos
+  // normais ANTES de calcularCashFlow correr — nunca um total agregado
+  // aplicado depois. Isto é o que faz o fee aumentar a necessidade de
+  // dívida/equity no mês certo, entrar no peak equity e gerar juros quando
+  // financiado.
+  const datasProjetoParaFees: DatasProjetoParaFees = {
+    dataEscrituraAquisicao: projetoRow?.inputs?.dataEscrituraAquisicao || null,
+    dataInicioConstrucao: planoVendas.dataInicioConstrucao || null,
+    dataFimConstrucao: planoVendas.dataFimConstrucao || null,
+    dataEscrituraVenda: planoVendas.dataEscritura || null,
+  };
+  const feesComoLinhasCusto = feesParaLinhasCusto(fees, contextoFees, datasProjetoParaFees);
+
   const resultado = calcularCashFlow({
-    linhasCusto: custos,
+    linhasCusto: [...custos, ...feesComoLinhasCusto],
     contextoCusto,
     recebimentos,
     comissaoPorMes,
@@ -236,45 +297,12 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     mesInicioCashSweep,
     saldoMinimoCaixa: financiamento.saldoMinimoCaixa,
   });
-
-  // Custos de aquisição = só as linhas acessórias (DD, notário, registos,
-  // IMT, imposto de selo, comissão de aquisição, outros) — NUNCA as linhas
-  // "Sinal da aquisição"/"Escritura da aquisição"/"Reforço da aquisição",
-  // que já são o preço de aquisição (contextoCusto.valorAquisicao), contado
-  // ali uma única vez. Ver calcCustosAquisicaoAcessorios em custos.ts.
-  const linhasCustoResolvidas = resolverCustos(custos, contextoCusto);
-  // Só linhas com data entram no cash flow real (distribuirCustosPorMes em
-  // cashflow.ts ignora linhas sem dataInicial/dataFinal) — hardCosts/
-  // softCosts abaixo já respeitam isto por virem de `resultado.linhas`
-  // (derivado do cash flow). custosAquisicaoAuxiliares tinha de ser filtrado
-  // à parte, porque vem diretamente de linhasCustoResolvidas: sem isto, uma
-  // linha com valor mas sem data (ex.: IMT calculado mas nunca datado)
-  // contava no "Custo total do projeto" do dashboard sem nunca ter entrado
-  // no cash flow/financiamento/equity reais (achado P1.2 da auditoria de
-  // 2026-07-31).
-  const linhasCustoResolvidasComData = linhasCustoResolvidas.filter((l) => l.dataInicial && l.dataFinal);
-  const custosAquisicaoAuxiliares = calcCustosAquisicaoAcessorios(linhasCustoResolvidasComData);
-  const hardCostsTotal = resultado.linhas.reduce((s, l) => s + l.hardCosts, 0);
-  const softCostsTotal = resultado.linhas.reduce((s, l) => s + l.softCosts + l.outrosCustos, 0);
-  // CAPEX real antes do próprio development fee — nunca resultado.custoTotal
-  // (esse inclui a comissão comercial, um custo de venda, não de CAPEX).
-  // Achado P0.1 da auditoria 03/08: as três bases (hardCostsTotal,
-  // capexTotal, custoTotal) recebiam literalmente o mesmo valor
-  // (resultado.custoTotal), tornando "% dos hard costs" e "% do CAPEX"
-  // idênticos na prática. hardCostsTotal passa a ser só os hard costs
-  // reais; capexTotal/custoTotal ficam iguais entre si por agora (ainda não
-  // há uma base "custo total" com semântica distinta de "CAPEX" — essa
-  // distinção fica para a secção 6 do plano, fora do âmbito deste gate).
-  const capexAntesDoProprioFee = contextoCusto.valorAquisicao + custosAquisicaoAuxiliares + hardCostsTotal + softCostsTotal;
-  const contextoFees = {
-    valorAquisicao: contextoCusto.valorAquisicao,
-    hardCostsTotal,
-    capexTotal: capexAntesDoProprioFee,
-    custoTotal: capexAntesDoProprioFee,
-    abcTotal,
-    numeroUnidades: contextoCusto.numeroUnidades,
-  };
-  const feesTotais = agregarFees(fees, contextoFees).total;
+  // feesTotais vem sempre do MESMO cálculo que entrou no cash flow — nunca
+  // recalculado por fora com resolverValorFee/agregarFees em separado, que
+  // podia divergir para bases como "valor_mensal" quando o fee usa o
+  // calendário por defeito (a duração efetiva só existe depois de resolvida
+  // em feesParaLinhasCusto).
+  const feesTotais = resultado.feesOperacionaisTotal;
 
   let investidorPromotor: ResultadosInvestidorPromotor | null = null;
   if (estruturaCapital.temInvestidorExterno) {
@@ -425,7 +453,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
   // financiamento desde a origem muda genuinamente o funding necessário e o
   // timing do equity (sem drawdowns, juros, fees bancários nem amortizações).
   const resultadoUnlevered = calcularCashFlow({
-    linhasCusto: custos,
+    linhasCusto: [...custos, ...feesComoLinhasCusto],
     contextoCusto,
     recebimentos,
     comissaoPorMes,
