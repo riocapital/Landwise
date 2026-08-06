@@ -6,6 +6,9 @@ import {
   calcAreaVendavel,
   calcPrecoFinalUnidade,
   calcularSincronizacao,
+  detetarDesviosAtributos,
+  aplicarSincronizacaoAtributos,
+  restaurarValoresAutomaticos,
   validarVenda,
   resolverSalesTable,
   calcVgvBruto,
@@ -54,6 +57,7 @@ function unidadeBase(overrides: Partial<UnidadeVenda>): UnidadeVenda {
     outrasAreasM2: 0,
     estacionamentos: 1,
     valorEstacionamento: 15000,
+    incluiGaragem: true,
     precoBaseM2: 4000,
     ajusteFaseComercialPct: 0,
     premioDescontoUnidade: 0,
@@ -81,6 +85,113 @@ describe("gerarUnidadesDeTipologia", () => {
     const tipologias = ["t1", "t2", "t3", "t4"].map((id) => tipologia({ id, quantidade: 10 }));
     const todas = tipologias.flatMap((t) => gerarUnidadesDeTipologia(t, 10, 0));
     expect(todas).toHaveLength(40);
+  });
+
+  it("valorEstacionamento começa sempre em 0 — nunca um prémio automático gerado pela tipologia (achado P1.5 da auditoria 03_08)", () => {
+    const t = tipologia({ estacionamentosIncluidos: 1, valorEstacionamento: 15_000 });
+    const unidades = gerarUnidadesDeTipologia(t, 3, 0);
+    expect(unidades.every((u) => u.valorEstacionamento === 0)).toBe(true);
+  });
+
+  it("incluiGaragem deriva de estacionamentosIncluidos > 0 no momento da criação, mas nunca gera valor", () => {
+    const comGaragem = gerarUnidadesDeTipologia(tipologia({ estacionamentosIncluidos: 1 }), 1, 0)[0];
+    const semGaragem = gerarUnidadesDeTipologia(tipologia({ estacionamentosIncluidos: 0 }), 1, 0)[0];
+    expect(comGaragem.incluiGaragem).toBe(true);
+    expect(semGaragem.incluiGaragem).toBe(false);
+    expect(comGaragem.valorEstacionamento).toBe(0);
+  });
+});
+
+describe("detetarDesviosAtributos / aplicarSincronizacaoAtributos / restaurarValoresAutomaticos (secção 11 do prompt 03_08 — achado P1.1)", () => {
+  it("quantidade igual, preço-base alterado na tipologia — deteta o desvio numa unidade disponível", () => {
+    const t = tipologia({ precoBaseM2: 4500 });
+    const u = unidadeBase({ precoBaseM2: 4000 }); // valor antigo, herdado antes da alteração
+    const resultado = detetarDesviosAtributos([u], t);
+    expect(resultado.unidadesComDesvio).toHaveLength(1);
+    expect(resultado.unidadesComDesvio[0].desvios.map((d) => d.campo)).toContain("precoBaseM2");
+    expect(resultado.unidadesBloqueadasComDesvio).toHaveLength(0);
+  });
+
+  it("área (abp) alterada na tipologia — deteta o desvio", () => {
+    const t = tipologia({ abpUnidade: 85 });
+    const u = unidadeBase({ abp: 70 });
+    const resultado = detetarDesviosAtributos([u], t);
+    expect(resultado.unidadesComDesvio[0].desvios.map((d) => d.campo)).toContain("abp");
+  });
+
+  it("garagem alterada na tipologia (estacionamentosIncluidos 1 -> 0) — deteta o desvio de incluiGaragem", () => {
+    const t = tipologia({ estacionamentosIncluidos: 0 });
+    const u = unidadeBase({ incluiGaragem: true });
+    const resultado = detetarDesviosAtributos([u], t);
+    expect(resultado.unidadesComDesvio[0].desvios.map((d) => d.campo)).toContain("incluiGaragem");
+  });
+
+  it("sem desvio quando os atributos da unidade já batem com a tipologia atual", () => {
+    const t = tipologia({});
+    const u = unidadeBase({});
+    const resultado = detetarDesviosAtributos([u], t);
+    expect(resultado.unidadesComDesvio).toHaveLength(0);
+    expect(resultado.unidadesBloqueadasComDesvio).toHaveLength(0);
+  });
+
+  it("unidade vendida com desvio nunca é tocada automaticamente — vai para bloqueadasComDesvio", () => {
+    const t = tipologia({ precoBaseM2: 5000 });
+    const u = unidadeBase({ precoBaseM2: 4000, estadoComercial: "vendido" });
+    const resultado = detetarDesviosAtributos([u], t);
+    expect(resultado.unidadesComDesvio).toHaveLength(0);
+    expect(resultado.unidadesBloqueadasComDesvio).toHaveLength(1);
+
+    const aplicado = aplicarSincronizacaoAtributos([u], t, "substituir");
+    expect(aplicado[0].precoBaseM2).toBe(4000); // nunca alterado
+  });
+
+  it("unidade com preço bloqueado nunca é tocada automaticamente, mesmo em modo 'substituir'", () => {
+    const t = tipologia({ precoBaseM2: 5000 });
+    const u = unidadeBase({ precoBaseM2: 4000, precoBloqueado: true });
+    const aplicado = aplicarSincronizacaoAtributos([u], t, "substituir");
+    expect(aplicado[0].precoBaseM2).toBe(4000);
+  });
+
+  it("modo 'preservar_overrides': unidade personalizada mantém os seus valores", () => {
+    const t = tipologia({ precoBaseM2: 5000 });
+    const u = unidadeBase({ precoBaseM2: 4200, personalizada: true });
+    const aplicado = aplicarSincronizacaoAtributos([u], t, "preservar_overrides");
+    expect(aplicado[0].precoBaseM2).toBe(4200);
+  });
+
+  it("modo 'substituir': unidade personalizada (mas disponível, sem preço bloqueado) recebe os valores da tipologia", () => {
+    const t = tipologia({ precoBaseM2: 5000 });
+    const u = unidadeBase({ precoBaseM2: 4200, personalizada: true });
+    const aplicado = aplicarSincronizacaoAtributos([u], t, "substituir");
+    expect(aplicado[0].precoBaseM2).toBe(5000);
+  });
+
+  it("restaurarValoresAutomaticos repõe os atributos herdados e limpa a personalização/override, preservando sinal/reforços", () => {
+    const t = tipologia({ precoBaseM2: 5000, abpUnidade: 80 });
+    const u = unidadeBase({
+      precoBaseM2: 6000,
+      abp: 60,
+      personalizada: true,
+      overrideManualValor: 999_999,
+      premioDescontoUnidade: 5000,
+      sinalValor: 20_000,
+      reforcosValor: 10_000,
+    });
+    const restaurada = restaurarValoresAutomaticos(u, t);
+    expect(restaurada.precoBaseM2).toBe(5000);
+    expect(restaurada.abp).toBe(80);
+    expect(restaurada.personalizada).toBe(false);
+    expect(restaurada.overrideManualValor).toBeNull();
+    expect(restaurada.premioDescontoUnidade).toBe(0);
+    expect(restaurada.sinalValor).toBe(20_000); // preservado — não é um atributo herdado da tipologia
+    expect(restaurada.reforcosValor).toBe(10_000);
+  });
+
+  it("restaurarValoresAutomaticos nunca toca numa unidade escriturada", () => {
+    const t = tipologia({ precoBaseM2: 5000 });
+    const u = unidadeBase({ precoBaseM2: 4000, estadoComercial: "escriturado" });
+    const restaurada = restaurarValoresAutomaticos(u, t);
+    expect(restaurada.precoBaseM2).toBe(4000);
   });
 });
 

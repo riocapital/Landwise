@@ -20,8 +20,9 @@ export type UnidadeVenda = {
   terracoM2: number;
   outrasAreasM2: number;
 
-  estacionamentos: number;
-  valorEstacionamento: number;
+  estacionamentos: number; // legado — preservado para projetos antigos, já não é escrito pela UI geral (secção 8 do plano 03_08)
+  valorEstacionamento: number; // ajuste manual explícito, começa sempre em 0 — nunca gerado automaticamente pela tipologia ou comparáveis
+  incluiGaragem: boolean; // atributo de comparabilidade da unidade — nunca cria prémio automático
 
   precoBaseM2: number; // herdado da tipologia no momento da criação/sync
   ajusteFaseComercialPct: number; // aplicado pela evolução de preços (soma-se ou substitui, ver price-escalation)
@@ -98,7 +99,12 @@ export function gerarUnidadesDeTipologia(tipologia: Typology, quantidade: number
     terracoM2: tipologia.terracoM2,
     outrasAreasM2: tipologia.jardimPrivativoM2 + tipologia.arrecadacaoM2,
     estacionamentos: tipologia.estacionamentosIncluidos,
-    valorEstacionamento: tipologia.estacionamentosIncluidos * tipologia.valorEstacionamento,
+    // Nunca um prémio automático (achado P1.5 da auditoria 03_08): garagem é
+    // um atributo de comparabilidade, não um valor gerado pela tipologia.
+    // valorEstacionamento começa sempre em 0 — só existe como ajuste manual
+    // explícito, editado depois na Sales Table.
+    valorEstacionamento: 0,
+    incluiGaragem: tipologia.estacionamentosIncluidos > 0,
     precoBaseM2: tipologia.precoBaseM2,
     ajusteFaseComercialPct: 0,
     premioDescontoUnidade: 0,
@@ -143,6 +149,128 @@ export function calcularSincronizacao(unidadesExistentes: UnidadeVenda[], novaQu
     paraCriar: 0,
     candidatasARemover: removiveis.slice(0, aRemoverCount),
     bloqueadasParaRemover: bloqueadas,
+  };
+}
+
+// --- Ressincronização de atributos herdados (secção 11 do prompt 03_08) ---
+//
+// calcularSincronizacao (acima) só trata a QUANTIDADE de unidades. Alterar
+// o preço-base, a área ou a garagem da tipologia depois de a Sales Table já
+// existir não atualizava as unidades já geradas (achado P1.1 da auditoria).
+// As funções abaixo tratam essa segunda dimensão, sempre respeitando as
+// mesmas proteções: unidades vendidas/escrituradas ou com preço bloqueado
+// nunca são tocadas automaticamente; unidades personalizadas só são
+// tocadas quando o utilizador escolhe explicitamente substituir.
+
+export type CampoAtributoUnidade = "abp" | "varandaM2" | "terracoM2" | "outrasAreasM2" | "precoBaseM2" | "incluiGaragem";
+
+export type DesvioAtributoUnidade = {
+  campo: CampoAtributoUnidade;
+  valorAtual: number | boolean;
+  valorTipologia: number | boolean;
+};
+
+export type UnidadeComDesvio = { unidade: UnidadeVenda; desvios: DesvioAtributoUnidade[] };
+
+export type ResultadoSincronizacaoAtributos = {
+  unidadesComDesvio: UnidadeComDesvio[]; // elegíveis para atualização automática (disponíveis, sem preço bloqueado)
+  unidadesBloqueadasComDesvio: UnidadeComDesvio[]; // têm desvio mas nunca são tocadas automaticamente (vendidas/escrituradas/preço bloqueado)
+};
+
+function valoresAtributosDaTipologia(tipologia: Typology): Record<CampoAtributoUnidade, number | boolean> {
+  return {
+    abp: tipologia.abpUnidade,
+    varandaM2: tipologia.varandaM2,
+    terracoM2: tipologia.terracoM2,
+    outrasAreasM2: tipologia.jardimPrivativoM2 + tipologia.arrecadacaoM2,
+    precoBaseM2: tipologia.precoBaseM2,
+    incluiGaragem: tipologia.estacionamentosIncluidos > 0,
+  };
+}
+
+function unidadeNuncaTocadaAutomaticamente(u: UnidadeVenda): boolean {
+  return u.precoBloqueado || u.estadoComercial !== "disponivel";
+}
+
+/**
+ * Compara cada unidade existente com os atributos ATUAIS da tipologia e
+ * devolve os desvios encontrados — nunca decide sozinho aplicar nada, só
+ * informa (o chamador decide preservar overrides, substituir, ou cancelar).
+ */
+export function detetarDesviosAtributos(unidadesExistentes: UnidadeVenda[], tipologia: Typology): ResultadoSincronizacaoAtributos {
+  const valoresTipologia = valoresAtributosDaTipologia(tipologia);
+  const campos = Object.keys(valoresTipologia) as CampoAtributoUnidade[];
+
+  const unidadesComDesvio: UnidadeComDesvio[] = [];
+  const unidadesBloqueadasComDesvio: UnidadeComDesvio[] = [];
+
+  for (const u of unidadesExistentes) {
+    const desvios: DesvioAtributoUnidade[] = [];
+    for (const campo of campos) {
+      const valorAtual = u[campo];
+      const valorTipologia = valoresTipologia[campo];
+      if (valorAtual !== valorTipologia) {
+        desvios.push({ campo, valorAtual, valorTipologia });
+      }
+    }
+    if (desvios.length === 0) continue;
+    (unidadeNuncaTocadaAutomaticamente(u) ? unidadesBloqueadasComDesvio : unidadesComDesvio).push({ unidade: u, desvios });
+  }
+
+  return { unidadesComDesvio, unidadesBloqueadasComDesvio };
+}
+
+export type ModoSincronizacaoAtributos = "substituir" | "preservar_overrides";
+
+/**
+ * Aplica os atributos atuais da tipologia às unidades elegíveis.
+ * "preservar_overrides": unidades marcadas `personalizada` ficam como estão.
+ * "substituir": todas as unidades elegíveis (disponíveis, sem preço
+ * bloqueado) recebem os valores da tipologia, mesmo que personalizadas —
+ * mas nunca uma vendida/escriturada/com preço bloqueado, em nenhum modo.
+ */
+export function aplicarSincronizacaoAtributos(
+  unidadesExistentes: UnidadeVenda[],
+  tipologia: Typology,
+  modo: ModoSincronizacaoAtributos
+): UnidadeVenda[] {
+  const valoresTipologia = valoresAtributosDaTipologia(tipologia);
+  return unidadesExistentes.map((u) => {
+    if (unidadeNuncaTocadaAutomaticamente(u)) return u;
+    if (u.personalizada && modo === "preservar_overrides") return u;
+    return {
+      ...u,
+      abp: valoresTipologia.abp as number,
+      varandaM2: valoresTipologia.varandaM2 as number,
+      terracoM2: valoresTipologia.terracoM2 as number,
+      outrasAreasM2: valoresTipologia.outrasAreasM2 as number,
+      precoBaseM2: valoresTipologia.precoBaseM2 as number,
+      incluiGaragem: valoresTipologia.incluiGaragem as boolean,
+    };
+  });
+}
+
+/**
+ * "Restaurar valores automáticos" (secção 11): repõe os atributos herdados
+ * da tipologia numa única unidade e limpa a personalização/override de
+ * preço — nunca numa unidade vendida/escriturada ou com preço bloqueado.
+ * Preserva sinal/reforços/data de escritura já registados (não são
+ * atributos herdados da tipologia).
+ */
+export function restaurarValoresAutomaticos(unidade: UnidadeVenda, tipologia: Typology): UnidadeVenda {
+  if (unidadeNuncaTocadaAutomaticamente(unidade)) return unidade;
+  const valoresTipologia = valoresAtributosDaTipologia(tipologia);
+  return {
+    ...unidade,
+    abp: valoresTipologia.abp as number,
+    varandaM2: valoresTipologia.varandaM2 as number,
+    terracoM2: valoresTipologia.terracoM2 as number,
+    outrasAreasM2: valoresTipologia.outrasAreasM2 as number,
+    precoBaseM2: valoresTipologia.precoBaseM2 as number,
+    incluiGaragem: valoresTipologia.incluiGaragem as boolean,
+    premioDescontoUnidade: 0,
+    overrideManualValor: null,
+    personalizada: false,
   };
 }
 

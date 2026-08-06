@@ -75,6 +75,7 @@ describe("gerarComissaoMensal — agenda mensal a partir da Sales Table real", (
       outrasAreasM2: 0,
       estacionamentos: 0,
       valorEstacionamento: 0,
+      incluiGaragem: false,
       precoBaseM2: 4000,
       ajusteFaseComercialPct: 0,
       premioDescontoUnidade: 0,

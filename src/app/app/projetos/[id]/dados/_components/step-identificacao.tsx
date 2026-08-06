@@ -203,36 +203,16 @@ export function StepIdentificacao({
 
       <Card title="Características">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
-          <div>
-            <FieldGroup label="Número de garagens/estacionamentos">
-              <input
-                type="number"
-                min={0}
-                className="input-dark mb-3"
-                value={identificacao.numEstacionamentos}
-                onChange={(e) => {
-                  const n = Math.max(0, Number(e.target.value) || 0);
-                  updateIdentificacao("numEstacionamentos", n);
-                  updateIdentificacao("temGaragem", n > 0);
-                }}
-              />
-            </FieldGroup>
-          </div>
-          <div>
-            <FieldGroup label="Número de elevadores">
-              <input
-                type="number"
-                min={0}
-                className="input-dark mb-3"
-                value={identificacao.numElevadores}
-                onChange={(e) => {
-                  const n = Math.max(0, Number(e.target.value) || 0);
-                  updateIdentificacao("numElevadores", n);
-                  updateIdentificacao("temElevador", n > 0);
-                }}
-              />
-            </FieldGroup>
-          </div>
+          {/* Só Sim/Não aqui (secção 8 do prompt 03_08) — a contagem exata
+              de estacionamentos/elevadores deixou de ser pedida na
+              identificação geral, porque nem todas as unidades de um
+              projeto têm necessariamente garagem: isso passa a ser um
+              atributo "inclui garagem" por unidade, na Sales Table.
+              numEstacionamentos/numElevadores continuam no modelo, sem
+              serem escritos por aqui, só para não quebrar projetos antigos
+              que já os tinham preenchidos. */}
+          <CheckboxIdent label="Possui garagem" checked={identificacao.temGaragem} onChange={(v) => updateIdentificacao("temGaragem", v)} />
+          <CheckboxIdent label="Possui elevador" checked={identificacao.temElevador} onChange={(v) => updateIdentificacao("temElevador", v)} />
           <CheckboxIdent
             label="Possui jardim ou áreas exteriores"
             checked={identificacao.temJardimExterior}

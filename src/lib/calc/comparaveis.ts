@@ -20,6 +20,13 @@ export type SujeitoComparacao = {
   latitude?: number | null;
   longitude?: number | null;
   dataReferencia?: Date;
+  // Achado P1.3 da auditoria 03_08: a tabela market_comparables já tem
+  // parking_spaces/elevator/floor, mas o motor não os usava. null/undefined
+  // = não informado — nunca penaliza nem beneficia, só entra na
+  // redistribuição de pesos como qualquer outro critério em falta.
+  parkingSpaces?: number | null; // comparação é "tem garagem" vs "não tem", nunca a contagem exata
+  hasElevator?: boolean | null;
+  floor?: string | null;
 };
 
 export type PesosScore = {
@@ -27,14 +34,16 @@ export type PesosScore = {
   distancia: number; // distância geográfica (lat/long), quando disponível
   estado: number; // estado/situação de construção
   tipologiaArea: number; // tipologia + área semelhante
+  atributos: number; // garagem/elevador/piso (secção 9 do plano 03_08)
   recencia: number; // data de recolha
 };
 
 export const PESOS_PADRAO: PesosScore = {
-  localizacao: 0.35,
+  localizacao: 0.3,
   distancia: 0.2,
-  estado: 0.2,
+  estado: 0.15,
   tipologiaArea: 0.15,
+  atributos: 0.1,
   recencia: 0.1,
 };
 
@@ -111,6 +120,41 @@ function scoreTipologiaArea(sujeito: SujeitoComparacao, c: MarketComparable): nu
   return Math.min(1, score);
 }
 
+/**
+ * Garagem/elevador/piso (secção 9 do plano 03_08). Cada critério só entra
+ * na comparação quando informado dos dois lados — nunca penaliza por falta
+ * de dado. "Tem garagem" compara-se como Sim/Não, nunca a contagem exata
+ * de lugares (a Sales Table também só guarda um booleano por unidade).
+ */
+function scoreAtributos(sujeito: SujeitoComparacao, c: MarketComparable): { score: number; disponivel: boolean } {
+  const criterios: boolean[] = [];
+  if (sujeito.parkingSpaces != null && c.parking_spaces != null) {
+    criterios.push((sujeito.parkingSpaces > 0) === (c.parking_spaces > 0));
+  }
+  if (sujeito.hasElevator != null && c.elevator != null) {
+    criterios.push(sujeito.hasElevator === c.elevator);
+  }
+  if (sujeito.floor != null && c.floor != null) {
+    criterios.push(sujeito.floor === c.floor);
+  }
+  if (criterios.length === 0) return { score: 0.5, disponivel: false }; // neutro — sem dado suficiente para comparar
+  return { score: criterios.filter(Boolean).length / criterios.length, disponivel: true };
+}
+
+/**
+ * Compatibilidade "exata" (amostra em nível 1, secção 9): tipologia igual E
+ * todos os atributos informados pelo sujeito (garagem/elevador/piso) batem
+ * exatamente com o comparável. Só considera um critério quando o sujeito o
+ * informou — nunca exige um dado que o próprio projeto não tem.
+ */
+export function atributosCoincidemExatamente(sujeito: SujeitoComparacao, c: MarketComparable): boolean {
+  if (sujeito.typology && c.typology && sujeito.typology !== c.typology) return false;
+  if (sujeito.parkingSpaces != null && c.parking_spaces != null && (sujeito.parkingSpaces > 0) !== (c.parking_spaces > 0)) return false;
+  if (sujeito.hasElevator != null && c.elevator != null && sujeito.hasElevator !== c.elevator) return false;
+  if (sujeito.floor != null && c.floor != null && sujeito.floor !== c.floor) return false;
+  return true;
+}
+
 function scoreRecencia(sujeito: SujeitoComparacao, c: MarketComparable): number {
   const dataRef = sujeito.dataReferencia ?? new Date();
   if (!c.collection_date) return 0.3; // neutro quando não há data
@@ -131,11 +175,13 @@ export function calcScoreComparabilidade(
 ): { score: number; distanciaKm: number | null } {
   const proximidade = scoreProximidade(sujeito, c);
 
+  const atributos = scoreAtributos(sujeito, c);
   const criterios: { peso: number; score: number; disponivel: boolean }[] = [
     { peso: pesos.localizacao, score: scoreLocalizacao(sujeito, c), disponivel: Boolean(sujeito.zone || sujeito.parish || sujeito.municipality) },
     { peso: pesos.distancia, score: proximidade.score, disponivel: true }, // sempre disponível (tem fallback hierárquico)
     { peso: pesos.estado, score: scoreEstado(sujeito, c), disponivel: true },
     { peso: pesos.tipologiaArea, score: scoreTipologiaArea(sujeito, c), disponivel: Boolean(sujeito.typology || sujeito.areaReferencia) },
+    { peso: pesos.atributos, score: atributos.score, disponivel: atributos.disponivel },
     { peso: pesos.recencia, score: scoreRecencia(sujeito, c), disponivel: true },
   ];
 
@@ -183,6 +229,15 @@ export type SugestaoPreco = {
   nivelConfianca: NivelConfianca;
   baseAreaUtilizada: string | null;
   comparaveisUtilizados: ComparavelComScore[];
+  // Pesquisa em níveis (secção 9 do plano 03_08): amostraExata = comparáveis
+  // que coincidem em tipologia + todos os atributos informados pelo
+  // sujeito; amostraAmpliada = o resto da amostra usada, que só entrou
+  // porque pelo menos um desses critérios foi relaxado. criteriosRelaxados
+  // nomeia quais — nunca aplica prémio/desconto por causa disto, é só
+  // informação de transparência para quem lê a sugestão.
+  amostraExata: number;
+  amostraAmpliada: number;
+  criteriosRelaxados: string[];
 };
 
 /**
@@ -245,6 +300,9 @@ export function sugerirPreco(
       nivelConfianca: "Amostra insuficiente",
       baseAreaUtilizada: null,
       comparaveisUtilizados: [],
+      amostraExata: 0,
+      amostraAmpliada: 0,
+      criteriosRelaxados: [],
     };
   }
 
@@ -276,7 +334,30 @@ export function sugerirPreco(
   const basesArea = new Set(relevantesSemOutliers.map((r) => r.comparavel.area_basis));
   const baseAreaUtilizada = basesArea.size === 1 ? [...basesArea][0] : "misto/não identificado";
 
-  const nivelConfianca = calcNivelConfianca(relevantesSemOutliers.length, basesArea);
+  const exatos = relevantesSemOutliers.filter((r) => atributosCoincidemExatamente(sujeito, r.comparavel));
+  const amostraExata = exatos.length;
+  const amostraAmpliada = relevantesSemOutliers.length - amostraExata;
+
+  const criteriosRelaxados: string[] = [];
+  if (amostraAmpliada > 0) {
+    if (sujeito.typology && relevantesSemOutliers.some((r) => r.comparavel.typology && r.comparavel.typology !== sujeito.typology)) {
+      criteriosRelaxados.push("tipologia");
+    }
+    if (
+      sujeito.parkingSpaces != null &&
+      relevantesSemOutliers.some((r) => r.comparavel.parking_spaces != null && (r.comparavel.parking_spaces > 0) !== (sujeito.parkingSpaces! > 0))
+    ) {
+      criteriosRelaxados.push("garagem");
+    }
+    if (sujeito.hasElevator != null && relevantesSemOutliers.some((r) => r.comparavel.elevator != null && r.comparavel.elevator !== sujeito.hasElevator)) {
+      criteriosRelaxados.push("elevador");
+    }
+    if (sujeito.floor != null && relevantesSemOutliers.some((r) => r.comparavel.floor != null && r.comparavel.floor !== sujeito.floor)) {
+      criteriosRelaxados.push("piso");
+    }
+  }
+
+  const nivelConfianca = calcNivelConfianca(relevantesSemOutliers.length, basesArea, amostraExata, amostraAmpliada);
 
   return {
     precoSugeridoM2: Math.round(medianaM2),
@@ -290,13 +371,22 @@ export function sugerirPreco(
     nivelConfianca,
     baseAreaUtilizada,
     comparaveisUtilizados: relevantesSemOutliers,
+    amostraExata,
+    amostraAmpliada,
+    criteriosRelaxados,
   };
 }
 
-function calcNivelConfianca(n: number, basesArea: Set<string>): NivelConfianca {
+/**
+ * Amostra maioritariamente ampliada (secção 9: "ampliar reduz confiança")
+ * nunca sobe a "Alta", mesmo com muitos comparáveis — porque parte deles só
+ * entrou depois de relaxar um critério pedido pelo sujeito.
+ */
+function calcNivelConfianca(n: number, basesArea: Set<string>, amostraExata: number, amostraAmpliada: number): NivelConfianca {
   if (n < 5) return "Amostra insuficiente";
   const baseInconsistente = basesArea.has("nao_identificada") || basesArea.size > 1;
-  if (n >= 20 && !baseInconsistente) return "Alta";
-  if (n >= 10) return "Média";
+  const maioriaAmpliada = amostraAmpliada > 0 && amostraAmpliada >= amostraExata;
+  if (n >= 20 && !baseInconsistente && !maioriaAmpliada) return "Alta";
+  if (n >= 10 && !maioriaAmpliada) return "Média";
   return "Baixa";
 }

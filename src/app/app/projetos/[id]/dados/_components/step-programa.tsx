@@ -33,6 +33,7 @@ export function StepPrograma({
   unidades,
   onSincronizarUnidades,
   onAtualizarUnidade,
+  onRestaurarAutomatico,
   planoVendas,
   updatePlanoVendas,
   updateEstruturaRecebimentos,
@@ -53,6 +54,7 @@ export function StepPrograma({
   unidades: UnidadeVenda[];
   onSincronizarUnidades: (t: Typology) => void;
   onAtualizarUnidade: (id: string, patch: Partial<UnidadeVenda>) => void;
+  onRestaurarAutomatico: (unidadeId: string) => void;
   planoVendas: PlanoVendas;
   updatePlanoVendas: <K extends keyof PlanoVendas>(key: K, value: PlanoVendas[K]) => void;
   updateEstruturaRecebimentos: <K extends keyof PlanoVendas["estruturaRecebimentos"]>(key: K, value: PlanoVendas["estruturaRecebimentos"][K]) => void;
@@ -215,6 +217,7 @@ export function StepPrograma({
               <th className="pb-2">Preço base (€/m²)</th>
               <th className="pb-2">Área vendável</th>
               <th className="pb-2">Receita</th>
+              <th className="pb-2">Preço médio/unidade</th>
               <th></th>
             </tr>
           </thead>
@@ -309,6 +312,34 @@ export function StepPrograma({
                   <td className="pr-2 py-1 text-[#59636A]">{Math.round(t.abpUnidade + t.varandaM2 * t.varandaPctValorizacao + t.terracoM2 * t.terracoPctValorizacao)} m²</td>
                   <td className="pr-2 py-1 text-[#59636A]">
                     €{Math.round((t.abpUnidade + t.varandaM2 * t.varandaPctValorizacao + t.terracoM2 * t.terracoPctValorizacao) * t.precoBaseM2 * t.quantidade).toLocaleString("pt-PT")}
+                  </td>
+                  <td className="pr-2 py-1 text-[#59636A]">
+                    {(() => {
+                      // Preço médio por unidade = VGV da tipologia ÷ quantidade
+                      // (secção 10 do prompt 03_08). Quando já existe Sales
+                      // Table, usa as unidades reais daquela tipologia — nunca
+                      // a estimativa — porque a Sales Table é a fonte única
+                      // do VGV. Antes disso, mostra claramente que é uma
+                      // estimativa derivada das premissas da tipologia.
+                      const unidadesReais = salesTableDaTipologia(unidades, tipologiasNovas, t.id);
+                      if (unidadesReais.length > 0) {
+                        const vgvReal = unidadesReais.reduce((s, u) => s + u.precoFinal, 0);
+                        return (
+                          <>
+                            €{Math.round(vgvReal / unidadesReais.length).toLocaleString("pt-PT")}
+                            <span className="block text-[10px]">Real (Sales Table)</span>
+                          </>
+                        );
+                      }
+                      const receitaEstimada =
+                        (t.abpUnidade + t.varandaM2 * t.varandaPctValorizacao + t.terracoM2 * t.terracoPctValorizacao) * t.precoBaseM2 * t.quantidade;
+                      return (
+                        <>
+                          {t.quantidade > 0 ? `€${Math.round(receitaEstimada / t.quantidade).toLocaleString("pt-PT")}` : "—"}
+                          <span className="block text-[10px]">Estimativa (antes da Sales Table)</span>
+                        </>
+                      );
+                    })()}
                   </td>
                   <td className="flex gap-2">
                     <button onClick={() => onSincronizarUnidades(t)} className="text-[#B96343] text-xs font-semibold">
@@ -510,6 +541,7 @@ export function StepPrograma({
                     <th className="pb-1 pr-2">Bloco</th>
                     <th className="pb-1 pr-2">Piso</th>
                     <th className="pb-1 pr-2">Área vendável</th>
+                    <th className="pb-1 pr-2">Garagem</th>
                     <th className="pb-1 pr-2">Prémio/desconto</th>
                     <th className="pb-1 pr-2">Override manual</th>
                     <th className="pb-1 pr-2">Preço final</th>
@@ -534,6 +566,15 @@ export function StepPrograma({
                         <input className="input-dark w-16" value={u.piso ?? ""} onChange={(e) => onAtualizarUnidade(u.id, { piso: e.target.value })} />
                       </td>
                       <td className="py-1 pr-2 text-[#59636A]">{Math.round(u.areaVendavel)} m²</td>
+                      <td className="py-1 pr-2 text-center">
+                        <input
+                          type="checkbox"
+                          checked={u.incluiGaragem}
+                          onChange={(e) => onAtualizarUnidade(u.id, { incluiGaragem: e.target.checked })}
+                          disabled={u.estadoComercial !== "disponivel"}
+                          title="Inclui garagem — atributo de comparabilidade, nunca gera prémio automático"
+                        />
+                      </td>
                       <td className="py-1 pr-2">
                         <input
                           type="number"
@@ -592,7 +633,7 @@ export function StepPrograma({
                     </tr>
                     {expandida && (
                       <tr className="bg-[#F5F0E6]">
-                        <td colSpan={9} className="p-3">
+                        <td colSpan={10} className="p-3">
                           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
                             <FieldGroup label="Sinal">
                               <NumeroInput value={u.sinalValor} onChange={(v) => onAtualizarUnidade(u.id, { sinalValor: v })} />
@@ -621,6 +662,11 @@ export function StepPrograma({
                                   ? "Data de escritura: fim de obra + prazo por defeito."
                                   : "Preencha o fim de obra para sugerir a data de escritura."}
                           </p>
+                          {u.estadoComercial === "disponivel" && !u.precoBloqueado && (
+                            <button onClick={() => onRestaurarAutomatico(u.id)} className="text-xs text-[#B96343] font-semibold underline mt-2">
+                              Restaurar valores automáticos (área, preço-base e garagem da tipologia)
+                            </button>
+                          )}
                         </td>
                       </tr>
                     )}

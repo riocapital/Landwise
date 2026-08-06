@@ -149,3 +149,73 @@ describe("sugerirPreco", () => {
     expect(resultado.nivelConfianca).toBe("Alta");
   });
 });
+
+// --- Garagem/elevador/piso (secção 9 do plano 03_08 — achado P1.3) ---
+
+describe("calcScoreComparabilidade — garagem, elevador e piso", () => {
+  it("comparável com o mesmo perfil de garagem/elevador/piso pontua mais alto do que um totalmente divergente nesses atributos", () => {
+    const sujeito: SujeitoComparacao = { ...sujeitoBase, parkingSpaces: 1, hasElevator: true, floor: "3" };
+    const { score: scoreIgual } = calcScoreComparabilidade(sujeito, makeComparable({ parking_spaces: 2, elevator: true, floor: "3" }));
+    const { score: scoreDivergente } = calcScoreComparabilidade(sujeito, makeComparable({ parking_spaces: 0, elevator: false, floor: "0" }));
+    expect(scoreIgual).toBeGreaterThan(scoreDivergente);
+  });
+
+  it("garagem compara Sim/Não, nunca a contagem exata de lugares", () => {
+    const sujeito: SujeitoComparacao = { ...sujeitoBase, parkingSpaces: 1 };
+    const { score: score1Lugar } = calcScoreComparabilidade(sujeito, makeComparable({ parking_spaces: 1 }));
+    const { score: score3Lugares } = calcScoreComparabilidade(sujeito, makeComparable({ parking_spaces: 3 }));
+    expect(score1Lugar).toBe(score3Lugares); // ambos "tem garagem" — mesmo score nesse critério
+  });
+
+  it("nunca penaliza quando o dado falta de um dos lados — score neutro no critério", () => {
+    const sujeito: SujeitoComparacao = { ...sujeitoBase, parkingSpaces: 1, hasElevator: true, floor: "3" };
+    const semDados = calcScoreComparabilidade(sujeito, makeComparable({ parking_spaces: null, elevator: null, floor: null }));
+    const comDadosIguais = calcScoreComparabilidade(sujeito, makeComparable({ parking_spaces: 1, elevator: true, floor: "3" }));
+    // Sem dados no comparável, o critério "atributos" fica neutro (não
+    // penaliza) — o score não deve cair abaixo do que teria com o critério
+    // simplesmente ausente da comparação.
+    expect(semDados.score).toBeGreaterThanOrEqual(comDadosIguais.score - 20);
+  });
+});
+
+describe("sugerirPreco — amostra exata vs ampliada", () => {
+  it("amostra 100% exata quando todos os comparáveis batem tipologia + garagem + elevador + piso pedidos", () => {
+    const sujeito: SujeitoComparacao = { ...sujeitoBase, parkingSpaces: 1, hasElevator: true, floor: "3" };
+    const pool = Array.from({ length: 10 }, () =>
+      makeComparable({ typology: "T2", parking_spaces: 1, elevator: true, floor: "3", price_per_sqm: 4200 })
+    );
+    const resultado = sugerirPreco(sujeito, pool);
+    expect(resultado.amostraExata).toBe(resultado.numeroComparaveis);
+    expect(resultado.amostraAmpliada).toBe(0);
+    expect(resultado.criteriosRelaxados).toEqual([]);
+  });
+
+  it("amostra ampliada e criteriosRelaxados preenchido quando parte dos comparáveis só entra sem garagem", () => {
+    const sujeito: SujeitoComparacao = { ...sujeitoBase, parkingSpaces: 1 };
+    const pool = [
+      ...Array.from({ length: 5 }, () => makeComparable({ typology: "T2", parking_spaces: 1, price_per_sqm: 4200 })),
+      ...Array.from({ length: 5 }, () => makeComparable({ typology: "T2", parking_spaces: 0, price_per_sqm: 4200 })),
+    ];
+    const resultado = sugerirPreco(sujeito, pool);
+    expect(resultado.amostraAmpliada).toBeGreaterThan(0);
+    expect(resultado.criteriosRelaxados).toContain("garagem");
+  });
+
+  it("amostra maioritariamente ampliada nunca chega a confiança Alta, mesmo com muitos comparáveis", () => {
+    const sujeito: SujeitoComparacao = { ...sujeitoBase, parkingSpaces: 1, hasElevator: true };
+    const pool = [
+      ...Array.from({ length: 3 }, () => makeComparable({ typology: "T2", parking_spaces: 1, elevator: true, area_basis: "area_bruta", price_per_sqm: 4200 })),
+      ...Array.from({ length: 20 }, () => makeComparable({ typology: "T2", parking_spaces: 0, elevator: false, area_basis: "area_bruta", price_per_sqm: 4200 })),
+    ];
+    const resultado = sugerirPreco(sujeito, pool);
+    expect(resultado.amostraAmpliada).toBeGreaterThan(resultado.amostraExata);
+    expect(resultado.nivelConfianca).not.toBe("Alta");
+  });
+
+  it("nunca aplica prémio/desconto por causa de atributos — a sugestão continua a ser só a mediana de preço/m²", () => {
+    const sujeito: SujeitoComparacao = { ...sujeitoBase, parkingSpaces: 1 };
+    const pool = Array.from({ length: 10 }, () => makeComparable({ typology: "T2", parking_spaces: Math.random() > 0.5 ? 1 : 0, price_per_sqm: 4000 }));
+    const resultado = sugerirPreco(sujeito, pool);
+    expect(resultado.precoSugeridoM2).toBe(4000); // preço nunca ajustado por garagem — só a mediana real dos comparáveis
+  });
+});

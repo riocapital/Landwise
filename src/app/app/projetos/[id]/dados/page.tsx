@@ -43,6 +43,9 @@ import { criarLeadConsultoria, type NovoLeadConsultoria } from "@/lib/supabase/c
 import {
   gerarUnidadesDeTipologia,
   calcularSincronizacao,
+  detetarDesviosAtributos,
+  aplicarSincronizacaoAtributos,
+  restaurarValoresAutomaticos,
   resolverSalesTable,
   calcVgvBruto,
   type UnidadeVenda,
@@ -443,19 +446,25 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
   }
 
   /**
-   * Sincroniza as unidades da Sales Table com a quantidade atual da
-   * tipologia. Nunca apaga sozinho uma unidade vendida ou personalizada —
-   * quando há candidatas a remover, pede confirmação primeiro (secção 14).
+   * Sincroniza as unidades da Sales Table com a tipologia atual, em duas
+   * dimensões (secção 11 do prompt 03_08 — achado P1.1): quantidade
+   * (calcularSincronizacao, como antes) e ATRIBUTOS herdados (área,
+   * preço-base, garagem — detetarDesviosAtributos), que antes desta
+   * correção não eram sincronizados de todo quando a quantidade não mudava.
+   * Nunca apaga nem substitui sozinho uma unidade vendida/escriturada ou
+   * com preço bloqueado — pede confirmação antes de tocar em unidades
+   * personalizadas.
    */
   async function sincronizarUnidades(tipologia: Typology) {
     const existentes = unidades.filter((u) => u.tipologiaId === tipologia.id);
     const r = calcularSincronizacao(existentes, tipologia.quantidade);
+    let unidadesAposQuantidade = existentes;
 
     if (r.paraCriar > 0) {
       const novas = gerarUnidadesDeTipologia(tipologia, r.paraCriar, existentes.length);
       const criadas = await criarUnidades(supabase, id, novas);
       setUnidades((prev) => [...prev, ...criadas]);
-      return;
+      unidadesAposQuantidade = [...existentes, ...criadas];
     }
 
     if (r.candidatasARemover.length > 0) {
@@ -465,6 +474,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
       if (!confirmar) return;
       const ids = r.candidatasARemover.map((u) => u.id);
       await apagarUnidades(supabase, ids);
+      unidadesAposQuantidade = existentes.filter((u) => !ids.includes(u.id));
       setUnidades((prev) => prev.filter((u) => !ids.includes(u.id)));
     }
 
@@ -473,6 +483,71 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         `Não é possível reduzir mais "${tipologia.nome}": as ${r.bloqueadasParaRemover.length} unidades restantes já estão vendidas ou foram personalizadas.`
       );
     }
+
+    const desvios = detetarDesviosAtributos(unidadesAposQuantidade, tipologia);
+    if (desvios.unidadesComDesvio.length === 0) return;
+
+    const resumo = desvios.unidadesComDesvio
+      .map((d) => `• ${d.unidade.bloco || d.unidade.piso ? `${d.unidade.bloco ?? ""} ${d.unidade.piso ?? ""}`.trim() : d.unidade.id.slice(0, 8)}: ${d.desvios.map((x) => x.campo).join(", ")}`)
+      .join("\n");
+    const aplicar = window.confirm(
+      `${desvios.unidadesComDesvio.length} unidade(s) de "${tipologia.nome}" têm atributos desatualizados face à tipologia atual (área, preço-base ou garagem):\n\n${resumo}\n\nAtualizar automaticamente estas unidades? (Cancelar para não alterar nada agora)`
+    );
+    if (!aplicar) return;
+
+    let modo: "substituir" | "preservar_overrides" = "preservar_overrides";
+    if (desvios.unidadesComDesvio.some((d) => d.unidade.personalizada)) {
+      const substituirTambem = window.confirm(
+        "Algumas destas unidades foram editadas manualmente. Substituir também os valores personalizados pelos da tipologia? (Cancelar preserva as edições manuais dessas unidades)"
+      );
+      modo = substituirTambem ? "substituir" : "preservar_overrides";
+    }
+
+    const atualizadas = aplicarSincronizacaoAtributos(unidadesAposQuantidade, tipologia, modo);
+    for (const atualizada of atualizadas) {
+      const original = unidadesAposQuantidade.find((o) => o.id === atualizada.id);
+      if (!original) continue;
+      const mudou =
+        atualizada.abp !== original.abp ||
+        atualizada.varandaM2 !== original.varandaM2 ||
+        atualizada.terracoM2 !== original.terracoM2 ||
+        atualizada.outrasAreasM2 !== original.outrasAreasM2 ||
+        atualizada.precoBaseM2 !== original.precoBaseM2 ||
+        atualizada.incluiGaragem !== original.incluiGaragem;
+      if (!mudou) continue;
+      const patch = {
+        abp: atualizada.abp,
+        varandaM2: atualizada.varandaM2,
+        terracoM2: atualizada.terracoM2,
+        outrasAreasM2: atualizada.outrasAreasM2,
+        precoBaseM2: atualizada.precoBaseM2,
+        incluiGaragem: atualizada.incluiGaragem,
+      };
+      await atualizarUnidade(supabase, atualizada.id, patch);
+      setUnidades((prev) => prev.map((x) => (x.id === atualizada.id ? { ...x, ...patch } : x)));
+    }
+  }
+
+  /** "Restaurar valores automáticos" (secção 11): repõe os atributos herdados da tipologia numa única unidade e limpa a personalização/override. */
+  async function restaurarUnidadeParaAutomatico(unidadeId: string) {
+    const unidade = unidades.find((u) => u.id === unidadeId);
+    const tipologia = tipologiasNovas.find((t) => t.id === unidade?.tipologiaId);
+    if (!unidade || !tipologia) return;
+    const restaurada = restaurarValoresAutomaticos(unidade, tipologia);
+    if (restaurada === unidade) return; // nunca tocada (vendida/escriturada/preço bloqueado)
+    const patch = {
+      abp: restaurada.abp,
+      varandaM2: restaurada.varandaM2,
+      terracoM2: restaurada.terracoM2,
+      outrasAreasM2: restaurada.outrasAreasM2,
+      precoBaseM2: restaurada.precoBaseM2,
+      incluiGaragem: restaurada.incluiGaragem,
+      premioDescontoUnidade: restaurada.premioDescontoUnidade,
+      overrideManualValor: restaurada.overrideManualValor,
+      personalizada: restaurada.personalizada,
+    };
+    await atualizarUnidade(supabase, unidadeId, patch);
+    setUnidades((prev) => prev.map((x) => (x.id === unidadeId ? { ...x, ...patch } : x)));
   }
 
   function atualizarUnidadeLocal(unidadeId: string, patch: Partial<UnidadeVenda>) {
@@ -753,6 +828,15 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
         condition: null,
         isNewConstruction: null,
         areaReferencia: tip.abpUnidade,
+        // Secção 9 do prompt 03_08 (achado P1.3): a pesquisa por comparáveis
+        // ainda não usava garagem/elevador/piso. Elevador é um atributo do
+        // edifício (identificacao.temElevador); garagem vem da tipologia
+        // (0 é um valor informado — "sem garagem" — não "não sei"). Piso
+        // ainda não tem uma fonte fiável antes de a Sales Table existir,
+        // fica de fora aqui (nunca penaliza, só não participa no critério).
+        parkingSpaces: tip.estacionamentosIncluidos,
+        hasElevator: identificacao.temElevador,
+        floor: null,
       };
       const resp = await fetch("/api/comparaveis/sugestao", {
         method: "POST",
@@ -970,6 +1054,7 @@ export default function WizardPage({ params }: { params: Promise<{ id: string }>
           unidades={unidades}
           onSincronizarUnidades={sincronizarUnidades}
           onAtualizarUnidade={atualizarUnidadeLocal}
+          onRestaurarAutomatico={restaurarUnidadeParaAutomatico}
           planoVendas={planoVendas}
           updatePlanoVendas={updatePlanoVendas}
           updateEstruturaRecebimentos={updateEstruturaRecebimentos}

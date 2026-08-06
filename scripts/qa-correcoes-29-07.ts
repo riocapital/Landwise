@@ -100,6 +100,7 @@ function unidade(id: string, ordem: number): LinhaSalesTableResolvida {
     outrasAreasM2: 0,
     estacionamentos: 0,
     valorEstacionamento: 0,
+    incluiGaragem: false,
     precoBaseM2: 4_000,
     ajusteFaseComercialPct: 0,
     premioDescontoUnidade: 0,
