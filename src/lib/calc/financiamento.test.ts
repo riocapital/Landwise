@@ -371,6 +371,22 @@ describe("Comissão de compromisso (secção 22 do prompt 03_08) — nunca confu
     });
     expect(comComissao.custosFinanceiros).toBeGreaterThan(semComissao.custosFinanceiros);
     expect(comComissao.financiamento.comissaoCompromissoTotal).toBeGreaterThan(0);
+
+    // Regressão: a comissão de compromisso é um custo de CAIXA real — tem de
+    // reduzir genuinamente o cash flow levered/saldo de caixa (e por isso
+    // aumentar o equity chamado nos meses sem excedente para a absorver),
+    // nunca só aparecer na linha de P&L (jurosEFees/custosFinanceiros) sem
+    // correspondência nenhuma no caixa efetivamente movimentado. Verificado
+    // diretamente mês a mês: cashFlowLevered do mês com comissão é sempre
+    // exatamente comissaoCompromisso a menos do que sem ela.
+    expect(comComissao.equity.equityContributed).toBeGreaterThan(semComissao.equity.equityContributed);
+    for (let i = 0; i < comComissao.linhas.length; i++) {
+      const linhaComComissao = comComissao.linhas[i];
+      const linhaSemComissao = semComissao.linhas[i];
+      const deltaJurosEFees = linhaComComissao.jurosEFees - linhaSemComissao.jurosEFees;
+      const deltaCashFlowLevered = linhaSemComissao.cashFlowLevered - linhaComComissao.cashFlowLevered;
+      expect(deltaCashFlowLevered).toBeCloseTo(deltaJurosEFees, 2);
+    }
   });
 });
 

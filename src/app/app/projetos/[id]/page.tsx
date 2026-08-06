@@ -2,7 +2,8 @@ import { redirect, notFound } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import { carregarResultadoProjeto } from "@/lib/calc/project-loader";
-import { extrairIndicador } from "@/lib/calc/sensibilidades";
+import type { NivelRecomendacao } from "@/lib/calc/recomendacao";
+import { CashFlowChart } from "./_components/cash-flow-chart";
 
 function fmtEUR(v: number) {
   return new Intl.NumberFormat("pt-PT", { maximumFractionDigits: 0 }).format(v) + " €";
@@ -10,8 +11,8 @@ function fmtEUR(v: number) {
 function fmtPct(v: number) {
   return (v * 100).toFixed(1) + "%";
 }
-function fmtIndicador(v: number | null, formatador: (v: number) => string) {
-  return v !== null ? formatador(v) : "Não calculável";
+function fmtIndicador(v: number | null | undefined, formatador: (v: number) => string) {
+  return v !== null && v !== undefined ? formatador(v) : "Não calculável";
 }
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
 function fmtMesAno(dataIso: string | null): string {
@@ -20,6 +21,21 @@ function fmtMesAno(dataIso: string | null): string {
   if (!ano || !mes) return "—";
   return `${MESES_ABREV[mes - 1]}/${String(ano).slice(2)}`;
 }
+
+const LABEL_RECOMENDACAO: Record<NivelRecomendacao, string> = {
+  avancar: "Avançar",
+  avancar_com_condicoes: "Avançar com condições",
+  rever_premissas: "Rever premissas",
+  nao_avancar: "Não avançar",
+  dados_insuficientes: "Dados insuficientes",
+};
+const COR_RECOMENDACAO: Record<NivelRecomendacao, string> = {
+  avancar: "#4E7A5C",
+  avancar_com_condicoes: "#C08A3E",
+  rever_premissas: "#C08A3E",
+  nao_avancar: "#A13D2E",
+  dados_insuficientes: "#59636A",
+};
 
 export default async function ProjetoResultadosPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -34,7 +50,7 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
 
   const r = await carregarResultadoProjeto(supabase, id);
 
-  if (!r.dadosSuficientes || !r.resultado) {
+  if (!r.dadosSuficientes || !r.resultado || !r.underwriting) {
     return (
       <div className="p-8 max-w-2xl mx-auto">
         <div className="bg-white border border-[#E3DACB] rounded-xl p-8 text-center">
@@ -50,9 +66,8 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
     );
   }
 
-  const { resultado } = r;
-  const irr = extrairIndicador(resultado, "irr_levered");
-  const moic = extrairIndicador(resultado, "moic");
+  const { resultado, underwriting: u } = r;
+  const nivelRecomendacao = r.recomendacao?.nivel ?? "dados_insuficientes";
 
   return (
     <div className="p-8 max-w-6xl mx-auto">
@@ -63,27 +78,39 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
             {r.projeto.localizacao || "Sem localização"} · {r.projeto.tipoProjeto}
           </p>
         </div>
-        <Link
-          href={`/app/projetos/${id}/dados`}
-          className="px-4 py-2.5 rounded-lg border border-[#E3DACB] text-[#142B3A] text-sm font-semibold"
-        >
+        <Link href={`/app/projetos/${id}/dados`} className="px-4 py-2.5 rounded-lg border border-[#E3DACB] text-[#142B3A] text-sm font-semibold">
           Editar premissas
         </Link>
       </div>
 
-      <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-5 flex items-center justify-between">
-        <div>
-          <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Recomendação</div>
-          <div className="text-lg font-bold text-[#142B3A]">
-            {(r.lucroProjetoTotal ?? 0) > 0 ? "Avançar com condições" : "Não avançar sem rever premissas"}
+      <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-5">
+        <div className="flex items-center justify-between mb-2">
+          <div>
+            <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Recomendação</div>
+            <div className="text-lg font-bold" style={{ color: COR_RECOMENDACAO[nivelRecomendacao] }}>
+              {LABEL_RECOMENDACAO[nivelRecomendacao]}
+            </div>
           </div>
         </div>
-        <div className="text-right">
-          <div className="text-xs uppercase tracking-wide text-[#59636A] mb-1">Margem do projeto</div>
-          <div className="text-lg font-bold" style={{ color: (r.margemProjetoTotal ?? 0) > 0 ? "#4E7A5C" : "#A13D2E" }}>
-            {r.margemProjetoTotal !== null ? fmtPct(r.margemProjetoTotal) : "—"}
-          </div>
-        </div>
+        {r.recomendacao && r.recomendacao.fatores.length > 0 && (
+          <details className="mt-2">
+            <summary className="cursor-pointer text-xs text-[#59636A]">Ver fatores considerados</summary>
+            <ul className="mt-2 space-y-1">
+              {r.recomendacao.fatores.map((f) => (
+                <li key={f.nome} className="text-xs flex items-start gap-2">
+                  <span
+                    className="inline-block w-2 h-2 rounded-full mt-0.5 shrink-0"
+                    style={{ background: f.ok === null ? "#8FA6AF" : f.ok ? "#4E7A5C" : "#A13D2E" }}
+                  />
+                  <span className="text-[#59636A]">{f.explicacao}</span>
+                </li>
+              ))}
+            </ul>
+            <p className="text-[10px] text-[#59636A] mt-2">
+              Política de referência, não uma régua universal — configurável por organização/projeto.
+            </p>
+          </details>
+        )}
       </div>
 
       {r.alertas.length > 0 && (
@@ -105,52 +132,128 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         </div>
       )}
 
-      <SectionLabel>Resultado do projeto</SectionLabel>
-      <p className="text-xs text-[#59636A] -mt-3 mb-3">
-        Receita menos custos económicos reais do projeto (inclui juros e fees de financiamento) — nunca inclui drawdowns, amortização de capital, equity
-        calls ou distribuições, que são movimentos de financiamento, não lucro.
-      </p>
-      <div className="grid grid-cols-3 gap-4 mb-4">
-        <Kpi label="VGV Bruto" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
-        <Kpi label="Receita operacional" value={fmtEUR(resultado.gdv)} color="#3E6E8E" />
-        {/* gdv - lucroProjetoTotal, nunca resultado.custoTotal sozinho: esse não inclui fees nem impostos (calculados fora de cashflow.ts) — teria de reconciliar sempre com "Lucro do projeto" ao lado. */}
-        <Kpi label="Custo total do projeto" value={fmtEUR(resultado.gdv - (r.lucroProjetoTotal ?? 0))} color="#B96343" />
-      </div>
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <Kpi label="Lucro do projeto" value={fmtEUR(r.lucroProjetoTotal ?? 0)} color="#4E7A5C" />
-        <Kpi label="Margem do projeto" value={r.margemProjetoTotal !== null ? fmtPct(r.margemProjetoTotal) : "—"} color="#4E7A5C" />
+      {/* Bloco 1 — Projeto (secção 16 do prompt 03_08) */}
+      <SectionLabel>Projeto</SectionLabel>
+      <div className="grid grid-cols-4 gap-4 mb-8">
         <Kpi
-          label="TIR do projeto (desalavancada)"
-          value={fmtIndicador(resultado.irrProjeto, fmtPct)}
-          color="#4E7A5C"
+          label="VGV"
+          value={fmtEUR(u.grossVgv)}
+          sub={`Líquido ${fmtEUR(u.netVgv)} · comissão ${u.commercialCommissionPct !== null ? fmtPct(u.commercialCommissionPct) : "—"}`}
+          color="#3E6E8E"
+        />
+        <Kpi
+          label="CAPEX total"
+          value={fmtEUR(u.projectCapexBeforePromoteAndTax)}
+          sub={u.capexPerAbcSqm !== null ? `${fmtEUR(u.capexPerAbcSqm)}/m² ABC` : undefined}
+          color="#B96343"
+        />
+        <Kpi label="Ticket médio" value={u.averageTicket !== null ? fmtEUR(u.averageTicket) : "—"} sub={`${u.unitCount} unidades`} color="#3E6E8E" />
+        <Kpi
+          label="Duração"
+          value={u.durationMonths !== null ? `${u.durationMonths} meses` : "—"}
+          sub={`${fmtMesAno(r.execucao?.dataInicio ?? null)} → ${fmtMesAno(r.execucao?.dataFim ?? null)}`}
+          color="#3E6E8E"
         />
       </div>
 
-      <SectionLabel>Retorno do equity</SectionLabel>
-      <p className="text-xs text-[#59636A] -mt-3 mb-3">
-        Calculado exclusivamente a partir dos fluxos datados do investidor (capital calls negativos, distribuições positivas) — nunca a partir do cash
-        flow do projeto, que inclui receita de vendas e drawdowns que o investidor nunca recebe diretamente.
-      </p>
-      <div className="grid grid-cols-3 gap-4 mb-5">
-        <Kpi label="Equity investido" value={fmtEUR(resultado.equity.equityContributed)} color="#3E6E8E" />
-        <Kpi label="Distribuições" value={fmtEUR(resultado.equity.capitalDevolvidoTotal)} color="#3E6E8E" />
-        <Kpi label="Lucro do equity" value={fmtEUR(resultado.equity.lucroEquity)} color="#4E7A5C" />
-      </div>
-      <div className="grid grid-cols-3 gap-4 mb-8">
+      {/* Bloco 2 — Capital */}
+      <SectionLabel>Capital</SectionLabel>
+      <div className="grid grid-cols-4 gap-4 mb-8">
         <Kpi
-          label="Peak equity exposure"
-          value={fmtEUR(resultado.equity.peakCashExposure)}
-          sub={resultado.equity.mesPico ? `Mês ${resultado.equity.mesPico}` : undefined}
+          label="Equity alavancado"
+          value={fmtEUR(u.leveredEquityInvested)}
+          sub={u.projectCapexBeforePromoteAndTax > 0 ? `${fmtPct(u.leveredEquityInvested / u.projectCapexBeforePromoteAndTax)} do custo total` : undefined}
+          color="#3E6E8E"
+        />
+        <Kpi
+          label="Equity não alavancado"
+          value={u.unleveredEquityInvested !== null ? fmtEUR(u.unleveredEquityInvested) : "Não calculável"}
+          sub={
+            u.unleveredEquityInvested !== null && u.projectCapexBeforePromoteAndTax > 0
+              ? `${fmtPct(u.unleveredEquityInvested / u.projectCapexBeforePromoteAndTax)} do custo total`
+              : undefined
+          }
+          color="#3E6E8E"
+        />
+        <Kpi
+          label="Dívida utilizada / peak debt"
+          value={`${fmtEUR(u.usedDebtTotal)} / ${fmtEUR(u.peakDebt)}`}
+          sub={u.effectiveLtc !== null ? `LTC efetivo ${fmtPct(u.effectiveLtc)}` : undefined}
           color="#C08A3E"
         />
-        <Kpi label="TIR do equity (alavancada)" value={fmtIndicador(irr, fmtPct)} color="#4E7A5C" />
-        <Kpi label="MOIC do equity" value={fmtIndicador(moic, (v) => v.toFixed(2) + "x")} color="#4E7A5C" />
+        <Kpi label="Peak equity" value={fmtEUR(u.peakEquityExposure)} sub={u.peakEquityMonth ? `Mês ${u.peakEquityMonth}` : undefined} color="#C08A3E" />
       </div>
+
+      {/* Bloco 3 — Resultado */}
+      <SectionLabel>Resultado</SectionLabel>
+      <div className="grid grid-cols-5 gap-4 mb-8">
+        <Kpi label="Lucro antes de promote e impostos" value={fmtEUR(u.profitBeforePromoteAndTax)} color="#4E7A5C" />
+        <Kpi label="Promote" value={fmtEUR(u.promoteFee)} color="#B96343" />
+        <Kpi label="Lucro após promote" value={fmtEUR(u.profitAfterPromote)} color="#4E7A5C" />
+        <Kpi
+          label="Impostos estimados"
+          value={fmtEUR(u.estimatedTaxes)}
+          sub={u.profitAfterPromote !== 0 ? `taxa efetiva ${fmtPct(u.estimatedTaxes / Math.abs(u.profitAfterPromote))}` : undefined}
+          color="#B96343"
+        />
+        <Kpi label="Lucro líquido" value={fmtEUR(u.netProfit)} color="#4E7A5C" />
+      </div>
+
+      {/* Bloco 4 — Retorno */}
+      <SectionLabel>Retorno</SectionLabel>
+      <div className="grid grid-cols-4 gap-4 mb-3">
+        <Kpi
+          label="ROI alavancado"
+          value={fmtIndicador(u.leveredRoi, fmtPct)}
+          sub={u.unleveredRoi !== null ? `Não alavancado: ${fmtPct(u.unleveredRoi)}` : undefined}
+          color="#4E7A5C"
+        />
+        <Kpi
+          label="TIR alavancada"
+          value={fmtIndicador(u.leveredIrr, fmtPct)}
+          sub={u.unleveredIrr !== null ? `Não alavancada: ${fmtPct(u.unleveredIrr)}` : undefined}
+          color="#4E7A5C"
+        />
+        <Kpi label="MOIC" value={fmtIndicador(u.moic, (v) => v.toFixed(2) + "x")} color="#4E7A5C" />
+        <Kpi
+          label="Retorno total"
+          value={fmtEUR(u.totalReturn)}
+          sub={`Capital ${fmtEUR(u.capitalReturned)} · Lucro ${fmtEUR(u.profitDistributed)}`}
+          color="#4E7A5C"
+        />
+      </div>
+      <p className="text-xs text-[#59636A] mb-8">
+        Payback: {u.paybackMonth ?? "Não recupera no prazo do projeto"}. TIR alavancada usa exclusivamente os fluxos datados do investidor (capital calls
+        negativos, distribuições positivas); TIR não alavancada usa os fluxos operacionais sem financiamento.
+      </p>
+
+      {/* Bloco 5 — Risco */}
+      <SectionLabel>Risco</SectionLabel>
+      <div className="grid grid-cols-4 gap-4 mb-3">
+        <Kpi
+          label="Alertas críticos"
+          value={String(r.alertas.filter((a) => a.tipo === "erro").length)}
+          sub={`${r.alertas.length} alertas no total`}
+          color={r.alertas.some((a) => a.tipo === "erro") ? "#A13D2E" : "#4E7A5C"}
+        />
+        <Kpi label="Peak equity" value={fmtEUR(u.peakEquityExposure)} color="#C08A3E" />
+        <Kpi label="Peak debt" value={fmtEUR(u.peakDebt)} sub={u.effectiveLtc !== null ? `LTC ${fmtPct(u.effectiveLtc)}` : undefined} color="#C08A3E" />
+        <Kpi
+          label="Qualidade dos dados"
+          value={u.qualidade.nivelConfianca === "alta" ? "Alta" : u.qualidade.nivelConfianca === "media" ? "Média" : "Baixa"}
+          sub={u.qualidade.todasReconciliacoesOk ? "Reconciliações OK" : "Reconciliação fora da tolerância"}
+          color={u.qualidade.todasReconciliacoesOk ? "#4E7A5C" : "#A13D2E"}
+        />
+      </div>
+      <p className="text-xs text-[#59636A] mb-8">
+        Sensibilidade: consulta as três matrizes (Aquisição × Venda, Aquisição × Custo de obra, Custo de obra × Venda) na etapa de preenchimento. Campos
+        ainda sem motor dedicado nesta versão: {u.qualidade.camposEmFalta.length > 0 ? u.qualidade.camposEmFalta.join("; ") : "nenhum"}.
+      </p>
 
       {resultado.equity.fluxosInvestidor.length > 0 && (
         <details className="mb-8 border border-[#E3DACB] rounded-lg px-4 py-3">
           <summary className="cursor-pointer text-sm font-medium text-[#142B3A]">
-            Ver fluxos usados no cálculo de IRR e MOIC ({resultado.equity.fluxosInvestidor.length})
+            Ver fluxos usados no cálculo de TIR e MOIC alavancados ({resultado.equity.fluxosInvestidor.length})
           </summary>
           <table className="w-full text-xs mt-3">
             <thead>
@@ -170,10 +273,6 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
               ))}
             </tbody>
           </table>
-          <p className="text-[10px] text-[#59636A] mt-2">
-            IRR = XIRR destes fluxos datados. MOIC = soma das distribuições ÷ soma dos capital calls. Nenhum outro fluxo (receita de vendas, drawdowns,
-            amortização de dívida) entra neste cálculo.
-          </p>
         </details>
       )}
 
@@ -221,26 +320,6 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         </>
       )}
 
-      <SectionLabel>Financiamento</SectionLabel>
-      <div className="grid grid-cols-2 gap-4 mb-8">
-        <Kpi
-          label="Peak debt"
-          value={fmtEUR(resultado.financiamento.peakDebt)}
-          sub={resultado.financiamento.ltv !== null ? `LTV ${fmtPct(resultado.financiamento.ltv)}` : undefined}
-          color="#C08A3E"
-        />
-        <Kpi
-          label="Recuperação integral do capital"
-          value={resultado.equity.dataRecuperacaoIntegral ?? "Não recupera no prazo do projeto"}
-          color="#C08A3E"
-        />
-      </div>
-      <p className="text-xs text-[#59636A] -mt-5 mb-8">
-        Ponte de financiamento: o custo total do projeto ({fmtEUR(resultado.gdv - (r.lucroProjetoTotal ?? 0))}) é coberto por dívida bancária no pico
-        ({fmtEUR(resultado.financiamento.peakDebt)}), equity no pico ({fmtEUR(resultado.equity.peakCashExposure)}) e caixa gerado pelas próprias vendas do
-        projeto ao longo do tempo. Dívida e equity nunca são receita nem custo — só financiam a necessidade de caixa até as vendas cobrirem o resto.
-      </p>
-
       {r.temInvestidorExterno && r.investidorPromotor && (
         <>
           <SectionLabel>Investidor e promotor</SectionLabel>
@@ -267,108 +346,116 @@ export default async function ProjetoResultadosPage({ params }: { params: Promis
         </>
       )}
 
-      {r.estruturaSobreVgv && (
-        <>
-          <SectionLabel>Estrutura sobre VGV</SectionLabel>
-          <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-3 overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-[#59636A] uppercase">
-                  <th className="pb-2 pr-4">Categoria</th>
-                  <th className="pb-2 pr-4">€</th>
-                  <th className="pb-2 pr-4">% VGV</th>
-                  <th className="pb-2 pr-4">€/ABC</th>
-                  <th className="pb-2 pr-4">€/ABP</th>
-                  <th className="pb-2 pr-4">€/unidade</th>
-                </tr>
-              </thead>
-              <tbody>
-                {r.estruturaSobreVgv.linhas.map((l) => (
-                  <tr key={l.categoria} className="border-t border-[#E3DACB]">
-                    <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{l.categoria}</td>
-                    <td className="py-1.5 pr-4">{fmtEUR(l.euros)}</td>
-                    <td className="py-1.5 pr-4">{l.pctVgv !== null ? fmtPct(l.pctVgv) : "—"}</td>
-                    <td className="py-1.5 pr-4">{l.eurPorAbc !== null ? fmtEUR(l.eurPorAbc) : "—"}</td>
-                    <td className="py-1.5 pr-4">{l.eurPorAbp !== null ? fmtEUR(l.eurPorAbp) : "—"}</td>
-                    <td className="py-1.5 pr-4">{l.eurPorUnidade !== null ? fmtEUR(l.eurPorUnidade) : "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex items-center gap-2 mb-8 text-xs">
-            <span
-              className="inline-block w-3 h-3 rounded-full"
-              style={{
-                background:
-                  r.estruturaSobreVgv.semaforoAquisicaoVgv === "verde"
-                    ? "#4E7A5C"
-                    : r.estruturaSobreVgv.semaforoAquisicaoVgv === "amarelo"
-                      ? "#C08A3E"
-                      : "#A13D2E",
-              }}
-            />
-            <span className="text-[#59636A]">
-              Rácio Aquisição/VGV: <strong className="text-[#142B3A]">{fmtPct(r.estruturaSobreVgv.racioAquisicaoVgv)}</strong> — régua de
-              referência Landwise (verde &lt;35%, amarelo 35-45%, vermelho &gt;45%), não uma regra universal.
-            </span>
-          </div>
-        </>
-      )}
+      {(r.estruturaSobreVgv || r.metricasPorM2) && (
+        <details className="mb-8 border border-[#E3DACB] rounded-lg px-4 py-3">
+          <summary className="cursor-pointer text-sm font-medium text-[#142B3A]">Estrutura sobre VGV e métricas por m² (detalhe)</summary>
 
-      {r.metricasPorM2 && (
-        <>
-          <SectionLabel>Métricas por m²</SectionLabel>
-          <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-8 overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-left text-[#59636A] uppercase">
-                  <th className="pb-2 pr-4">Categoria</th>
-                  <th className="pb-2 pr-4">€</th>
-                  <th className="pb-2 pr-4">€/ABC</th>
-                  <th className="pb-2 pr-4">€/ABP</th>
-                </tr>
-              </thead>
-              <tbody>
-                {r.metricasPorM2.linhas.map((l) => (
-                  <tr key={l.categoria} className="border-t border-[#E3DACB]">
-                    <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{l.categoria}</td>
-                    <td className="py-1.5 pr-4">{fmtEUR(l.euros)}</td>
-                    <td className="py-1.5 pr-4">{l.eurPorAbc !== null ? fmtEUR(l.eurPorAbc) : "—"}</td>
-                    <td className="py-1.5 pr-4">{l.eurPorAbp !== null ? fmtEUR(l.eurPorAbp) : "—"}</td>
+          {r.estruturaSobreVgv && (
+            <div className="mt-4">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="text-left text-[#59636A] uppercase">
+                      <th className="pb-2 pr-4">Categoria</th>
+                      <th className="pb-2 pr-4">€</th>
+                      <th className="pb-2 pr-4">% VGV</th>
+                      <th className="pb-2 pr-4">€/ABC</th>
+                      <th className="pb-2 pr-4">€/ABP</th>
+                      <th className="pb-2 pr-4">€/unidade</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {r.estruturaSobreVgv.linhas.map((l) => (
+                      <tr key={l.categoria} className="border-t border-[#E3DACB]">
+                        <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{l.categoria}</td>
+                        <td className="py-1.5 pr-4">{fmtEUR(l.euros)}</td>
+                        <td className="py-1.5 pr-4">{l.pctVgv !== null ? fmtPct(l.pctVgv) : "—"}</td>
+                        <td className="py-1.5 pr-4">{l.eurPorAbc !== null ? fmtEUR(l.eurPorAbc) : "—"}</td>
+                        <td className="py-1.5 pr-4">{l.eurPorAbp !== null ? fmtEUR(l.eurPorAbp) : "—"}</td>
+                        <td className="py-1.5 pr-4">{l.eurPorUnidade !== null ? fmtEUR(l.eurPorUnidade) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="flex items-center gap-2 mt-3 text-xs">
+                <span
+                  className="inline-block w-3 h-3 rounded-full"
+                  style={{
+                    background:
+                      r.estruturaSobreVgv.semaforoAquisicaoVgv === "verde"
+                        ? "#4E7A5C"
+                        : r.estruturaSobreVgv.semaforoAquisicaoVgv === "amarelo"
+                          ? "#C08A3E"
+                          : "#A13D2E",
+                  }}
+                />
+                <span className="text-[#59636A]">
+                  Rácio Aquisição/VGV: <strong className="text-[#142B3A]">{fmtPct(r.estruturaSobreVgv.racioAquisicaoVgv)}</strong> — régua de
+                  referência Landwise, não uma regra universal.
+                </span>
+              </div>
+            </div>
+          )}
+
+          {r.metricasPorM2 && (
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[#59636A] uppercase">
+                    <th className="pb-2 pr-4">Categoria</th>
+                    <th className="pb-2 pr-4">€</th>
+                    <th className="pb-2 pr-4">€/ABC</th>
+                    <th className="pb-2 pr-4">€/ABP</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+                </thead>
+                <tbody>
+                  {r.metricasPorM2.linhas.map((l) => (
+                    <tr key={l.categoria} className="border-t border-[#E3DACB]">
+                      <td className="py-1.5 pr-4 text-[#142B3A] font-medium">{l.categoria}</td>
+                      <td className="py-1.5 pr-4">{fmtEUR(l.euros)}</td>
+                      <td className="py-1.5 pr-4">{l.eurPorAbc !== null ? fmtEUR(l.eurPorAbc) : "—"}</td>
+                      <td className="py-1.5 pr-4">{l.eurPorAbp !== null ? fmtEUR(l.eurPorAbp) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </details>
       )}
 
       <SectionLabel>Cash flow mensal</SectionLabel>
-      <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-8 overflow-x-auto">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="text-left text-[#59636A] uppercase">
-              <th className="pb-2 pr-4">Mês</th>
-              <th className="pb-2 pr-4">Receita</th>
-              <th className="pb-2 pr-4">CF unlevered</th>
-              <th className="pb-2 pr-4">CF levered</th>
-              <th className="pb-2 pr-4">Saldo acumulado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {resultado.linhas.map((l) => (
-              <tr key={l.mes} className="border-t border-[#E3DACB]">
-                <td className="py-1.5 pr-4">{l.mes}</td>
-                <td className="py-1.5 pr-4">{fmtEUR(l.receitaVendas)}</td>
-                <td className="py-1.5 pr-4">{fmtEUR(l.cashFlowUnlevered)}</td>
-                <td className="py-1.5 pr-4">{fmtEUR(l.cashFlowLevered)}</td>
-                <td className="py-1.5 pr-4 font-semibold text-[#142B3A]">{fmtEUR(l.saldoCaixaAcumulado)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mb-5">
+        <CashFlowChart linhas={resultado.linhas} />
       </div>
+      <details className="mb-8">
+        <summary className="cursor-pointer text-sm font-medium text-[#142B3A] mb-3">Ver tabela técnica ({resultado.linhas.length} meses)</summary>
+        <div className="bg-white border border-[#E3DACB] rounded-xl p-6 mt-3 overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-[#59636A] uppercase">
+                <th className="pb-2 pr-4">Mês</th>
+                <th className="pb-2 pr-4">Receita</th>
+                <th className="pb-2 pr-4">CF unlevered</th>
+                <th className="pb-2 pr-4">CF levered</th>
+                <th className="pb-2 pr-4">Saldo acumulado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {resultado.linhas.map((l) => (
+                <tr key={l.mes} className="border-t border-[#E3DACB]">
+                  <td className="py-1.5 pr-4">{l.mes}</td>
+                  <td className="py-1.5 pr-4">{fmtEUR(l.receitaVendas)}</td>
+                  <td className="py-1.5 pr-4">{fmtEUR(l.cashFlowUnlevered)}</td>
+                  <td className="py-1.5 pr-4">{fmtEUR(l.cashFlowLevered)}</td>
+                  <td className="py-1.5 pr-4 font-semibold text-[#142B3A]">{fmtEUR(l.saldoCaixaAcumulado)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
     </div>
   );
 }

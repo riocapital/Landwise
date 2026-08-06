@@ -107,4 +107,10 @@ describe("calcSemaforoAquisicaoVgv — régua de referência Landwise (secção 
     expect(calcSemaforoAquisicaoVgv(0.46)).toBe("vermelho");
     expect(calcSemaforoAquisicaoVgv(0.9)).toBe("vermelho");
   });
+
+  it("é genuinamente configurável — não uma régua universal fixa dentro da função (secção 16/17 do prompt 03_08)", () => {
+    const limiaresProprios = { verdeAbaixoDe: 0.2, amareloAte: 0.3 };
+    expect(calcSemaforoAquisicaoVgv(0.25, limiaresProprios)).toBe("amarelo");
+    expect(calcSemaforoAquisicaoVgv(0.25)).toBe("verde"); // com a régua de referência, o mesmo rácio dá outra cor
+  });
 });

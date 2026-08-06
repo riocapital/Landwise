@@ -272,7 +272,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   //    capital calls em qualquer cenário com mais de um mês de défice.
   const necessidadesEquity: NecessidadeMensalEquity[] = unleveredPorMes.map((l, i) => {
     const fin = linhasFinanciamento[i];
-    const cashFlowLevered = l.cashFlowUnlevered + fin.drawdown - fin.juros - fin.fees - fin.impostoSelo - fin.amortizacao;
+    const cashFlowLevered = l.cashFlowUnlevered + fin.drawdown - fin.juros - fin.fees - fin.comissaoCompromisso - fin.impostoSelo - fin.amortizacao;
     return { mes: l.mes, saldoCaixaAposFinanciamento: cashFlowLevered, recebimentosClientes: l.receita, saldoMinimoCaixa: premissas.saldoMinimoCaixa };
   });
   const linhasEquity = simularEquity(necessidadesEquity);
@@ -282,7 +282,7 @@ export function calcularCashFlow(premissas: PremissasCashFlow): ResultadoCashFlo
   const linhas: LinhaCashFlowMensal[] = unleveredPorMes.map((l, i) => {
     const fin = linhasFinanciamento[i];
     const eq = linhasEquity[i];
-    const cashFlowLevered = l.cashFlowUnlevered + fin.drawdown - fin.juros - fin.fees - fin.impostoSelo - fin.amortizacao;
+    const cashFlowLevered = l.cashFlowUnlevered + fin.drawdown - fin.juros - fin.fees - fin.comissaoCompromisso - fin.impostoSelo - fin.amortizacao;
     const saldoCaixa = cashFlowLevered + eq.capitalCall - eq.capitalDevolvido;
     saldoCaixaAcumulado += saldoCaixa;
 

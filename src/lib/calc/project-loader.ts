@@ -30,6 +30,7 @@ import { calcMetricasPorM2, calcEstruturaSobreVgv, type MetricasPorM2, type Estr
 import { extrairIndicador } from "./sensibilidades";
 import { gerarAlertas, type Alerta } from "./alertas";
 import { montarUnderwritingResult, type ProjectUnderwritingResult } from "./underwriting";
+import { calcularRecomendacao, type ResultadoRecomendacao } from "./recomendacao";
 import type { ImpostosEstado } from "./../supabase/project-taxes";
 
 import { listarTipologiasProjeto } from "./../supabase/project-typologies";
@@ -90,6 +91,12 @@ export type ResultadoProjetoCompleto = {
   // objeto em vez de recalcular por fora. null nos mesmos casos em que
   // `resultado` é null (dadosSuficientes: false).
   underwriting: ProjectUnderwritingResult | null;
+
+  // Recomendação configurável (Gate 6 da consolidação pré-relatório,
+  // 03/08) — nunca depende só de lucro positivo, lê exclusivamente o
+  // contrato central acima. null nos mesmos casos em que `underwriting` é
+  // null.
+  recomendacao: ResultadoRecomendacao | null;
 };
 
 export async function carregarResultadoProjeto(supabase: SupabaseClient, projectId: string): Promise<ResultadoProjetoCompleto> {
@@ -143,6 +150,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       lucroProjetoTotal: null,
       margemProjetoTotal: null,
       underwriting: null,
+      recomendacao: null,
     };
   }
 
@@ -164,6 +172,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
       lucroProjetoTotal: null,
       margemProjetoTotal: null,
       underwriting: null,
+      recomendacao: null,
     };
   }
 
@@ -480,6 +489,8 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     ultimaEntradaCapitalOuRetorno: resultado.equity.dataRecuperacaoIntegral ?? execucao.dataFim,
   });
 
+  const recomendacao = calcularRecomendacao(underwriting, alertas.filter((a) => a.tipo === "erro").length);
+
   return {
     projeto,
     execucao,
@@ -497,6 +508,7 @@ export async function carregarResultadoProjeto(supabase: SupabaseClient, project
     lucroProjetoTotal: estruturaSobreVgv.lucro,
     margemProjetoTotal: resultado.gdv > 0 ? estruturaSobreVgv.lucro / resultado.gdv : null,
     underwriting,
+    recomendacao,
   };
 }
 
