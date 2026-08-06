@@ -20,9 +20,20 @@ import { gerarRecebimentosDaSalesTable, type PlanoVendas } from "./vendas";
 import { gerarComissaoMensal, PARAMETROS_COMISSAO_PADRAO } from "./sales-commission";
 import { calcularCashFlow } from "./cashflow";
 import { calcularResultadosComWaterfall } from "./estrutura-capital";
-import { extrairIndicador, calcularMatrizSensibilidade } from "./sensibilidades";
+import {
+  extrairIndicador,
+  calcularMatrizSensibilidade,
+  calcularCenarioCompletoComVariacoes,
+  calcularMatrizSensibilidadeCompleta,
+  extrairIndicadorUnderwriting,
+  type PremissasCompletaSensibilidade,
+} from "./sensibilidades";
 import { calcMetricasPorM2, calcEstruturaSobreVgv } from "./metricas";
 import { gerarAlertas } from "./alertas";
+import { criarFeeZerado, feesParaLinhasCusto, type DatasProjetoParaFees } from "./fees";
+import { calcularImpostoEstimadoDoResultado, type ParametrosImpostoEstimado } from "./impostos";
+import { montarUnderwritingResult } from "./underwriting";
+import { montarReportPayload } from "./report-payload";
 import type { Typology } from "./areas";
 import type { LinhaCusto, ContextoCusto } from "./custos";
 import type { ParametrosFinanciamento } from "./financiamento";
@@ -317,5 +328,192 @@ describe("Golden Test — projeto de referência completo (secções 46/47/48 do
     });
     const erros = alertasGerados.filter((a) => a.tipo === "erro");
     expect(erros).toEqual([]);
+  });
+
+  // --- Continuação da cadeia (secção 24 do prompt 03_08): development fee
+  // → impostos → resultado central → sensibilidade-base completa → report
+  // payload. Mesmo fixture do golden project acima, nunca dados novos.
+
+  const feeDevelopment = { ...criarFeeZerado("fee-golden", "Development fee", "development"), baseCalculo: "percentagem_hard_costs" as const, valorInput: 0.04, momentoPagamento: "durante_desenvolvimento" as const };
+  const datasProjetoParaFees: DatasProjetoParaFees = {
+    dataEscrituraAquisicao: "2026-01-01",
+    dataInicioConstrucao: PLANO_VENDAS.dataInicioConstrucao,
+    dataFimConstrucao: PLANO_VENDAS.dataFimConstrucao,
+    dataEscrituraVenda: PLANO_VENDAS.dataEscritura,
+  };
+  const contextoFeesGolden = {
+    valorAquisicao: CONTEXTO_CUSTO.valorAquisicao,
+    hardCostsTotal: 500_000,
+    capexTotal: 850_000,
+    custoTotal: 850_000,
+    vgvBruto: 1_120_000,
+    vgvLiquido: 1_120_000 - 68_880,
+    abcTotal: 300,
+    numeroUnidades: 4,
+  };
+  const feesComoLinhasCustoGolden = feesParaLinhasCusto([feeDevelopment], contextoFeesGolden, datasProjetoParaFees);
+
+  it("16) Development fee calendarizado entra no cash flow exatamente uma vez (achado P0.1) — custoTotal sobe pelo valor exato do fee", () => {
+    const resultadoComFee = calcularCashFlow({
+      linhasCusto: [...CUSTOS, ...feesComoLinhasCustoGolden],
+      contextoCusto: CONTEXTO_CUSTO,
+      recebimentos,
+      comissaoPorMes,
+      parametrosFinanciamento: FINANCIAMENTO,
+      saldoMinimoCaixa: FINANCIAMENTO.saldoMinimoCaixa,
+    });
+    const valorFeeEsperado = 500_000 * 0.04; // 20.000, base = hard costs
+    expect(resultadoComFee.feesOperacionaisTotal).toBeCloseTo(valorFeeEsperado, 2);
+    expect(resultadoComFee.custoTotal - resultado.custoTotal).toBeCloseTo(valorFeeEsperado, 2);
+  });
+
+  const resultadoComFee = calcularCashFlow({
+    linhasCusto: [...CUSTOS, ...feesComoLinhasCustoGolden],
+    contextoCusto: CONTEXTO_CUSTO,
+    recebimentos,
+    comissaoPorMes,
+    parametrosFinanciamento: FINANCIAMENTO,
+    saldoMinimoCaixa: FINANCIAMENTO.saldoMinimoCaixa,
+  });
+  const resultadoUnleveredGolden = calcularCashFlow({
+    linhasCusto: [...CUSTOS, ...feesComoLinhasCustoGolden],
+    contextoCusto: CONTEXTO_CUSTO,
+    recebimentos,
+    comissaoPorMes,
+    parametrosFinanciamento: { ...FINANCIAMENTO, comFinanciamento: false },
+    saldoMinimoCaixa: 0,
+  });
+  const investidorPromotorComFee = calcularResultadosComWaterfall(
+    resultadoComFee.linhas,
+    HURDLES,
+    PERCENTAGEM_INVESTIDOR,
+    resultadoComFee.feesOperacionaisTotal
+  );
+  const impostosGolden: ParametrosImpostoEstimado = {
+    estruturaFiscalAssumida: "empresa_spv",
+    simulacaoImpostoEstimadoManual: null,
+    ircAjustesFiscais: 0,
+    ircPrejuizosFiscaisAcumulados: 0,
+    ircAnoFiscalReferencia: 2026,
+    ircTaxaManual: null,
+    derramaMunicipalTaxa: 0,
+  };
+
+  it("17) Imposto estimado (estrutura empresa/SPV) é calculado a partir do resultado real, nunca inventado nem zero por omissão quando há lucro", () => {
+    const impostoLevered = calcularImpostoEstimadoDoResultado(resultadoComFee, impostosGolden);
+    expect(impostoLevered).toBeGreaterThan(0);
+  });
+
+  const impostoEstimadoLevered = calcularImpostoEstimadoDoResultado(resultadoComFee, impostosGolden);
+  const impostoEstimadoUnlevered = calcularImpostoEstimadoDoResultado(resultadoUnleveredGolden, impostosGolden);
+
+  const underwritingGolden = montarUnderwritingResult({
+    resultado: resultadoComFee,
+    resultadoUnlevered: resultadoUnleveredGolden,
+    investidorPromotor: investidorPromotorComFee,
+    feesTotais: resultadoComFee.feesOperacionaisTotal,
+    impostoEstimadoLevered,
+    impostoEstimadoUnlevered,
+    acquisitionPrice: CONTEXTO_CUSTO.valorAquisicao,
+    acquisitionCosts: 0,
+    abcTotal: 300,
+    averageSalePricePerSqm: 4000,
+    unitCount: 4,
+    committedDebtLimite: FINANCIAMENTO.limiteCredito,
+    primeiraSaidaCapital: resultadoComFee.linhas[0]?.mes ?? null,
+    ultimaEntradaCapitalOuRetorno: resultadoComFee.equity.dataRecuperacaoIntegral ?? resultadoComFee.linhas[resultadoComFee.linhas.length - 1]?.mes ?? null,
+  });
+
+  it("18) Resultado central (underwriting.ts): todas as reconciliações passam com tolerância de €0,01 — este É o número que o dashboard mostra", () => {
+    expect(underwritingGolden.qualidade.todasReconciliacoesOk).toBe(true);
+    expect(underwritingGolden.developmentFee).toBeGreaterThan(0);
+    expect(underwritingGolden.estimatedTaxes).toBeGreaterThan(0);
+  });
+
+  it("19) [Reconciliação Gate 7] Sensibilidade-base completa (0%×0%) é EXATAMENTE igual ao resultado central do dashboard — fees, promote e impostos incluídos, nunca cashflow.ts isolado", () => {
+    const premissasCompletas: PremissasCompletaSensibilidade = {
+      linhasCusto: CUSTOS,
+      contextoCusto: CONTEXTO_CUSTO,
+      receitaTotalGdvBase: 1_120_000,
+      planoVendas: PLANO_VENDAS,
+      parametrosFinanciamento: FINANCIAMENTO,
+      salesTableResolvida: unidadesResolvidas,
+      tipologias: [TIPOLOGIA],
+      comissaoParametros: { ...PARAMETROS_COMISSAO_PADRAO, percentagemComissao: 0.05 },
+      fees: [feeDevelopment],
+      datasProjetoParaFees,
+      temInvestidorExterno: true,
+      percentagemInvestidor: PERCENTAGEM_INVESTIDOR,
+      hurdles: HURDLES,
+      catchUpPct: 0,
+      impostos: impostosGolden,
+      acquisitionPrice: CONTEXTO_CUSTO.valorAquisicao,
+      acquisitionCosts: 0,
+      abcTotal: 300,
+      averageSalePricePerSqm: 4000,
+      unitCount: 4,
+      committedDebtLimite: FINANCIAMENTO.limiteCredito,
+    };
+
+    const diretaBase = calcularCenarioCompletoComVariacoes(premissasCompletas, 0, 0, 0);
+    expect(diretaBase.netProfit).toBeCloseTo(underwritingGolden.netProfit, 2);
+    expect(diretaBase.leveredIrr).toBe(underwritingGolden.leveredIrr);
+    expect(diretaBase.developmentFee).toBeCloseTo(underwritingGolden.developmentFee, 2);
+
+    const matrizCompleta = calcularMatrizSensibilidadeCompleta(premissasCompletas, "aquisicao_vs_custo_construcao", "lucro_liquido");
+    const celulaBase = matrizCompleta.celulas.flat().find((c) => c.variacaoLinha === 0 && c.variacaoColuna === 0)!;
+    expect(celulaBase.valor).toBeCloseTo(underwritingGolden.netProfit, 2);
+    expect(celulaBase.valor).toBe(extrairIndicadorUnderwriting(underwritingGolden, "lucro_liquido"));
+  });
+
+  it("20) [Reconciliação Gate 7] Report payload consome o resultado central sem recalcular — mesma referência, mesmos números", () => {
+    const payload = montarReportPayload({
+      underwritingResult: underwritingGolden,
+      identificacao: { nome: "Golden Project", tipoProjeto: "Terreno", estadoProjeto: "Em estudo", tipoAtivo: "Residencial", descricaoResumida: null, dataReferenciaAnalise: "2026-01-01" },
+      localizacao: { codigoPostal: null, rua: null, freguesia: null, concelho: null, distrito: null, latitude: null, longitude: null, origem: "manual" },
+      areas: { areaLote: null, abcAcimaSolo: 300, abcAbaixoSolo: 0, abcPrincipal: 300, abcTotal: 300, abpEstimada: null, abpProgramada: 280, eficiencia: 280 / 300 },
+      programa: {
+        totalUnidades: 4, abpTotal: 280, areaVarandas: 0, varandaVendavel: 0, areaTerracos: 0, terracoVendavel: 0,
+        areaJardins: 0, jardimVendavel: 0, areaArrecadacoes: 0, arrecadacaoVendavel: 0, areaDependenteTotal: 0,
+        areaDependenteVendavel: 0, abcTotal: 300, areaVendavelEquivalenteTotal: 280, totalEstacionamentos: 0,
+        precoMedioUnidade: 280_000, precoMedioPonderadoM2: 4000, receitaTotal: 1_120_000,
+      },
+      tipologias: [],
+      salesTable: [],
+      regrasEvolucaoPreco: [],
+      sugestoesUsadas: {},
+      custos: { totalAquisicao: 300_000, totalHardCosts: 500_000, totalSoftCosts: 50_000, totalOutros: 0, custoTotal: 850_000, ivaSuportadoTotal: 0, ivaRecuperavelTotal: 0, ivaNaoRecuperavelTotal: 0 },
+      impostos: {
+        estruturaFiscalAssumida: "empresa_spv",
+        seguroTotal: 0,
+        imiTotal: 0,
+        lucroEconomico: null,
+        lucroTributavelEstimado: null,
+        ircEstimado: impostoEstimadoLevered,
+        derramaMunicipal: 0,
+        derramaEstadual: 0,
+        simulacaoManual: { taxaEfetivaManual: null, impostoEstimadoManual: null },
+        ivaSuportado: 0,
+        ivaRecuperavel: 0,
+        ivaNaoRecuperavel: 0,
+      },
+      calendarioAutomatico: { grupos: [], dataInicial: null, dataFinal: null },
+      cashFlow: resultadoComFee,
+      cashSweep: { ativo: false, mesInicio: null },
+      investidor: investidorPromotorComFee.investidor,
+      promotor: investidorPromotorComFee.promotor,
+      sensibilidades: [],
+      cenarios: { lista: [], comparacao: [] },
+      metricasPorM2: null,
+      estruturaSobreVgv: null,
+      alertas: [],
+      premissas: { areaLote: { valor: null, origem: "utilizador" } },
+      fontesComparaveis: { totalUsados: 0, fontesUnicas: [] },
+      fonteLocalizacao: null,
+    });
+
+    expect(payload.underwritingResult).toBe(underwritingGolden);
+    expect(payload.underwritingResult?.netProfit).toBeCloseTo(underwritingGolden.netProfit, 2);
+    expect(payload.cashFlow).toBe(resultadoComFee);
   });
 });
